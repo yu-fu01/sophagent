@@ -1,0 +1,75 @@
+"""Format conversion tests for the two provider adapters."""
+
+from sophclaw.models import Message, ToolCall
+from sophclaw.providers.anthropic_provider import messages_to_anthropic, tools_to_anthropic
+from sophclaw.providers.openai_provider import _parse_arguments, messages_to_openai
+
+HISTORY = [
+    Message(role="user", content="hi"),
+    Message(
+        role="assistant",
+        content="let me check",
+        tool_calls=[ToolCall(id="c1", name="read_file", arguments={"path": "a.txt"})],
+    ),
+    Message(role="tool", content="contents A", tool_call_id="c1"),
+    Message(role="assistant", content="done"),
+]
+
+
+def test_openai_conversion():
+    out = messages_to_openai("sys", HISTORY)
+    assert out[0] == {"role": "system", "content": "sys"}
+    assert out[1] == {"role": "user", "content": "hi"}
+    asst = out[2]
+    assert asst["tool_calls"][0]["function"]["name"] == "read_file"
+    assert asst["tool_calls"][0]["id"] == "c1"
+    assert out[3] == {"role": "tool", "tool_call_id": "c1", "content": "contents A"}
+
+
+def test_openai_argument_parsing():
+    assert _parse_arguments('{"a": 1}') == {"a": 1}
+    assert _parse_arguments("") == {}
+    assert _parse_arguments("not json") == {"_raw": "not json"}
+
+
+def test_anthropic_conversion_tool_use_and_result():
+    out = messages_to_anthropic(HISTORY)
+    assert out[0] == {"role": "user", "content": "hi"}
+    asst = out[1]
+    assert asst["role"] == "assistant"
+    assert asst["content"][0] == {"type": "text", "text": "let me check"}
+    assert asst["content"][1]["type"] == "tool_use"
+    assert asst["content"][1]["input"] == {"path": "a.txt"}
+    tool_result = out[2]
+    assert tool_result["role"] == "user"
+    assert tool_result["content"][0]["type"] == "tool_result"
+    assert tool_result["content"][0]["tool_use_id"] == "c1"
+
+
+def test_anthropic_merges_consecutive_tool_results():
+    history = [
+        Message(
+            role="assistant",
+            tool_calls=[
+                ToolCall(id="c1", name="a", arguments={}),
+                ToolCall(id="c2", name="b", arguments={}),
+            ],
+        ),
+        Message(role="tool", content="r1", tool_call_id="c1"),
+        Message(role="tool", content="r2", tool_call_id="c2"),
+    ]
+    out = messages_to_anthropic(history)
+    assert len(out) == 2  # one assistant + one merged user
+    assert [b["tool_use_id"] for b in out[1]["content"]] == ["c1", "c2"]
+
+
+def test_anthropic_tool_schema():
+    tools = [{"name": "t", "description": "d", "parameters": {"type": "object", "properties": {}}}]
+    out = tools_to_anthropic(tools)
+    assert out[0]["input_schema"] == {"type": "object", "properties": {}}
+    assert "parameters" not in out[0]
+
+
+def test_message_roundtrip():
+    m = Message(role="assistant", content="x", tool_calls=[ToolCall(id="1", name="n", arguments={"k": "v"})])
+    assert Message.from_json(m.to_json()).to_dict() == m.to_dict()
