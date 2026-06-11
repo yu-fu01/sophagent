@@ -1,0 +1,204 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>sophclaw-agent · 架构与使用方式</title>
+<style>
+:root{--ink:#1c2533;--dim:#5b6b7d;--line:#dde4ec;--bg:#f5f7fa;--card:#fff;--blue:#2563eb;--blue-bg:#eff4ff;--green:#16a34a;--green-bg:#effaf2;--orange:#d97706;--orange-bg:#fef6e7;--purple:#7c3aed;--purple-bg:#f5f0ff;--mono:ui-monospace,"SF Mono",Consolas,monospace}
+*{box-sizing:border-box}
+body{margin:0;font:15px/1.7 -apple-system,"Segoe UI","PingFang SC","Microsoft YaHei",sans-serif;color:var(--ink);background:var(--bg)}
+.wrap{max-width:1000px;margin:0 auto;padding:40px 24px 80px}
+header.hero{text-align:center;padding:40px 0 8px}
+.hero h1{font-size:34px;margin:0;letter-spacing:1px}
+.hero .sub{color:var(--dim);margin-top:8px;font-size:16px}
+.hero .badges{margin-top:14px}
+.badge{display:inline-block;background:var(--blue-bg);color:var(--blue);border-radius:999px;padding:3px 14px;font-size:13px;margin:3px}
+h2{font-size:22px;margin:54px 0 6px;padding-left:12px;border-left:4px solid var(--blue)}
+h2 + .lead{color:var(--dim);margin:0 0 18px;padding-left:16px}
+.cards{display:grid;grid-template-columns:repeat(auto-fit,minmax(150px,1fr));gap:14px;margin:22px 0}
+.kpi{background:var(--card);border:1px solid var(--line);border-radius:12px;padding:18px;text-align:center}
+.kpi b{display:block;font-size:26px;color:var(--blue)}
+.kpi span{color:var(--dim);font-size:13px}
+.card{background:var(--card);border:1px solid var(--line);border-radius:12px;padding:20px 24px;margin:14px 0}
+table{width:100%;border-collapse:collapse;background:var(--card);border-radius:12px;overflow:hidden;border:1px solid var(--line)}
+th,td{padding:9px 14px;text-align:left;border-bottom:1px solid var(--line);font-size:14px;vertical-align:top}
+th{background:#eef2f7;font-weight:600}
+tr:last-child td{border-bottom:0}
+code{font-family:var(--mono);font-size:13px;background:#eef2f7;border-radius:4px;padding:1px 6px}
+pre{background:#0f172a;color:#dbe7f5;border-radius:10px;padding:16px;overflow-x:auto;font-family:var(--mono);font-size:13px;line-height:1.55}
+pre code{background:none;padding:0;color:inherit}
+.ok{color:var(--green);font-weight:600}
+/* architecture diagram */
+.arch{background:var(--card);border:1px solid var(--line);border-radius:12px;padding:26px;margin:18px 0}
+.layer{border:2px solid var(--line);border-radius:10px;padding:12px 16px;margin:12px 0;position:relative}
+.layer>.tag{position:absolute;top:-11px;left:14px;background:var(--card);padding:0 8px;font-size:12px;color:var(--dim);font-weight:600}
+.boxes{display:flex;flex-wrap:wrap;gap:10px;margin-top:6px}
+.box{border-radius:8px;padding:8px 14px;font-size:13px;flex:1;min-width:120px;text-align:center}
+.b-blue{background:var(--blue-bg);color:var(--blue);border:1px solid #c7d8fb}
+.b-green{background:var(--green-bg);color:var(--green);border:1px solid #c3ecd0}
+.b-orange{background:var(--orange-bg);color:var(--orange);border:1px solid #f5dfb5}
+.b-purple{background:var(--purple-bg);color:var(--purple);border:1px solid #e0d2fb}
+.box small{display:block;color:var(--dim);font-weight:400;margin-top:2px;font-size:11.5px}
+.arrow{text-align:center;color:var(--dim);font-size:18px;line-height:1;margin:-2px 0}
+/* flow */
+.flow{display:flex;flex-wrap:wrap;gap:8px;align-items:stretch;margin:14px 0}
+.step{flex:1;min-width:140px;background:var(--card);border:1px solid var(--line);border-radius:10px;padding:12px 14px;font-size:13.5px;position:relative}
+.step b{display:block;color:var(--blue);margin-bottom:4px}
+.step .n{position:absolute;top:-10px;left:12px;background:var(--blue);color:#fff;border-radius:999px;width:20px;height:20px;font-size:12px;text-align:center;line-height:20px}
+.loopnote{background:var(--orange-bg);border:1px dashed var(--orange);border-radius:10px;padding:10px 16px;font-size:13.5px;color:#8a5a08;margin:10px 0}
+footer{margin-top:60px;text-align:center;color:var(--dim);font-size:13px}
+@media print{body{background:#fff}.wrap{max-width:none;padding:10px}h2{page-break-after:avoid}.card,.arch,table{page-break-inside:avoid}}
+</style>
+</head>
+<body>
+<div class="wrap">
+
+<header class="hero">
+  <h1>sophclaw-agent</h1>
+  <div class="sub">轻量级多用户 · 多 Agent 服务，具备 Hermes 式自进化 Skill 能力</div>
+  <div class="badges">
+    <span class="badge">Python 3.12 + FastAPI + asyncio</span>
+    <span class="badge">SQLite WAL</span>
+    <span class="badge">Docker 一键部署</span>
+    <span class="badge">OpenAI 兼容 API</span>
+  </div>
+</header>
+
+<div class="cards">
+  <div class="kpi"><b>~3100</b><span>代码行数（含前端）</span></div>
+  <div class="kpi"><b>8</b><span>直接依赖</span></div>
+  <div class="kpi"><b>288 MB</b><span>Docker 镜像</span></div>
+  <div class="kpi"><b>~89 MiB</b><span>容器常驻内存</span></div>
+  <div class="kpi"><b>47</b><span>自动化测试全通过</span></div>
+</div>
+
+<h2>项目定位</h2>
+<p class="lead">参考开源项目 hermes-agent（45 万行级）的核心设计，以约 1% 的代码量实现其关键能力。</p>
+<table>
+  <tr><th style="width:32%">需求</th><th>实现方式</th></tr>
+  <tr><td>第三方 OpenAI / Anthropic 模型</td><td>Provider 抽象层：任意 OpenAI 兼容 API（可配 <code>base_url</code>）+ Anthropic 原生 API；API key 只存配置文件，不入库；已适配 DeepSeek 思考模型（reasoning 回传）</td></tr>
+  <tr><td>多 Agent / 多会话 / 高并发</td><td>管理员定义多个 Agent（提示词 / 模型 / 工具白名单 / Skill 白名单）；单进程 asyncio + 会话级锁 + 全局并发信号量；支持 <code>delegate_task</code> 子 Agent 委派</td></tr>
+  <tr><td>自进化能力</td><td>Skill 索引注入系统提示，Agent 运行时通过 <code>skill_manage</code> 自主创建 / 改进 / 删除 Skill（与 hermes 的 SKILL.md 格式兼容）</td></tr>
+  <tr><td>多用户与权限</td><td>JWT 登录，admin / user 两级角色；会话、工作目录、长期记忆全部按用户隔离；管理员增删用户（级联清理数据）</td></tr>
+  <tr><td>轻量化</td><td>每轮对话「从库加载 → 运行 → 释放」，无常驻 Agent 实例；前端为零依赖单文件 HTML</td></tr>
+  <tr><td>容器化</td><td>python:3.12-slim 单阶段构建，非 root 运行，<code>/data</code> 卷持久化，自带健康检查</td></tr>
+</table>
+
+<h2>整体架构</h2>
+<p class="lead">单容器、单进程、四层结构；数据全部落在一个挂载卷中。</p>
+<div class="arch">
+  <div class="layer"><span class="tag">接入层（客户端）</span>
+    <div class="boxes">
+      <div class="box b-blue">浏览器 Web 界面<small>登录 / 聊天 / 管理面板</small></div>
+      <div class="box b-blue">OpenAI SDK / curl<small>/v1/chat/completions</small></div>
+      <div class="box b-blue">第三方聊天客户端<small>Open WebUI 等</small></div>
+    </div>
+  </div>
+  <div class="arrow">▼</div>
+  <div class="layer"><span class="tag">服务层 · FastAPI（单进程 asyncio）</span>
+    <div class="boxes">
+      <div class="box b-green">认证 / 用户管理<small>JWT + bcrypt，admin/user</small></div>
+      <div class="box b-green">会话 API（SSE 流式）<small>chat / stop / 历史</small></div>
+      <div class="box b-green">Agent 定义 CRUD<small>管理员配置</small></div>
+      <div class="box b-green">Skill 审查通道<small>浏览 / 删除</small></div>
+    </div>
+    <div class="boxes">
+      <div class="box b-orange">SessionManager<small>会话锁 + 全局并发 Semaphore(32) + 可中断</small></div>
+    </div>
+  </div>
+  <div class="arrow">▼</div>
+  <div class="layer"><span class="tag">核心层 · AgentRunner（模型 ⇄ 工具循环）</span>
+    <div class="boxes">
+      <div class="box b-purple">Provider 适配器<small>OpenAI 兼容 / Anthropic，流式 + 工具调用</small></div>
+      <div class="box b-purple">工具注册中心<small>schema + 超时 + 输出截断 + 白名单</small></div>
+      <div class="box b-purple">上下文压缩<small>两层：截断旧工具输出 → LLM 摘要</small></div>
+    </div>
+    <div class="boxes">
+      <div class="box b-orange">文件读写</div><div class="box b-orange">终端 / Python 执行</div>
+      <div class="box b-orange">Web 搜索 / 抓取</div><div class="box b-orange">长期记忆</div>
+      <div class="box b-orange">Skill 管理（自进化）</div><div class="box b-orange">子 Agent 委派</div>
+    </div>
+  </div>
+  <div class="arrow">▼</div>
+  <div class="layer"><span class="tag">数据层 · /data 卷</span>
+    <div class="boxes">
+      <div class="box b-blue">sophclaw.db<small>SQLite WAL：用户 / Agent / 会话 / 消息 / 记忆</small></div>
+      <div class="box b-blue">skills/&lt;name&gt;/SKILL.md<small>自进化知识库（hermes 兼容）</small></div>
+      <div class="box b-blue">workspaces/&lt;uid&gt;/<small>每用户隔离工作目录</small></div>
+    </div>
+  </div>
+</div>
+
+<h2>核心流程：一轮对话</h2>
+<div class="flow">
+  <div class="step"><span class="n">1</span><b>请求进入</b>校验 JWT 与会话归属，取会话锁、过全局信号量</div>
+  <div class="step"><span class="n">2</span><b>组装上下文</b>系统提示 = Agent 提示词 + Skill 索引 + 用户记忆 + 环境信息；超限则压缩</div>
+  <div class="step"><span class="n">3</span><b>调用模型</b>流式返回，文本增量实时经 SSE 推给前端</div>
+  <div class="step"><span class="n">4</span><b>执行工具</b>模型发起工具调用 → 注册中心调度（超时 / 截断 / 白名单）→ 结果回填</div>
+  <div class="step"><span class="n">5</span><b>循环或结束</b>有工具调用回到第 3 步（≤ max_iterations）；每条消息实时落库</div>
+</div>
+<div class="loopnote">⟲ 自进化闭环：Agent 在第 4 步可调用 <b>skill_manage</b> 把「学到的可复用流程」写成 SKILL.md → 下一轮系统提示的 Skill 索引立即包含它 → 所有 Agent、所有用户共享受益；管理员可在 Web 界面审查或删除。</div>
+
+<h2>API 一览</h2>
+<table>
+  <tr><th>方法</th><th>路径</th><th>权限</th><th>说明</th></tr>
+  <tr><td>POST</td><td><code>/api/auth/login</code></td><td>公开</td><td>用户名密码 → JWT</td></tr>
+  <tr><td>GET / POST / PATCH / DELETE</td><td><code>/api/users</code></td><td>admin</td><td>用户管理（删除级联清理数据）</td></tr>
+  <tr><td>GET / POST / PUT / DELETE</td><td><code>/api/agents</code></td><td>读 user · 写 admin</td><td>Agent 定义管理</td></tr>
+  <tr><td>GET / POST / DELETE</td><td><code>/api/sessions</code></td><td>user（仅本人）</td><td>会话管理</td></tr>
+  <tr><td>POST</td><td><code>/api/sessions/{id}/chat</code></td><td>本人</td><td>SSE 流：text_delta / tool_call / tool_result / done</td></tr>
+  <tr><td>POST</td><td><code>/api/sessions/{id}/stop</code></td><td>本人</td><td>中断正在运行的回合</td></tr>
+  <tr><td>GET / PUT / DELETE</td><td><code>/api/skills</code></td><td>读 user · 写 admin</td><td>Skill 库审查通道</td></tr>
+  <tr><td>POST</td><td><code>/v1/chat/completions</code></td><td>Bearer JWT</td><td>OpenAI 兼容；model = Agent 名；支持 stream</td></tr>
+  <tr><td>GET</td><td><code>/v1/models</code></td><td>Bearer JWT</td><td>列出全部 Agent</td></tr>
+</table>
+
+<h2>使用方式</h2>
+<div class="card">
+<b>① 一键部署</b>
+<pre><code>cp .env.example .env     # 设置 ADMIN_PASSWORD；模型配置写 data/providers.yaml
+docker compose up -d --build
+# 浏览器打开 http://localhost:8000，用 admin 登录</code></pre>
+<b>② 模型接入（data/providers.yaml）</b>
+<pre><code>providers:
+  sophnet:                      # 任意名字，Agent 定义里引用
+    api_mode: openai            # openai = 一切 OpenAI 兼容 API；另支持 anthropic
+    base_url: https://www.sophnet.com/api/open-apis/v1
+    api_key: sk-...
+    context_limit: 64000</code></pre>
+<b>③ 日常使用流程</b>
+<div class="flow">
+  <div class="step"><span class="n">1</span><b>admin</b> 在管理面板创建 Agent（选模型、勾选工具）并添加用户</div>
+  <div class="step"><span class="n">2</span><b>用户</b> 登录 → 新建会话 → 选 Agent → 聊天（支持 Markdown 富文本渲染）</div>
+  <div class="step"><span class="n">3</span><b>程序</b> 通过 OpenAI SDK 直连：<code>base_url="http://host:8000/v1"</code>，api_key 填 JWT</div>
+  <div class="step"><span class="n">4</span><b>admin</b> 定期在 Skills 卡片审查 Agent 自建的知识</div>
+</div>
+</div>
+
+<h2>真机验证结果</h2>
+<p class="lead">以下全部在 Docker 容器中使用真实模型（sophnet · DeepSeek-V4-Flash）验证通过。</p>
+<table>
+  <tr><th>验证项</th><th>结果</th></tr>
+  <tr><td>流式对话（SSE）</td><td class="ok">✔ 通过</td></tr>
+  <tr><td>工具调用（容器内执行命令、文件落盘）</td><td class="ok">✔ 通过 — 模型自主调用 terminal，确认运行身份为非 root 用户 app</td></tr>
+  <tr><td>Skill 自进化（运行时自建 SKILL.md）</td><td class="ok">✔ 通过 — 新会话索引即时可见</td></tr>
+  <tr><td>跨会话长期记忆</td><td class="ok">✔ 通过 — 会话 A 记忆在会话 B 直接答出</td></tr>
+  <tr><td>OpenAI 兼容接口（含 usage 统计）</td><td class="ok">✔ 通过</td></tr>
+  <tr><td>多用户隔离（越权访问 404 / 403）</td><td class="ok">✔ 通过</td></tr>
+  <tr><td>资源占用</td><td class="ok">✔ 镜像 288MB · 常驻内存 ~89MiB · 空闲 CPU 0.1%</td></tr>
+</table>
+
+<h2>安全边界与已知取舍</h2>
+<table>
+  <tr><th style="width:30%">事项</th><th>说明</th></tr>
+  <tr><td>容器是硬隔离边界</td><td>终端 / 代码执行钉在用户工作目录、环境变量白名单、超时与输出限额；容器内多用户之间为软隔离，多租户敏感场景应禁用终端类工具或按用户拆分容器</td></tr>
+  <tr><td>SSRF 防护</td><td>网页抓取拒绝解析到内网 / 回环地址的目标</td></tr>
+  <tr><td>Skill 注入风险</td><td>自建 Skill 进入系统提示，存在被诱导写入误导内容的可能 → 管理员审查通道兜底</td></tr>
+  <tr><td>SQLite 写上限</td><td>WAL 支撑数十并发会话；更重负载时数据层已收口，可平移 Postgres</td></tr>
+</table>
+
+<footer>sophclaw-agent · 2026-06 · 设计参考 hermes-agent</footer>
+</div>
+</body>
+</html>
