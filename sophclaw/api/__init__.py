@@ -1,0 +1,12 @@
+from fastapi import FastAPI
+
+from . import agent_routes, auth_routes, openai_compat, session_routes, skill_routes, user_routes
+
+
+def mount_routes(app: FastAPI) -> None:
+    app.include_router(auth_routes.router, prefix="/api/auth", tags=["auth"])
+    app.include_router(user_routes.router, prefix="/api/users", tags=["users"])
+    app.include_router(agent_routes.router, prefix="/api/agents", tags=["agents"])
+    app.include_router(session_routes.router, prefix="/api/sessions", tags=["sessions"])
+    app.include_router(skill_routes.router, prefix="/api/skills", tags=["skills"])
+    app.include_router(openai_compat.router, prefix="/v1", tags=["openai-compat"])
