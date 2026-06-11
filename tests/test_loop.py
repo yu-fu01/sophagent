@@ -1,0 +1,117 @@
+"""AgentRunner loop tests using a scripted fake provider."""
+
+from typing import AsyncIterator
+
+import pytest
+
+import sophclaw.providers as providers_mod
+from sophclaw.agent.loop import AgentRunner, history_tokens, truncate_old_tool_messages
+from sophclaw.config import ProviderConfig, get_config
+from sophclaw.models import AssistantTurn, Message, StreamEvent, ToolCall
+
+
+class FakeProvider:
+    """Replays a scripted list of AssistantTurns."""
+
+    def __init__(self, turns: list[AssistantTurn]):
+        self.turns = list(turns)
+        self.calls: list[list[Message]] = []
+
+    async def chat(self, *, model, system, messages, tools=None,
+                   temperature=None, max_tokens=None) -> AsyncIterator[StreamEvent]:
+        self.calls.append([Message.from_dict(m.to_dict()) for m in messages])
+        turn = self.turns.pop(0)
+        if turn.content:
+            yield StreamEvent("text_delta", text=turn.content)
+        yield StreamEvent("turn_done", turn=turn)
+
+
+@pytest.fixture
+def fake_provider(ctx, monkeypatch):
+    def install(turns):
+        provider = FakeProvider(turns)
+        monkeypatch.setitem(providers_mod._cache, "test", provider)
+        get_config().providers["test"] = ProviderConfig(name="test", api_mode="openai", context_limit=1000)
+        return provider
+
+    return install
+
+
+async def collect(runner, user_input):
+    return [ev async for ev in runner.run(user_input)]
+
+
+async def test_simple_turn(ctx, fake_provider):
+    fake_provider([AssistantTurn(content="hello!", stop_reason="stop")])
+    runner = AgentRunner(ctx.agent, ctx, history=[])
+    events = await collect(runner, "hi")
+    assert events[0] == {"type": "text_delta", "text": "hello!"}
+    assert events[-1]["type"] == "done"
+    assert [m.role for m in runner.history] == ["user", "assistant"]
+
+
+async def test_tool_loop(ctx, fake_provider):
+    fake_provider([
+        AssistantTurn(tool_calls=[ToolCall(id="c1", name="write_file",
+                                           arguments={"path": "f.txt", "content": "data"})]),
+        AssistantTurn(content="file written", stop_reason="stop"),
+    ])
+    runner = AgentRunner(ctx.agent, ctx, history=[])
+    events = await collect(runner, "write a file")
+    types = [e["type"] for e in events]
+    assert types == ["tool_call", "tool_result", "text_delta", "done"]
+    assert (ctx.workspace / "f.txt").read_text() == "data"
+    # tool result was fed back to the model on the second call
+    assert any(m.role == "tool" for m in runner.history)
+
+
+async def test_max_iterations_guard(ctx, fake_provider):
+    looping = [AssistantTurn(tool_calls=[ToolCall(id=f"c{i}", name="list_dir", arguments={})])
+               for i in range(100)]
+    fake_provider(looping)
+    ctx.agent.max_iterations = 3
+    runner = AgentRunner(ctx.agent, ctx, history=[])
+    events = await collect(runner, "loop forever")
+    assert events[-1].get("note") == "max_iterations reached"
+    assert sum(1 for e in events if e["type"] == "tool_call") == 3
+
+
+async def test_persist_callback(ctx, fake_provider):
+    fake_provider([AssistantTurn(content="ok", stop_reason="stop")])
+    saved = []
+
+    async def on_persist(msgs):
+        saved.extend(msgs)
+
+    runner = AgentRunner(ctx.agent, ctx, history=[], on_persist=on_persist)
+    await collect(runner, "hi")
+    assert [m.role for m in saved] == ["user", "assistant"]
+
+
+def test_truncate_old_tool_messages():
+    msgs = []
+    for i in range(12):
+        msgs.append(Message(role="assistant", tool_calls=[ToolCall(id=f"c{i}", name="t", arguments={})]))
+        msgs.append(Message(role="tool", content="x" * 1000, tool_call_id=f"c{i}"))
+    out = truncate_old_tool_messages(msgs)
+    truncated = [m for m in out if m.role == "tool" and "truncated" in m.content]
+    intact = [m for m in out if m.role == "tool" and "truncated" not in m.content]
+    assert len(intact) == 8 and len(truncated) == 4
+
+
+async def test_compression_triggers_summary(ctx, fake_provider):
+    # context_limit=1000 tokens -> budget 800; stuff history beyond it
+    provider = fake_provider([
+        # summarizer calls (compression loops until under budget), then the real answer
+        AssistantTurn(content="summary of old stuff", stop_reason="stop"),
+        AssistantTurn(content="tighter summary", stop_reason="stop"),
+        AssistantTurn(content="even tighter summary", stop_reason="stop"),
+        AssistantTurn(content="final answer", stop_reason="stop"),
+    ])
+    history = [Message(role="user" if i % 2 == 0 else "assistant", content="word " * 200)
+               for i in range(8)]
+    runner = AgentRunner(ctx.agent, ctx, history=history)
+    events = await collect(runner, "continue")
+    assert events[-1]["type"] == "done"
+    assert any("[Earlier conversation summary]" in m.content for m in runner.history)
+    assert history_tokens("", runner.history) < 1000
