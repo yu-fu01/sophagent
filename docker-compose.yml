@@ -1,0 +1,21 @@
+services:
+  sophclaw:
+    build: .
+    ports:
+      - "8000:8000"
+    volumes:
+      - sophclaw-data:/data
+    environment:
+      # see .env.example; all variables are optional except a provider config
+      - SOPHCLAW_SECRET=${SOPHCLAW_SECRET:-}
+      - ADMIN_USERNAME=${ADMIN_USERNAME:-admin}
+      - ADMIN_PASSWORD=${ADMIN_PASSWORD:-}
+      - SOPHCLAW_PROVIDERS=${SOPHCLAW_PROVIDERS:-}
+      - TAVILY_API_KEY=${TAVILY_API_KEY:-}
+      - OPENAI_API_KEY=${OPENAI_API_KEY:-}
+      - ANTHROPIC_API_KEY=${ANTHROPIC_API_KEY:-}
+    restart: unless-stopped
+    mem_limit: 1g
+
+volumes:
+  sophclaw-data:
