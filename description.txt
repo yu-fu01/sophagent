@@ -1,0 +1,16 @@
+参考hermes源码，让claude写一个新的agent，满足以下需求：
+
+1、支持第三方openai、anthropic模型
+2、能够容器化部署
+3、支持多个agent、多个session，多并发，重负载，响应速度快
+4、支持hermes一样的自进化能力，可以直接参考hermes代码来写
+5、支持创建和加载skill
+6、支持多用户登录，管理员有权限添加、删除用户
+7、轻量化，占用的内存和磁盘空间小
+
+
+做好git管理
+
+hermes的源代码在 /home/fuyu/workspace/hermes-agent
+
+
