@@ -39,7 +39,8 @@ ADMIN_PASSWORD=dev .venv/bin/uvicorn sophclaw.main:app --reload
 
 ## Provider 配置
 
-环境变量 `SOPHCLAW_PROVIDERS`（内联 YAML/JSON）或挂载 `/data/providers.yaml`：
+**推荐方式**：在数据目录放 `providers.yaml`（本地为 `./data/providers.yaml`，容器为 `/data/providers.yaml`）。
+也可用环境变量 `SOPHCLAW_PROVIDERS` 内联 JSON，但注意：在 shell 里 `source .env` 会剥掉 JSON 的双引号导致解析失败——内联方式只适合 docker compose 的 `environment:`（不经过 shell）。
 
 ```yaml
 providers:
