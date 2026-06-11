@@ -65,6 +65,7 @@ class AgentRunner:
         self.provider = get_provider(agent.provider)
         self.context_limit = get_config().providers[agent.provider].context_limit
         self.usage = {"input_tokens": 0, "output_tokens": 0}
+        self.compressed = False  # set when history was rewritten; caller may compact the DB
 
     async def _persist(self, msg: Message) -> None:
         self._new_messages.append(msg)
@@ -84,7 +85,10 @@ class AgentRunner:
         budget = int(self.context_limit * 0.8)
         if history_tokens(system, self.history) <= budget:
             return
+        before = [m.content for m in self.history]
         self.history = truncate_old_tool_messages(self.history)
+        if [m.content for m in self.history] != before:
+            self.compressed = True
         for _ in range(3):
             if history_tokens(system, self.history) <= budget or len(self.history) < 4:
                 return
@@ -115,6 +119,7 @@ class AgentRunner:
             log.exception("summary compression failed; falling back to hard drop")
         summary = "".join(summary_parts).strip() or "(summary unavailable; older messages dropped)"
         self.history = [Message(role="user", content=f"[Earlier conversation summary]\n{summary}")] + rest
+        self.compressed = True
 
     async def _call_model(self, system: str, tool_schemas: list[dict]) -> AsyncIterator[StreamEvent]:
         delay = 2.0
