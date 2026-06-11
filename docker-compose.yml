@@ -5,6 +5,9 @@ services:
       - "8000:8000"
     volumes:
       - sophclaw-data:/data
+      # recommended way to configure model providers (see README); comment out
+      # this line if you pass SOPHCLAW_PROVIDERS via environment instead
+      - ./data/providers.yaml:/data/providers.yaml:ro
     environment:
       # see .env.example; all variables are optional except a provider config
       - SOPHCLAW_SECRET=${SOPHCLAW_SECRET:-}

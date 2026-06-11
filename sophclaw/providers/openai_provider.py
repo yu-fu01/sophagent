@@ -18,6 +18,8 @@ def messages_to_openai(system: str, messages: list[Message]) -> list[dict[str, A
     for m in messages:
         if m.role == "assistant":
             d: dict[str, Any] = {"role": "assistant", "content": m.content or None}
+            if m.reasoning:
+                d["reasoning_content"] = m.reasoning
             if m.tool_calls:
                 d["tool_calls"] = [
                     {
@@ -80,6 +82,7 @@ class OpenAIProvider:
             stream = await self.client.chat.completions.create(**kwargs)
 
         content_parts: list[str] = []
+        reasoning_parts: list[str] = []
         # index -> {"id":, "name":, "arguments": str}
         pending_calls: dict[int, dict[str, str]] = {}
         stop_reason = ""
@@ -100,6 +103,11 @@ class OpenAIProvider:
             if delta.content:
                 content_parts.append(delta.content)
                 yield StreamEvent("text_delta", text=delta.content)
+            # thinking models (DeepSeek et al.) stream reasoning separately;
+            # keep it out of the visible text but echo it back next call
+            reasoning_delta = getattr(delta, "reasoning_content", None)
+            if reasoning_delta:
+                reasoning_parts.append(reasoning_delta)
             for tc in delta.tool_calls or []:
                 slot = pending_calls.setdefault(tc.index, {"id": "", "name": "", "arguments": ""})
                 if tc.id:
@@ -123,5 +131,6 @@ class OpenAIProvider:
                 input_tokens=input_tokens,
                 output_tokens=output_tokens,
                 stop_reason=stop_reason,
+                reasoning="".join(reasoning_parts),
             ),
         )

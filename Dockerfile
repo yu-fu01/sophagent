@@ -8,6 +8,9 @@ COPY sophclaw/ sophclaw/
 COPY web/ web/
 RUN pip install --no-cache-dir .
 
+# pre-create /data owned by app so the named volume inherits the ownership
+RUN mkdir -p /data && chown app:app /data
+
 USER app
 ENV SOPHCLAW_DATA_DIR=/data
 VOLUME /data

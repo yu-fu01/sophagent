@@ -34,6 +34,9 @@ class Message:
     content: str = ""
     tool_calls: list[ToolCall] | None = None
     tool_call_id: str | None = None
+    # some thinking models (e.g. DeepSeek) require reasoning_content to be
+    # echoed back on subsequent calls within the same tool-use sequence
+    reasoning: str | None = None
 
     def to_dict(self) -> dict[str, Any]:
         d: dict[str, Any] = {"role": self.role, "content": self.content}
@@ -41,6 +44,8 @@ class Message:
             d["tool_calls"] = [tc.to_dict() for tc in self.tool_calls]
         if self.tool_call_id:
             d["tool_call_id"] = self.tool_call_id
+        if self.reasoning:
+            d["reasoning"] = self.reasoning
         return d
 
     def to_json(self) -> str:
@@ -53,6 +58,7 @@ class Message:
             content=d.get("content") or "",
             tool_calls=[ToolCall.from_dict(tc) for tc in d["tool_calls"]] if d.get("tool_calls") else None,
             tool_call_id=d.get("tool_call_id"),
+            reasoning=d.get("reasoning"),
         )
 
     @classmethod
@@ -69,9 +75,11 @@ class AssistantTurn:
     input_tokens: int = 0
     output_tokens: int = 0
     stop_reason: str = ""
+    reasoning: str = ""
 
     def as_message(self) -> Message:
-        return Message(role="assistant", content=self.content, tool_calls=self.tool_calls or None)
+        return Message(role="assistant", content=self.content, tool_calls=self.tool_calls or None,
+                       reasoning=self.reasoning or None)
 
 
 @dataclass

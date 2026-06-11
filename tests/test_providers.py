@@ -73,3 +73,14 @@ def test_anthropic_tool_schema():
 def test_message_roundtrip():
     m = Message(role="assistant", content="x", tool_calls=[ToolCall(id="1", name="n", arguments={"k": "v"})])
     assert Message.from_json(m.to_json()).to_dict() == m.to_dict()
+
+
+def test_openai_reasoning_roundtrip():
+    m = Message(role="assistant", content="x", reasoning="thinking...",
+                tool_calls=[ToolCall(id="c1", name="t", arguments={})])
+    out = messages_to_openai("", [m])
+    assert out[0]["reasoning_content"] == "thinking..."
+    # JSON persistence keeps reasoning
+    assert Message.from_json(m.to_json()).reasoning == "thinking..."
+    # messages without reasoning don't get the key
+    assert "reasoning_content" not in messages_to_openai("", [Message(role="assistant", content="y")])[0]
