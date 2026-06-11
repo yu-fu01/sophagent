@@ -93,3 +93,16 @@ def test_extract_text():
     html = "<html><head><script>bad()</script></head><body><h1>Title</h1><p>Body text</p></body></html>"
     text = extract_text(html)
     assert "Title" in text and "Body text" in text and "bad()" not in text
+
+
+async def test_delegate_depth_guard(ctx):
+    from sophclaw.tools import load_all
+
+    load_all()
+    ctx.agent.tools = ["delegate_task"]
+    ctx.depth = 1
+    out = await registry.dispatch("delegate_task", {"goal": "do something"}, ctx)
+    assert "maximum delegation depth" in out
+    ctx.depth = 0  # no db wired -> graceful error, not a crash
+    out = await registry.dispatch("delegate_task", {"goal": "do something"}, ctx)
+    assert "delegation unavailable" in out
