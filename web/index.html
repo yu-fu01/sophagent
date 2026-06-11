@@ -1,3 +1,424 @@
 <!doctype html>
-<html><head><meta charset="utf-8"><title>sophclaw-agent</title></head>
-<body><p>UI coming in M7.</p></body></html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>sophclaw-agent</title>
+<style>
+:root{--bg:#101418;--panel:#1a2027;--panel2:#222a33;--border:#2e3742;--text:#dbe2ea;--dim:#8a96a3;--accent:#4f9cf9;--green:#3fb96f;--red:#e5604c}
+*{box-sizing:border-box}
+body{margin:0;font:14px/1.5 system-ui,-apple-system,"Segoe UI",sans-serif;background:var(--bg);color:var(--text);height:100vh;display:flex;flex-direction:column}
+button{background:var(--accent);color:#fff;border:0;border-radius:6px;padding:6px 14px;cursor:pointer;font:inherit}
+button.ghost{background:transparent;color:var(--dim);border:1px solid var(--border)}
+button.danger{background:var(--red)}
+button:disabled{opacity:.5;cursor:default}
+input,select,textarea{background:var(--panel2);color:var(--text);border:1px solid var(--border);border-radius:6px;padding:7px 10px;font:inherit;width:100%}
+textarea{resize:vertical}
+label{display:block;margin:10px 0 4px;color:var(--dim);font-size:12px}
+.hidden{display:none!important}
+/* login */
+#login{margin:auto;width:320px;background:var(--panel);padding:28px;border-radius:12px;border:1px solid var(--border)}
+#login h1{font-size:20px;margin:0 0 16px}
+.err{color:var(--red);font-size:13px;min-height:18px;margin-top:8px}
+/* app shell */
+#app{display:flex;flex:1;min-height:0}
+#sidebar{width:260px;background:var(--panel);border-right:1px solid var(--border);display:flex;flex-direction:column}
+#sidebar header{padding:12px;border-bottom:1px solid var(--border);display:flex;gap:8px;align-items:center}
+#sidebar header b{flex:1}
+#sessions{flex:1;overflow-y:auto}
+.sess{padding:10px 12px;border-bottom:1px solid var(--border);cursor:pointer}
+.sess:hover,.sess.active{background:var(--panel2)}
+.sess .t{white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.sess .m{font-size:11px;color:var(--dim)}
+#userbox{padding:10px 12px;border-top:1px solid var(--border);font-size:12px;color:var(--dim);display:flex;gap:8px;align-items:center}
+#userbox b{flex:1;color:var(--text)}
+/* main */
+#main{flex:1;display:flex;flex-direction:column;min-width:0}
+#tabs{display:flex;gap:4px;padding:8px 12px;border-bottom:1px solid var(--border);background:var(--panel)}
+#tabs button{background:transparent;color:var(--dim);border-radius:6px}
+#tabs button.on{background:var(--panel2);color:var(--text)}
+/* chat */
+#chat{flex:1;display:flex;flex-direction:column;min-height:0}
+#msgs{flex:1;overflow-y:auto;padding:18px;display:flex;flex-direction:column;gap:12px}
+.msg{max-width:78%;padding:10px 14px;border-radius:10px;white-space:pre-wrap;word-break:break-word}
+.msg.user{align-self:flex-end;background:var(--accent);color:#fff}
+.msg.assistant{align-self:flex-start;background:var(--panel2)}
+.msg.err{align-self:center;background:transparent;color:var(--red);font-size:13px}
+details.tool{align-self:flex-start;max-width:78%;background:var(--panel);border:1px solid var(--border);border-radius:8px;padding:6px 10px;font-size:12px;color:var(--dim)}
+details.tool pre{white-space:pre-wrap;word-break:break-word;margin:6px 0 0;max-height:240px;overflow:auto}
+#composer{display:flex;gap:8px;padding:12px;border-top:1px solid var(--border)}
+#composer textarea{flex:1;height:60px}
+#empty{margin:auto;text-align:center;color:var(--dim)}
+/* admin */
+#admin{flex:1;overflow-y:auto;padding:20px;max-width:880px}
+.card{background:var(--panel);border:1px solid var(--border);border-radius:10px;padding:16px;margin-bottom:16px}
+table{width:100%;border-collapse:collapse;margin-top:8px}
+th,td{text-align:left;padding:6px 8px;border-bottom:1px solid var(--border);font-size:13px}
+th{color:var(--dim);font-weight:500}
+td .row-actions{display:flex;gap:6px}
+.grid2{display:grid;grid-template-columns:1fr 1fr;gap:0 16px}
+.muted{color:var(--dim);font-size:12px}
+.tag{display:inline-block;background:var(--panel2);border-radius:4px;padding:1px 6px;font-size:11px;margin:1px}
+</style>
+</head>
+<body>
+
+<div id="login">
+  <h1>sophclaw-agent</h1>
+  <label>Username</label><input id="li-user" autocomplete="username">
+  <label>Password</label><input id="li-pass" type="password" autocomplete="current-password">
+  <div class="err" id="li-err"></div>
+  <button style="width:100%" onclick="doLogin()">Sign in</button>
+</div>
+
+<div id="app" class="hidden">
+  <div id="sidebar">
+    <header><b>Sessions</b><button onclick="newSessionDialog()">+ New</button></header>
+    <div id="sessions"></div>
+    <div id="userbox"><b id="whoami"></b><button class="ghost" onclick="logout()">Logout</button></div>
+  </div>
+  <div id="main">
+    <div id="tabs">
+      <button id="tab-chat" class="on" onclick="showTab('chat')">Chat</button>
+      <button id="tab-admin" class="hidden" onclick="showTab('admin')">Admin</button>
+    </div>
+    <div id="chat">
+      <div id="msgs"><div id="empty">Select or create a session to start.</div></div>
+      <div id="composer" class="hidden">
+        <textarea id="input" placeholder="Message... (Enter to send, Shift+Enter for newline)"></textarea>
+        <button id="send" onclick="sendMsg()">Send</button>
+        <button id="stop" class="danger hidden" onclick="stopTurn()">Stop</button>
+      </div>
+    </div>
+    <div id="admin" class="hidden"></div>
+  </div>
+</div>
+
+<script>
+"use strict";
+const $ = id => document.getElementById(id);
+let token = localStorage.getItem("token") || "";
+let me = null, sessions = [], agents = [], currentSid = null, streaming = false;
+
+async function api(path, opts = {}) {
+  opts.headers = Object.assign({"Content-Type": "application/json"}, opts.headers || {});
+  if (token) opts.headers["Authorization"] = "Bearer " + token;
+  if (opts.body && typeof opts.body !== "string") opts.body = JSON.stringify(opts.body);
+  const resp = await fetch(path, opts);
+  if (resp.status === 401) { logout(); throw new Error("unauthorized"); }
+  if (!resp.ok) {
+    let detail = resp.statusText;
+    try { detail = (await resp.json()).detail || detail; } catch (e) {}
+    throw new Error(detail);
+  }
+  return resp;
+}
+const apiJson = async (path, opts) => (await api(path, opts)).json();
+
+// ---- auth -----------------------------------------------------------------
+async function doLogin() {
+  $("li-err").textContent = "";
+  try {
+    const data = await apiJson("/api/auth/login", {method: "POST",
+      body: {username: $("li-user").value.trim(), password: $("li-pass").value}});
+    token = data.token; localStorage.setItem("token", token);
+    await boot();
+  } catch (e) { $("li-err").textContent = e.message; }
+}
+$("li-pass").addEventListener("keydown", e => { if (e.key === "Enter") doLogin(); });
+
+function logout() {
+  token = ""; localStorage.removeItem("token"); me = null;
+  $("app").classList.add("hidden"); $("login").classList.remove("hidden");
+}
+
+async function boot() {
+  try { me = await apiJson("/api/auth/me"); } catch (e) { return; }
+  $("login").classList.add("hidden"); $("app").classList.remove("hidden");
+  $("whoami").textContent = `${me.username} (${me.role})`;
+  $("tab-admin").classList.toggle("hidden", me.role !== "admin");
+  agents = await apiJson("/api/agents");
+  await loadSessions();
+}
+
+// ---- sessions -------------------------------------------------------------
+async function loadSessions() {
+  sessions = await apiJson("/api/sessions");
+  const box = $("sessions"); box.innerHTML = "";
+  for (const s of sessions) {
+    const div = document.createElement("div");
+    div.className = "sess" + (s.id === currentSid ? " active" : "");
+    div.innerHTML = `<div class="t"></div><div class="m"></div>`;
+    div.querySelector(".t").textContent = s.title || "(new session)";
+    div.querySelector(".m").textContent = `${s.agent_name} · ${s.updated_at.slice(0, 16)}`;
+    div.onclick = () => openSession(s.id);
+    box.appendChild(div);
+  }
+}
+
+async function newSessionDialog() {
+  if (!agents.length) { alert("No agents defined yet" + (me.role === "admin" ? " — create one in the Admin tab." : ".")); return; }
+  let choice = agents[0];
+  if (agents.length > 1) {
+    const name = prompt("Agent to use:\n" + agents.map(a => `- ${a.name}: ${a.description || a.model}`).join("\n"), agents[0].name);
+    if (name === null) return;
+    choice = agents.find(a => a.name === name.trim());
+    if (!choice) { alert("unknown agent"); return; }
+  }
+  const s = await apiJson("/api/sessions", {method: "POST", body: {agent_id: choice.id}});
+  await loadSessions();
+  openSession(s.id);
+}
+
+async function openSession(sid) {
+  currentSid = sid; showTab("chat");
+  $("composer").classList.remove("hidden");
+  const detail = await apiJson("/api/sessions/" + sid);
+  const msgs = $("msgs"); msgs.innerHTML = "";
+  for (const m of detail.messages) {
+    if (m.role === "user" && !m.content.startsWith("[Earlier conversation summary]")) addBubble("user", m.content);
+    else if (m.role === "assistant") {
+      for (const tc of m.tool_calls || []) addTool(tc.name, JSON.stringify(tc.arguments), "");
+      if (m.content) addBubble("assistant", m.content);
+    }
+  }
+  await loadSessions();
+  msgs.scrollTop = msgs.scrollHeight;
+}
+
+function addBubble(cls, text) {
+  const d = document.createElement("div");
+  d.className = "msg " + cls; d.textContent = text;
+  $("msgs").appendChild(d); return d;
+}
+function addTool(name, args, result) {
+  const d = document.createElement("details");
+  d.className = "tool";
+  const s = document.createElement("summary"); s.textContent = "🔧 " + name;
+  const pre = document.createElement("pre");
+  pre.textContent = args + (result ? "\n→ " + result : "");
+  d.append(s, pre); $("msgs").appendChild(d); return pre;
+}
+
+// ---- chat streaming ---------------------------------------------------------
+async function sendMsg() {
+  const text = $("input").value.trim();
+  if (!text || !currentSid || streaming) return;
+  $("input").value = ""; streaming = true;
+  $("send").classList.add("hidden"); $("stop").classList.remove("hidden");
+  addBubble("user", text);
+  let bubble = null;
+  const msgs = $("msgs");
+  try {
+    const resp = await api(`/api/sessions/${currentSid}/chat`, {method: "POST", body: {content: text}});
+    const reader = resp.body.getReader(), dec = new TextDecoder();
+    let buf = "";
+    while (true) {
+      const {done, value} = await reader.read();
+      if (done) break;
+      buf += dec.decode(value, {stream: true});
+      let idx;
+      while ((idx = buf.indexOf("\n\n")) >= 0) {
+        const line = buf.slice(0, idx).trim(); buf = buf.slice(idx + 2);
+        if (!line.startsWith("data: ")) continue;
+        const ev = JSON.parse(line.slice(6));
+        if (ev.type === "text_delta") {
+          if (!bubble) bubble = addBubble("assistant", "");
+          bubble.textContent += ev.text;
+        } else if (ev.type === "tool_call") {
+          bubble = null;
+          addTool(ev.name, JSON.stringify(ev.arguments, null, 2), "").dataset.id = ev.id;
+        } else if (ev.type === "tool_result") {
+          const pres = msgs.querySelectorAll("details.tool pre");
+          const pre = [...pres].find(p => p.dataset.id === ev.id) || pres[pres.length - 1];
+          if (pre) pre.textContent += "\n→ " + ev.preview;
+        } else if (ev.type === "error") {
+          addBubble("err", ev.message); bubble = null;
+        }
+        msgs.scrollTop = msgs.scrollHeight;
+      }
+    }
+  } catch (e) {
+    addBubble("err", e.message);
+  } finally {
+    streaming = false;
+    $("send").classList.remove("hidden"); $("stop").classList.add("hidden");
+    loadSessions();
+  }
+}
+$("input").addEventListener("keydown", e => {
+  if (e.key === "Enter" && !e.shiftKey) { e.preventDefault(); sendMsg(); }
+});
+async function stopTurn() { if (currentSid) await api(`/api/sessions/${currentSid}/stop`, {method: "POST"}); }
+
+// ---- tabs -------------------------------------------------------------------
+function showTab(name) {
+  $("chat").classList.toggle("hidden", name !== "chat");
+  $("admin").classList.toggle("hidden", name !== "admin");
+  $("tab-chat").classList.toggle("on", name === "chat");
+  $("tab-admin").classList.toggle("on", name === "admin");
+  if (name === "admin") renderAdmin();
+}
+
+// ---- admin ------------------------------------------------------------------
+async function renderAdmin() {
+  const box = $("admin");
+  const [users, skills, options] = await Promise.all([
+    apiJson("/api/users"), apiJson("/api/skills"), apiJson("/api/agents/meta/options")]);
+  agents = await apiJson("/api/agents");
+  box.innerHTML = "";
+
+  // users card
+  const uc = card(box, "Users");
+  const ut = table(uc, ["ID", "Username", "Role", ""]);
+  for (const u of users) {
+    const tr = row(ut, [u.id, u.username, u.role]);
+    const td = tr.insertCell();
+    td.innerHTML = `<div class="row-actions"></div>`;
+    btn(td.firstChild, "reset pw", "ghost", async () => {
+      const pw = prompt(`New password for ${u.username}:`); if (!pw) return;
+      await apiJson(`/api/users/${u.id}`, {method: "PATCH", body: {password: pw}}).catch(alertErr);
+    });
+    btn(td.firstChild, u.role === "admin" ? "make user" : "make admin", "ghost", async () => {
+      await apiJson(`/api/users/${u.id}`, {method: "PATCH", body: {role: u.role === "admin" ? "user" : "admin"}}).catch(alertErr);
+      renderAdmin();
+    });
+    btn(td.firstChild, "delete", "danger", async () => {
+      if (!confirm(`Delete user ${u.username} and all their data?`)) return;
+      await apiJson(`/api/users/${u.id}`, {method: "DELETE"}).catch(alertErr);
+      renderAdmin();
+    });
+  }
+  uc.insertAdjacentHTML("beforeend",
+    `<div class="grid2"><div><label>Username</label><input id="nu-name"></div>
+     <div><label>Password</label><input id="nu-pass"></div></div>
+     <div style="margin-top:10px"><button id="nu-add">Add user</button></div>`);
+  $("nu-add").onclick = async () => {
+    await apiJson("/api/users", {method: "POST",
+      body: {username: $("nu-name").value.trim(), password: $("nu-pass").value}}).catch(alertErr);
+    renderAdmin();
+  };
+
+  // agents card
+  const ac = card(box, "Agents");
+  const at = table(ac, ["Name", "Provider/Model", "Tools", ""]);
+  for (const a of agents) {
+    const tr = row(at, [a.name, `${a.provider} / ${a.model}`, ""]);
+    tr.cells[2].innerHTML = a.tools.map(t => `<span class="tag"></span>`).join("");
+    [...tr.cells[2].children].forEach((el, i) => el.textContent = a.tools[i]);
+    const td = tr.insertCell();
+    td.innerHTML = `<div class="row-actions"></div>`;
+    btn(td.firstChild, "edit", "ghost", () => agentForm(ac, options, a));
+    btn(td.firstChild, "delete", "danger", async () => {
+      if (!confirm(`Delete agent ${a.name}?`)) return;
+      await apiJson(`/api/agents/${a.id}`, {method: "DELETE"}).catch(alertErr);
+      renderAdmin();
+    });
+  }
+  const nb = document.createElement("div"); nb.style.marginTop = "10px"; ac.appendChild(nb);
+  btn(nb, "+ New agent", "", () => agentForm(ac, options, null));
+
+  // skills card
+  const sc = card(box, "Skills (agent-created knowledge — review here)");
+  if (!skills.length) sc.insertAdjacentHTML("beforeend", `<div class="muted">No skills yet. Agents create them as they learn.</div>`);
+  const st = table(sc, ["Name", "Description", "Tags", ""]);
+  for (const s of skills) {
+    const tr = row(st, [s.name, s.description, (s.tags || []).join(", ")]);
+    const td = tr.insertCell();
+    td.innerHTML = `<div class="row-actions"></div>`;
+    btn(td.firstChild, "view", "ghost", async () => {
+      const d = await apiJson("/api/skills/" + s.name);
+      alert(d.content.slice(0, 3000));
+    });
+    btn(td.firstChild, "delete", "danger", async () => {
+      if (!confirm(`Delete skill ${s.name}?`)) return;
+      await apiJson("/api/skills/" + s.name, {method: "DELETE"}).catch(alertErr);
+      renderAdmin();
+    });
+  }
+}
+
+function agentForm(parent, options, existing) {
+  const old = parent.querySelector(".agent-form"); if (old) old.remove();
+  const f = document.createElement("div");
+  f.className = "agent-form";
+  f.style.cssText = "margin-top:12px;border-top:1px solid var(--border);padding-top:8px";
+  f.innerHTML = `
+    <div class="grid2">
+      <div><label>Name</label><input id="af-name"></div>
+      <div><label>Description</label><input id="af-desc"></div>
+      <div><label>Provider</label><select id="af-provider"></select></div>
+      <div><label>Model</label><input id="af-model" placeholder="e.g. gpt-4o, claude-sonnet-4-6"></div>
+    </div>
+    <label>System prompt</label><textarea id="af-prompt" rows="4"></textarea>
+    <label>Tools</label><div id="af-tools"></div>
+    <div style="margin-top:12px;display:flex;gap:8px">
+      <button id="af-save"></button><button class="ghost" id="af-cancel">Cancel</button>
+    </div>`;
+  parent.appendChild(f);
+  for (const p of options.providers) {
+    const o = document.createElement("option"); o.value = o.textContent = p;
+    $("af-provider").appendChild(o);
+  }
+  for (const t of options.tools) {
+    const id = "aft-" + t;
+    const lbl = document.createElement("label");
+    lbl.style.cssText = "display:inline-flex;align-items:center;gap:4px;margin:2px 10px 2px 0;color:var(--text);font-size:13px";
+    const cb = document.createElement("input");
+    cb.type = "checkbox"; cb.id = id; cb.value = t; cb.style.width = "auto";
+    lbl.append(cb, document.createTextNode(t));
+    $("af-tools").appendChild(lbl);
+  }
+  if (existing) {
+    $("af-name").value = existing.name; $("af-desc").value = existing.description;
+    $("af-provider").value = existing.provider; $("af-model").value = existing.model;
+    $("af-prompt").value = existing.system_prompt;
+    for (const t of existing.tools) { const cb = $("aft-" + t); if (cb) cb.checked = true; }
+  }
+  $("af-save").textContent = existing ? "Save changes" : "Create agent";
+  $("af-cancel").onclick = () => f.remove();
+  $("af-save").onclick = async () => {
+    const body = {
+      name: $("af-name").value.trim(), description: $("af-desc").value.trim(),
+      provider: $("af-provider").value, model: $("af-model").value.trim(),
+      system_prompt: $("af-prompt").value,
+      tools: [...f.querySelectorAll("#af-tools input:checked")].map(c => c.value),
+    };
+    try {
+      if (existing) await apiJson(`/api/agents/${existing.id}`, {method: "PUT", body});
+      else await apiJson("/api/agents", {method: "POST", body});
+      renderAdmin();
+    } catch (e) { alert(e.message); }
+  };
+}
+
+// small DOM helpers
+function card(parent, title) {
+  const c = document.createElement("div"); c.className = "card";
+  const h = document.createElement("h3"); h.style.margin = "0 0 4px"; h.textContent = title;
+  c.appendChild(h); parent.appendChild(c); return c;
+}
+function table(parent, headers) {
+  const t = document.createElement("table");
+  const tr = t.createTHead().insertRow();
+  for (const h of headers) { const th = document.createElement("th"); th.textContent = h; tr.appendChild(th); }
+  t.createTBody(); parent.appendChild(t); return t.tBodies[0];
+}
+function row(tbody, cells) {
+  const tr = tbody.insertRow();
+  for (const c of cells) tr.insertCell().textContent = c;
+  return tr;
+}
+function btn(parent, label, cls, onclick) {
+  const b = document.createElement("button");
+  if (cls) b.className = cls;
+  b.textContent = label; b.onclick = onclick;
+  b.style.fontSize = "12px"; b.style.padding = "3px 8px";
+  parent.appendChild(b); return b;
+}
+const alertErr = e => alert(e.message);
+
+if (token) boot(); else $("li-user").focus();
+</script>
+</body>
+</html>
