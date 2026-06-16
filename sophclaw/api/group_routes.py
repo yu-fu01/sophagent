@@ -152,6 +152,42 @@ async def _sync_if_admin_group(db, gid: int) -> None:
         await db.sync_roles()  # admin-group membership drives users.role
 
 
+@router.post("/{gid}/join", status_code=201)
+async def request_join(gid: int, request: Request, user=Depends(require_user)):
+    """A user applies to join a group (REQ1.6); the owner approves later."""
+    db = request.app.state.db
+    await _group_or_404(db, gid)
+    if await db.is_member(gid, user["id"]):
+        raise HTTPException(400, "already a member")
+    await db.create_join(gid, user["id"], "request")
+    return {"ok": True}
+
+
+@router.post("/{gid}/invite", status_code=201)
+async def invite_user(gid: int, req: MemberAdd, request: Request, user=Depends(require_user)):
+    """Owner/admin invites a user to the group (REQ1.6); the user accepts later."""
+    db = request.app.state.db
+    await _group_or_404(db, gid)
+    if not await can_admin_group(db, gid, user["id"]):
+        raise HTTPException(403, "you cannot invite to this group")
+    if await db.get_user(req.user_id) is None:
+        raise HTTPException(404, "user not found")
+    if await db.is_member(gid, req.user_id):
+        raise HTTPException(400, "already a member")
+    await db.create_join(gid, req.user_id, "invite")
+    return {"ok": True}
+
+
+@router.get("/{gid}/pending")
+async def list_pending(gid: int, request: Request, user=Depends(require_user)):
+    """Pending join requests for a group (owner/admin)."""
+    db = request.app.state.db
+    await _group_or_404(db, gid)
+    if not await can_admin_group(db, gid, user["id"]):
+        raise HTTPException(403, "you cannot manage this group's members")
+    return [dict(r) for r in await db.list_group_requests(gid)]
+
+
 @router.get("/{gid}/sessions")
 async def list_group_sessions(gid: int, request: Request, user=Depends(require_user)):
     """All sessions in a group (owner / can_manage / admin)."""

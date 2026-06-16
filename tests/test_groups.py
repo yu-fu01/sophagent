@@ -221,3 +221,53 @@ def test_group_detail_lists_members(client, admin, bob):
     detail = client.get(f"/api/groups/{gid}", headers=bob).json()
     assert detail["id"] == gid
     assert "bob" in [m["username"] for m in detail["members"]]
+
+
+# -- Slice 5: join requests & invitations (REQ1.6) ---------------------------
+
+
+def test_join_request_approval_flow(client, admin, bob, agent_id):
+    alice = make_user(client, admin, "alice", "alicepw1")
+    gid, alice_id = _bob_gid(client, bob), uid(client, admin, "alice")
+    assert client.post(f"/api/groups/{gid}/join", headers=alice).status_code == 201
+    pending = client.get(f"/api/groups/{gid}/pending", headers=bob).json()
+    assert alice_id in [p["user_id"] for p in pending]
+    jid = pending[0]["id"]
+    assert client.post(f"/api/joinreq/{jid}/approve", headers=bob).status_code == 200
+    assert agent_id in [a["id"] for a in client.get("/api/agents", headers=alice).json()]
+    assert client.get(f"/api/groups/{gid}/pending", headers=bob).json() == []
+
+
+def test_invite_accept_flow(client, admin, bob, agent_id):
+    alice = make_user(client, admin, "alice", "alicepw1")
+    gid, alice_id = _bob_gid(client, bob), uid(client, admin, "alice")
+    assert client.post(f"/api/groups/{gid}/invite", json={"user_id": alice_id}, headers=bob).status_code == 201
+    inv = client.get("/api/me/invitations", headers=alice).json()
+    assert gid in [i["group_id"] for i in inv]
+    jid = inv[0]["id"]
+    assert client.post(f"/api/joinreq/{jid}/accept", headers=alice).status_code == 200
+    assert agent_id in [a["id"] for a in client.get("/api/agents", headers=alice).json()]
+
+
+def test_owner_rejects_request(client, admin, bob):
+    alice = make_user(client, admin, "alice", "alicepw1")
+    gid = _bob_gid(client, bob)
+    client.post(f"/api/groups/{gid}/join", headers=alice)
+    jid = client.get(f"/api/groups/{gid}/pending", headers=bob).json()[0]["id"]
+    assert client.delete(f"/api/joinreq/{jid}", headers=bob).status_code == 200
+    assert client.get(f"/api/groups/{gid}/pending", headers=bob).json() == []
+    # alice never became a member
+    assert gid not in [g["id"] for g in client.get("/api/groups", headers=alice).json()]
+
+
+def test_outsider_cannot_see_pending(client, admin, bob):
+    alice = make_user(client, admin, "alice", "alicepw1")
+    carol = make_user(client, admin, "carol", "carolpw1")
+    gid = _bob_gid(client, bob)
+    client.post(f"/api/groups/{gid}/join", headers=alice)
+    assert client.get(f"/api/groups/{gid}/pending", headers=carol).status_code == 403
+
+
+def test_cannot_request_when_already_member(client, admin, bob):
+    gid = _bob_gid(client, bob)
+    assert client.post(f"/api/groups/{gid}/join", headers=bob).status_code == 400
