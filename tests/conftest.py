@@ -116,5 +116,10 @@ def agent_id(client, bob) -> int:
     return resp.json()["id"]
 
 
+def uid(client, admin, username) -> int:
+    """Look up a user's id by username via the admin API."""
+    return next(u["id"] for u in client.get("/api/users", headers=admin).json() if u["username"] == username)
+
+
 def sse_events(resp) -> list[dict]:
     return [json.loads(line[6:]) for line in resp.text.splitlines() if line.startswith("data: ")]

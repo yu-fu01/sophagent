@@ -25,3 +25,12 @@ async def can_manage_group(db, gid: int, user_id: int) -> bool:
         return True
     member = await db.get_member(gid, user_id)
     return bool(member and member["can_manage"])
+
+
+async def can_admin_group(db, gid: int, user_id: int) -> bool:
+    """Manage membership and permissions: owner or global admin only
+    (a can_manage member governs agents/sessions, not the roster)."""
+    if await db.is_admin(user_id):
+        return True
+    group = await db.get_group(gid)
+    return group is not None and group["owner_id"] == user_id

@@ -169,6 +169,23 @@ class SessionCreate(BaseModel):
     title: str = ""
 
 
+class GroupCreate(BaseModel):
+    name: str = Field(min_length=1, max_length=64)
+    owner_id: Optional[int] = None  # admin only; defaults to the caller
+
+
+class GroupPatch(BaseModel):
+    name: str = Field(min_length=1, max_length=64)
+
+
+class MemberAdd(BaseModel):
+    user_id: int
+
+
+class MemberPatch(BaseModel):
+    can_manage: bool
+
+
 class ChatRequest(BaseModel):
     content: str = Field(min_length=1)
 

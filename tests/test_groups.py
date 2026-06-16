@@ -3,7 +3,7 @@
 import aiosqlite
 import pytest
 
-from conftest import make_user
+from conftest import make_user, uid
 
 from sophclaw.db import Database
 
@@ -156,3 +156,68 @@ def test_outsider_cannot_list_group_sessions(client, admin, bob):
     alice = make_user(client, admin, "alice", "alicepw1")
     bob_gid = client.get("/api/groups", headers=bob).json()[0]["id"]
     assert client.get(f"/api/groups/{bob_gid}/sessions", headers=alice).status_code == 403
+
+
+# -- Slice 4: members & permission management --------------------------------
+
+
+def _bob_gid(client, bob):
+    return client.get("/api/groups", headers=bob).json()[0]["id"]
+
+
+def test_owner_adds_member_who_gets_access(client, admin, bob, agent_id):
+    alice = make_user(client, admin, "alice", "alicepw1")
+    gid, alice_id = _bob_gid(client, bob), uid(client, admin, "alice")
+    assert client.post(f"/api/groups/{gid}/members", json={"user_id": alice_id}, headers=bob).status_code == 201
+    # member sees the group's agent and may create a session, but not create agents
+    assert agent_id in [a["id"] for a in client.get("/api/agents", headers=alice).json()]
+    assert client.post("/api/sessions", json={"agent_id": agent_id}, headers=alice).status_code == 201
+    assert client.post("/api/agents", json={**AGENT_BODY, "group_id": gid}, headers=alice).status_code == 403
+
+
+def test_grant_and_revoke_can_manage(client, admin, bob):
+    make_user(client, admin, "alice", "alicepw1")
+    alice = make_user(client, admin, "alice2", "alicepw1") if False else None  # noqa
+    alice = {"Authorization": f"Bearer {client.post('/api/auth/login', json={'username':'alice','password':'alicepw1'}).json()['token']}"}
+    gid, alice_id = _bob_gid(client, bob), uid(client, admin, "alice")
+    client.post(f"/api/groups/{gid}/members", json={"user_id": alice_id}, headers=bob)
+    assert client.patch(f"/api/groups/{gid}/members/{alice_id}", json={"can_manage": True}, headers=bob).status_code == 200
+    assert client.post("/api/agents", json={**AGENT_BODY, "name": "ag2", "group_id": gid}, headers=alice).status_code == 201
+    client.patch(f"/api/groups/{gid}/members/{alice_id}", json={"can_manage": False}, headers=bob)
+    assert client.post("/api/agents", json={**AGENT_BODY, "name": "ag3", "group_id": gid}, headers=alice).status_code == 403
+
+
+def test_member_cannot_manage_membership(client, admin, bob):
+    alice = make_user(client, admin, "alice", "alicepw1")
+    make_user(client, admin, "dave", "davepw123")
+    gid, alice_id, dave_id = _bob_gid(client, bob), uid(client, admin, "alice"), uid(client, admin, "dave")
+    client.post(f"/api/groups/{gid}/members", json={"user_id": alice_id}, headers=bob)
+    client.patch(f"/api/groups/{gid}/members/{alice_id}", json={"can_manage": True}, headers=bob)
+    # even with can_manage, a non-owner cannot add members or change permissions
+    assert client.post(f"/api/groups/{gid}/members", json={"user_id": dave_id}, headers=alice).status_code == 403
+
+
+def test_cannot_remove_owner(client, admin, bob):
+    gid, bob_id = _bob_gid(client, bob), uid(client, admin, "bob")
+    assert client.delete(f"/api/groups/{gid}/members/{bob_id}", headers=bob).status_code == 400
+
+
+def test_remove_member_revokes_access(client, admin, bob, agent_id):
+    alice = make_user(client, admin, "alice", "alicepw1")
+    gid, alice_id = _bob_gid(client, bob), uid(client, admin, "alice")
+    client.post(f"/api/groups/{gid}/members", json={"user_id": alice_id}, headers=bob)
+    assert client.delete(f"/api/groups/{gid}/members/{alice_id}", headers=bob).status_code == 200
+    assert agent_id not in [a["id"] for a in client.get("/api/agents", headers=alice).json()]
+
+
+def test_admin_creates_and_deletes_group(client, admin):
+    gid = client.post("/api/groups", json={"name": "team-x"}, headers=admin).json()["id"]
+    assert gid
+    assert client.delete(f"/api/groups/{gid}", headers=admin).status_code == 200
+
+
+def test_group_detail_lists_members(client, admin, bob):
+    gid = _bob_gid(client, bob)
+    detail = client.get(f"/api/groups/{gid}", headers=bob).json()
+    assert detail["id"] == gid
+    assert "bob" in [m["username"] for m in detail["members"]]
