@@ -247,10 +247,12 @@ class Database:
 
     # -- sessions ------------------------------------------------------------
 
-    async def create_session(self, session_id: str, user_id: int, agent_id: int, title: str = "") -> None:
+    async def create_session(self, session_id: str, user_id: int, agent_id: int,
+                             group_id: int, title: str = "") -> None:
         await self._exec(
-            "INSERT INTO sessions (id, user_id, agent_id, title, created_at, updated_at) VALUES (?,?,?,?,?,?)",
-            (session_id, user_id, agent_id, title, now(), now()),
+            "INSERT INTO sessions (id, user_id, agent_id, group_id, title, created_at, updated_at)"
+            " VALUES (?,?,?,?,?,?,?)",
+            (session_id, user_id, agent_id, group_id, title, now(), now()),
         )
 
     async def get_session(self, session_id: str, user_id: int | None = None) -> Optional[aiosqlite.Row]:
@@ -263,6 +265,14 @@ class Database:
             "SELECT s.*, a.name AS agent_name FROM sessions s JOIN agents a ON a.id=s.agent_id"
             " WHERE s.user_id=? ORDER BY s.updated_at DESC",
             (user_id,),
+        )
+
+    async def list_sessions_by_group(self, gid: int) -> list[aiosqlite.Row]:
+        return await self._all(
+            "SELECT s.*, a.name AS agent_name, u.username AS creator"
+            " FROM sessions s JOIN agents a ON a.id=s.agent_id JOIN users u ON u.id=s.user_id"
+            " WHERE s.group_id=? ORDER BY s.updated_at DESC",
+            (gid,),
         )
 
     async def touch_session(self, session_id: str, title: str | None = None) -> None:

@@ -1,8 +1,9 @@
 """Group membership, ownership, permissions, join requests and invitations."""
 
-from fastapi import APIRouter, Depends, Request
+from fastapi import APIRouter, Depends, HTTPException, Request
 
 from ..auth import require_user
+from ..perms import can_manage_group
 
 router = APIRouter()
 
@@ -29,3 +30,14 @@ async def list_groups(request: Request, user=Depends(require_user)):
     db = request.app.state.db
     rows = await db.list_groups() if await db.is_admin(user["id"]) else await db.list_user_groups(user["id"])
     return [_group_dict(r, await my_role(db, r, user["id"])) for r in rows]
+
+
+@router.get("/{gid}/sessions")
+async def list_group_sessions(gid: int, request: Request, user=Depends(require_user)):
+    """All sessions in a group (owner / can_manage / admin)."""
+    db = request.app.state.db
+    if await db.get_group(gid) is None:
+        raise HTTPException(404, "group not found")
+    if not await can_manage_group(db, gid, user["id"]):
+        raise HTTPException(403, "you cannot manage this group")
+    return [dict(r) for r in await db.list_sessions_by_group(gid)]

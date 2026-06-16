@@ -125,3 +125,34 @@ def test_admin_agent_defaults_to_admin_group(client, admin):
     assert resp.status_code == 201, resp.text
     admin_group = client.get("/api/groups", headers=admin).json()[0]
     assert resp.json()["group_id"] == admin_group["id"]
+
+
+# -- Slice 3: session group scoping ------------------------------------------
+
+
+def test_session_inherits_agent_group(client, admin, bob, agent_id):
+    session = client.post("/api/sessions", json={"agent_id": agent_id}, headers=bob).json()
+    bob_gid = client.get("/api/groups", headers=bob).json()[0]["id"]
+    assert session["group_id"] == bob_gid
+
+
+def test_non_member_cannot_create_session(client, admin, bob, agent_id):
+    alice = make_user(client, admin, "alice", "alicepw1")
+    r = client.post("/api/sessions", json={"agent_id": agent_id}, headers=alice)
+    assert r.status_code in (403, 404)
+
+
+def test_manager_lists_and_deletes_group_sessions(client, admin, bob, agent_id):
+    sid = client.post("/api/sessions", json={"agent_id": agent_id}, headers=bob).json()["id"]
+    bob_gid = client.get("/api/groups", headers=bob).json()[0]["id"]
+    listed = client.get(f"/api/groups/{bob_gid}/sessions", headers=admin)  # admin = global manager
+    assert listed.status_code == 200
+    assert sid in [s["id"] for s in listed.json()]
+    assert client.delete(f"/api/sessions/{sid}", headers=admin).status_code == 200
+    assert client.get(f"/api/sessions/{sid}", headers=bob).status_code == 404
+
+
+def test_outsider_cannot_list_group_sessions(client, admin, bob):
+    alice = make_user(client, admin, "alice", "alicepw1")
+    bob_gid = client.get("/api/groups", headers=bob).json()[0]["id"]
+    assert client.get(f"/api/groups/{bob_gid}/sessions", headers=alice).status_code == 403

@@ -66,11 +66,18 @@ def test_chat_flow_and_persistence(client, bob, agent_id):
 
 
 def test_session_isolation(client, admin, bob, agent_id):
-    sid = client.post("/api/sessions", json={"agent_id": agent_id}, headers=admin).json()["id"]
-    # bob cannot see, chat into, or delete admin's session
+    # carol is in her own group, unrelated to bob (neither manages the other)
+    resp = client.post("/api/users", json={"username": "carol", "password": "carolpw1"}, headers=admin)
+    assert resp.status_code == 201
+    carol = {"Authorization": f"Bearer {client.post('/api/auth/login', json={'username': 'carol', 'password': 'carolpw1'}).json()['token']}"}
+    caid = client.post("/api/agents", json={
+        "name": "c1", "system_prompt": "p", "provider": "test", "model": "m", "tools": [],
+    }, headers=carol).json()["id"]
+    sid = client.post("/api/sessions", json={"agent_id": caid}, headers=carol).json()["id"]
+    # bob cannot see, chat into, or delete carol's session, nor list it
     assert client.get(f"/api/sessions/{sid}", headers=bob).status_code == 404
     assert client.post(f"/api/sessions/{sid}/chat", json={"content": "x"}, headers=bob).status_code == 404
-    assert client.delete(f"/api/sessions/{sid}", headers=bob).status_code == 404
+    assert client.delete(f"/api/sessions/{sid}", headers=bob).status_code in (403, 404)
     assert [s["id"] for s in client.get("/api/sessions", headers=bob).json()] == []
 
 

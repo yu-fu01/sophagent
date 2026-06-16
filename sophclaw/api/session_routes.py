@@ -9,9 +9,24 @@ from fastapi.responses import StreamingResponse
 from ..agent.runtime import build_runner
 from ..auth import require_user
 from ..models import AgentDef, ChatRequest, SessionCreate
+from ..perms import can_access_group, can_manage_group
 
 log = logging.getLogger(__name__)
 router = APIRouter()
+
+
+async def _owned_or_managed(request: Request, session_id: str, user):
+    """Resolve a session the caller may act on: its creator, or a group manager.
+    Returns None if it doesn't exist or the caller has no claim (caller sees 404)."""
+    db = request.app.state.db
+    session = await db.get_session(session_id)
+    if session is None:
+        return None
+    if session["user_id"] == user["id"]:
+        return session
+    if await can_manage_group(db, session["group_id"], user["id"]):
+        return session
+    return None
 
 
 @router.get("")
@@ -23,17 +38,20 @@ async def list_sessions(request: Request, user=Depends(require_user)):
 @router.post("", status_code=201)
 async def create_session(req: SessionCreate, request: Request, user=Depends(require_user)):
     db = request.app.state.db
-    if await db.get_agent(req.agent_id) is None:
+    agent = await db.get_agent(req.agent_id)
+    if agent is None:
         raise HTTPException(404, "agent not found")
+    if not await can_access_group(db, agent["group_id"], user["id"]):
+        raise HTTPException(403, "you cannot use agents in this group")
     session_id = uuid.uuid4().hex
-    await db.create_session(session_id, user["id"], req.agent_id, req.title)
+    await db.create_session(session_id, user["id"], req.agent_id, agent["group_id"], req.title)
     return dict(await db.get_session(session_id))
 
 
 @router.get("/{session_id}")
 async def get_session(session_id: str, request: Request, user=Depends(require_user)):
     db = request.app.state.db
-    session = await db.get_session(session_id, user["id"])
+    session = await db.get_session(session_id, user["id"])  # content stays creator-private
     if session is None:
         raise HTTPException(404, "session not found")
     messages = await db.load_messages(session_id)
@@ -43,7 +61,7 @@ async def get_session(session_id: str, request: Request, user=Depends(require_us
 @router.delete("/{session_id}")
 async def delete_session(session_id: str, request: Request, user=Depends(require_user)):
     db = request.app.state.db
-    if await db.get_session(session_id, user["id"]) is None:
+    if await _owned_or_managed(request, session_id, user) is None:
         raise HTTPException(404, "session not found")
     request.app.state.manager.stop(session_id)
     await db.delete_session(session_id)
@@ -52,7 +70,7 @@ async def delete_session(session_id: str, request: Request, user=Depends(require
 
 @router.post("/{session_id}/stop")
 async def stop_session(session_id: str, request: Request, user=Depends(require_user)):
-    if await request.app.state.db.get_session(session_id, user["id"]) is None:
+    if await _owned_or_managed(request, session_id, user) is None:
         raise HTTPException(404, "session not found")
     return {"stopped": request.app.state.manager.stop(session_id)}
 
