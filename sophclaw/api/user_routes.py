@@ -18,11 +18,13 @@ async def list_users(request: Request, _admin=Depends(require_admin)):
 
 @router.post("", status_code=201)
 async def create_user(req: UserCreate, request: Request, _admin=Depends(require_admin)):
+    db = request.app.state.db
     try:
-        user_id = await request.app.state.db.create_user(req.username, hash_password(req.password), req.role)
+        user_id = await db.create_user(req.username, hash_password(req.password), "user")
     except aiosqlite.IntegrityError:
         raise HTTPException(409, "username already exists")
-    return {"id": user_id, "username": req.username, "role": req.role}
+    await db.create_personal_group(user_id, req.username)  # REQ1.7: own group, owner
+    return {"id": user_id, "username": req.username, "role": "user"}
 
 
 @router.patch("/{user_id}")

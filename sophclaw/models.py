@@ -138,9 +138,9 @@ class PasswordChange(BaseModel):
 
 
 class UserCreate(BaseModel):
+    # admin privilege is granted by adding a user to the admin group, not a role flag
     username: str = Field(pattern=r"^[a-zA-Z0-9_.-]{2,32}$")
     password: str = Field(min_length=6)
-    role: Literal["admin", "user"] = "user"
 
 
 class UserPatch(BaseModel):

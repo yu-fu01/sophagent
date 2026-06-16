@@ -57,7 +57,11 @@ async def require_user(
     return user
 
 
-async def require_admin(user: Any = Depends(require_user)) -> Any:
-    if user["role"] != "admin":
+async def require_admin(
+    request: Request,
+    user: Any = Depends(require_user),
+) -> Any:
+    """Admin privilege is derived from admin-group membership (REQ1.8)."""
+    if not await request.app.state.db.is_admin(user["id"]):
         raise HTTPException(403, "admin privileges required")
     return user

@@ -43,6 +43,7 @@ async def lifespan(app: FastAPI):
     db = Database(cfg.db_path)
     await db.connect()
     await _bootstrap_admin(db)
+    await db.ensure_groups()  # admin group + personal groups; idempotent (also migrates old DBs)
 
     from .skills.store import SkillStore
     from .tools import load_all

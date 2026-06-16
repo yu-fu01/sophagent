@@ -15,8 +15,9 @@ async def login(req: LoginRequest, request: Request):
 
 
 @router.get("/me")
-async def me(user=Depends(require_user)):
-    return {"id": user["id"], "username": user["username"], "role": user["role"]}
+async def me(request: Request, user=Depends(require_user)):
+    is_admin = await request.app.state.db.is_admin(user["id"])
+    return {"id": user["id"], "username": user["username"], "role": user["role"], "is_admin": is_admin}
 
 
 @router.post("/password")

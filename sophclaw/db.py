@@ -60,6 +60,29 @@ CREATE TABLE IF NOT EXISTS memory (
   updated_at TEXT NOT NULL
 );
 CREATE INDEX IF NOT EXISTS idx_memory_user ON memory(user_id);
+CREATE TABLE IF NOT EXISTS groups (
+  id INTEGER PRIMARY KEY,
+  name TEXT NOT NULL,
+  owner_id INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+  is_admin_group INTEGER NOT NULL DEFAULT 0,
+  created_at TEXT NOT NULL
+);
+CREATE TABLE IF NOT EXISTS group_members (
+  group_id INTEGER NOT NULL REFERENCES groups(id) ON DELETE CASCADE,
+  user_id INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+  can_manage INTEGER NOT NULL DEFAULT 0,
+  joined_at TEXT NOT NULL,
+  PRIMARY KEY (group_id, user_id)
+);
+CREATE INDEX IF NOT EXISTS idx_members_user ON group_members(user_id);
+CREATE TABLE IF NOT EXISTS group_join (
+  id INTEGER PRIMARY KEY,
+  group_id INTEGER NOT NULL REFERENCES groups(id) ON DELETE CASCADE,
+  user_id INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+  kind TEXT NOT NULL,          -- 'request' | 'invite'
+  created_at TEXT NOT NULL,
+  UNIQUE(group_id, user_id, kind)
+);
 """
 
 
@@ -252,3 +275,135 @@ class Database:
     async def memory_remove(self, memory_id: int, user_id: int) -> bool:
         cur = await self._exec("DELETE FROM memory WHERE id=? AND user_id=?", (memory_id, user_id))
         return cur.rowcount > 0
+
+    # -- groups --------------------------------------------------------------
+
+    async def create_group(self, name: str, owner_id: int, is_admin_group: bool = False) -> int:
+        cur = await self._exec(
+            "INSERT INTO groups (name, owner_id, is_admin_group, created_at) VALUES (?,?,?,?)",
+            (name, owner_id, 1 if is_admin_group else 0, now()),
+        )
+        gid = cur.lastrowid
+        await self._exec(
+            "INSERT OR IGNORE INTO group_members (group_id, user_id, can_manage, joined_at) VALUES (?,?,1,?)",
+            (gid, owner_id, now()),
+        )
+        return gid
+
+    async def create_personal_group(self, user_id: int, username: str) -> int:
+        return await self.create_group(f"{username} 的组", user_id)
+
+    async def get_group(self, gid: int) -> Optional[aiosqlite.Row]:
+        return await self._one("SELECT * FROM groups WHERE id=?", (gid,))
+
+    async def get_admin_group(self) -> Optional[aiosqlite.Row]:
+        return await self._one("SELECT * FROM groups WHERE is_admin_group=1 LIMIT 1")
+
+    async def list_groups(self) -> list[aiosqlite.Row]:
+        return await self._all("SELECT * FROM groups ORDER BY id")
+
+    async def list_user_groups(self, user_id: int) -> list[aiosqlite.Row]:
+        return await self._all(
+            "SELECT g.*, gm.can_manage FROM groups g JOIN group_members gm ON gm.group_id=g.id"
+            " WHERE gm.user_id=? ORDER BY g.id",
+            (user_id,),
+        )
+
+    async def rename_group(self, gid: int, name: str) -> None:
+        await self._exec("UPDATE groups SET name=? WHERE id=?", (name, gid))
+
+    async def delete_group(self, gid: int) -> None:
+        await self._exec("DELETE FROM groups WHERE id=?", (gid,))
+
+    # -- group members -------------------------------------------------------
+
+    async def get_member(self, gid: int, user_id: int) -> Optional[aiosqlite.Row]:
+        return await self._one("SELECT * FROM group_members WHERE group_id=? AND user_id=?", (gid, user_id))
+
+    async def is_member(self, gid: int, user_id: int) -> bool:
+        return await self.get_member(gid, user_id) is not None
+
+    async def list_members(self, gid: int) -> list[aiosqlite.Row]:
+        return await self._all(
+            "SELECT gm.user_id, gm.can_manage, gm.joined_at, u.username"
+            " FROM group_members gm JOIN users u ON u.id=gm.user_id"
+            " WHERE gm.group_id=? ORDER BY gm.user_id",
+            (gid,),
+        )
+
+    async def add_member(self, gid: int, user_id: int, can_manage: bool = False) -> None:
+        await self._exec(
+            "INSERT OR IGNORE INTO group_members (group_id, user_id, can_manage, joined_at) VALUES (?,?,?,?)",
+            (gid, user_id, 1 if can_manage else 0, now()),
+        )
+
+    async def set_can_manage(self, gid: int, user_id: int, can_manage: bool) -> None:
+        await self._exec(
+            "UPDATE group_members SET can_manage=? WHERE group_id=? AND user_id=?",
+            (1 if can_manage else 0, gid, user_id),
+        )
+
+    async def remove_member(self, gid: int, user_id: int) -> None:
+        await self._exec("DELETE FROM group_members WHERE group_id=? AND user_id=?", (gid, user_id))
+
+    async def is_admin(self, user_id: int) -> bool:
+        ag = await self.get_admin_group()
+        return ag is not None and await self.is_member(ag["id"], user_id)
+
+    async def get_root_admin_id(self) -> Optional[int]:
+        ag = await self.get_admin_group()
+        return ag["owner_id"] if ag else None
+
+    # -- group join requests / invitations -----------------------------------
+
+    async def create_join(self, gid: int, user_id: int, kind: str) -> int:
+        cur = await self._exec(
+            "INSERT OR IGNORE INTO group_join (group_id, user_id, kind, created_at) VALUES (?,?,?,?)",
+            (gid, user_id, kind, now()),
+        )
+        return cur.lastrowid
+
+    async def get_join(self, join_id: int) -> Optional[aiosqlite.Row]:
+        return await self._one("SELECT * FROM group_join WHERE id=?", (join_id,))
+
+    async def list_group_requests(self, gid: int) -> list[aiosqlite.Row]:
+        return await self._all(
+            "SELECT j.*, u.username FROM group_join j JOIN users u ON u.id=j.user_id"
+            " WHERE j.group_id=? AND j.kind='request' ORDER BY j.id",
+            (gid,),
+        )
+
+    async def list_user_invitations(self, user_id: int) -> list[aiosqlite.Row]:
+        return await self._all(
+            "SELECT j.*, g.name AS group_name FROM group_join j JOIN groups g ON g.id=j.group_id"
+            " WHERE j.user_id=? AND j.kind='invite' ORDER BY j.id",
+            (user_id,),
+        )
+
+    async def delete_join(self, join_id: int) -> None:
+        await self._exec("DELETE FROM group_join WHERE id=?", (join_id,))
+
+    # -- bootstrap / migration reconciler -------------------------------------
+
+    async def sync_roles(self) -> None:
+        """Keep users.role in sync with admin-group membership (cache only)."""
+        ag = await self.get_admin_group()
+        if ag is None:
+            return
+        await self._exec("UPDATE users SET role='user' WHERE role='admin'")
+        await self._exec(
+            "UPDATE users SET role='admin' WHERE id IN (SELECT user_id FROM group_members WHERE group_id=?)",
+            (ag["id"],),
+        )
+
+    async def ensure_groups(self) -> None:
+        """Idempotent: create the admin group, give every user a personal group,
+        and keep users.role synced. Safe to run on every startup."""
+        if await self.get_admin_group() is None:
+            row = await self._one("SELECT id FROM users WHERE role='admin' ORDER BY id LIMIT 1")
+            if row is not None:
+                await self.create_group("admin group", row["id"], is_admin_group=True)
+        ownerless = await self._all("SELECT id, username FROM users WHERE id NOT IN (SELECT owner_id FROM groups)")
+        for r in ownerless:
+            await self.create_personal_group(r["id"], r["username"])
+        await self.sync_roles()
