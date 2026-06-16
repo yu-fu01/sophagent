@@ -147,8 +147,8 @@ class UserCreate(BaseModel):
 
 
 class UserPatch(BaseModel):
+    # admin status is changed via admin-group membership, not here
     password: Optional[str] = Field(default=None, min_length=6)
-    role: Optional[Literal["admin", "user"]] = None
 
 
 class AgentCreate(BaseModel):

@@ -271,3 +271,41 @@ def test_outsider_cannot_see_pending(client, admin, bob):
 def test_cannot_request_when_already_member(client, admin, bob):
     gid = _bob_gid(client, bob)
     assert client.post(f"/api/groups/{gid}/join", headers=bob).status_code == 400
+
+
+# -- Slice 6: root admin protection ------------------------------------------
+
+
+def _admin_gid(client, admin):
+    return next(g["id"] for g in client.get("/api/groups", headers=admin).json() if g["is_admin_group"])
+
+
+def _make_second_admin(client, admin, username="bob", password="bobpw123"):
+    hdr = make_user(client, admin, username, password)
+    gid, the_id = _admin_gid(client, admin), uid(client, admin, username)
+    assert client.post(f"/api/groups/{gid}/members", json={"user_id": the_id}, headers=admin).status_code == 201
+    assert client.get("/api/auth/me", headers=hdr).json()["is_admin"] is True
+    return hdr, the_id
+
+
+def test_other_admin_cannot_modify_root_admin(client, admin):
+    bob_hdr, _ = _make_second_admin(client, admin)
+    root_id = uid(client, admin, "admin")
+    assert client.patch(f"/api/users/{root_id}", json={"password": "hacked123"}, headers=bob_hdr).status_code == 403
+    assert client.delete(f"/api/users/{root_id}", headers=bob_hdr).status_code == 403
+
+
+def test_root_admin_can_modify_other_admins(client, admin):
+    from conftest import login
+    bob_hdr, bob_id = _make_second_admin(client, admin)
+    gid = _admin_gid(client, admin)
+    # root admin resets bob's password and revokes admin by removing from admin group
+    assert client.patch(f"/api/users/{bob_id}", json={"password": "newpw1234"}, headers=admin).status_code == 200
+    assert client.delete(f"/api/groups/{gid}/members/{bob_id}", headers=admin).status_code == 200
+    bob_after = login(client, "bob", "newpw1234")
+    assert client.get("/api/auth/me", headers=bob_after).json()["is_admin"] is False
+
+
+def test_root_admin_cannot_be_deleted(client, admin):
+    root_id = uid(client, admin, "admin")
+    assert client.delete(f"/api/users/{root_id}", headers=admin).status_code == 400
