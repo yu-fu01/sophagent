@@ -21,7 +21,7 @@ CREATE TABLE IF NOT EXISTS users (
 );
 CREATE TABLE IF NOT EXISTS agents (
   id INTEGER PRIMARY KEY,
-  name TEXT UNIQUE NOT NULL,
+  name TEXT NOT NULL,
   description TEXT DEFAULT '',
   system_prompt TEXT NOT NULL,
   provider TEXT NOT NULL,
@@ -30,9 +30,11 @@ CREATE TABLE IF NOT EXISTS agents (
   skills TEXT,
   max_iterations INTEGER DEFAULT 30,
   temperature REAL,
+  group_id INTEGER REFERENCES groups(id) ON DELETE CASCADE,
   created_by INTEGER REFERENCES users(id),
   created_at TEXT NOT NULL,
-  updated_at TEXT NOT NULL
+  updated_at TEXT NOT NULL,
+  UNIQUE(group_id, name)
 );
 CREATE TABLE IF NOT EXISTS sessions (
   id TEXT PRIMARY KEY,
@@ -104,6 +106,42 @@ class Database:
         await self.conn.execute("PRAGMA foreign_keys=ON")
         await self.conn.executescript(SCHEMA)
         await self.conn.commit()
+        await self._migrate_structure()
+
+    async def _columns(self, table: str) -> set[str]:
+        rows = await self._all(f"PRAGMA table_info({table})")
+        return {r["name"] for r in rows}
+
+    async def _migrate_structure(self) -> None:
+        """Upgrade pre-multiuser schemas in place (idempotent). New DBs already
+        match SCHEMA, so these guards are no-ops there."""
+        agent_cols = await self._columns("agents")
+        if agent_cols and "group_id" not in agent_cols:
+            # rebuild agents to add group_id and switch UNIQUE(name) -> UNIQUE(group_id, name)
+            await self.conn.execute("PRAGMA foreign_keys=OFF")
+            await self.conn.executescript(
+                """
+                CREATE TABLE agents_new (
+                  id INTEGER PRIMARY KEY, name TEXT NOT NULL, description TEXT DEFAULT '',
+                  system_prompt TEXT NOT NULL, provider TEXT NOT NULL, model TEXT NOT NULL,
+                  tools TEXT NOT NULL DEFAULT '[]', skills TEXT, max_iterations INTEGER DEFAULT 30,
+                  temperature REAL, group_id INTEGER REFERENCES groups(id) ON DELETE CASCADE,
+                  created_by INTEGER REFERENCES users(id), created_at TEXT NOT NULL,
+                  updated_at TEXT NOT NULL, UNIQUE(group_id, name)
+                );
+                INSERT INTO agents_new (id, name, description, system_prompt, provider, model, tools,
+                  skills, max_iterations, temperature, group_id, created_by, created_at, updated_at)
+                SELECT id, name, description, system_prompt, provider, model, tools, skills,
+                  max_iterations, temperature, NULL, created_by, created_at, updated_at FROM agents;
+                DROP TABLE agents;
+                ALTER TABLE agents_new RENAME TO agents;
+                """
+            )
+            await self.conn.commit()
+            await self.conn.execute("PRAGMA foreign_keys=ON")
+        session_cols = await self._columns("sessions")
+        if session_cols and "group_id" not in session_cols:
+            await self._exec("ALTER TABLE sessions ADD COLUMN group_id INTEGER REFERENCES groups(id)")
 
     async def close(self) -> None:
         if self.conn:
@@ -160,17 +198,17 @@ class Database:
 
     # -- agents --------------------------------------------------------------
 
-    async def create_agent(self, fields: dict[str, Any], created_by: int) -> int:
+    async def create_agent(self, fields: dict[str, Any], created_by: int, group_id: int) -> int:
         cur = await self._exec(
             "INSERT INTO agents (name, description, system_prompt, provider, model, tools, skills,"
-            " max_iterations, temperature, created_by, created_at, updated_at)"
-            " VALUES (?,?,?,?,?,?,?,?,?,?,?,?)",
+            " max_iterations, temperature, group_id, created_by, created_at, updated_at)"
+            " VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?)",
             (
                 fields["name"], fields.get("description", ""), fields["system_prompt"],
                 fields["provider"], fields["model"], json.dumps(fields.get("tools", [])),
                 json.dumps(fields["skills"]) if fields.get("skills") is not None else None,
                 fields.get("max_iterations", 30), fields.get("temperature"),
-                created_by, now(), now(),
+                group_id, created_by, now(), now(),
             ),
         )
         return cur.lastrowid
@@ -183,6 +221,14 @@ class Database:
 
     async def list_agents(self) -> list[aiosqlite.Row]:
         return await self._all("SELECT * FROM agents ORDER BY id")
+
+    async def list_agents_for_user(self, user_id: int) -> list[aiosqlite.Row]:
+        """Agents in every group the user is a member of."""
+        return await self._all(
+            "SELECT a.* FROM agents a JOIN group_members gm ON gm.group_id=a.group_id"
+            " WHERE gm.user_id=? ORDER BY a.id",
+            (user_id,),
+        )
 
     async def update_agent(self, agent_id: int, fields: dict[str, Any]) -> None:
         await self._exec(
@@ -299,6 +345,10 @@ class Database:
     async def get_admin_group(self) -> Optional[aiosqlite.Row]:
         return await self._one("SELECT * FROM groups WHERE is_admin_group=1 LIMIT 1")
 
+    async def get_owned_group(self, user_id: int) -> Optional[aiosqlite.Row]:
+        """The user's primary group: admin group for the root admin, else personal."""
+        return await self._one("SELECT * FROM groups WHERE owner_id=? ORDER BY id LIMIT 1", (user_id,))
+
     async def list_groups(self) -> list[aiosqlite.Row]:
         return await self._all("SELECT * FROM groups ORDER BY id")
 
@@ -407,3 +457,11 @@ class Database:
         for r in ownerless:
             await self.create_personal_group(r["id"], r["username"])
         await self.sync_roles()
+        # backfill resources orphaned by a pre-multiuser DB
+        ag = await self.get_admin_group()
+        if ag is not None:
+            await self._exec("UPDATE agents SET group_id=? WHERE group_id IS NULL", (ag["id"],))
+        await self._exec(
+            "UPDATE sessions SET group_id=(SELECT id FROM groups WHERE owner_id=sessions.user_id LIMIT 1)"
+            " WHERE group_id IS NULL"
+        )

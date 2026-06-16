@@ -105,9 +105,11 @@ class AgentDef:
     skills: list[str] | None  # None = all skills visible
     max_iterations: int = 30
     temperature: float | None = None
+    group_id: int | None = None
 
     @classmethod
     def from_row(cls, row: Any) -> "AgentDef":
+        keys = row.keys()
         return cls(
             id=row["id"],
             name=row["name"],
@@ -119,6 +121,7 @@ class AgentDef:
             skills=json.loads(row["skills"]) if row["skills"] else None,
             max_iterations=row["max_iterations"] or 30,
             temperature=row["temperature"],
+            group_id=row["group_id"] if "group_id" in keys else None,
         )
 
 
@@ -158,6 +161,7 @@ class AgentCreate(BaseModel):
     skills: Optional[list[str]] = None
     max_iterations: int = Field(default=30, ge=1, le=200)
     temperature: Optional[float] = Field(default=None, ge=0, le=2)
+    group_id: Optional[int] = None  # omitted => caller's primary (owned) group
 
 
 class SessionCreate(BaseModel):

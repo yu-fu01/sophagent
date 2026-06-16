@@ -105,12 +105,13 @@ def bob(client, admin):
 
 
 @pytest.fixture
-def agent_id(client, admin) -> int:
+def agent_id(client, bob) -> int:
+    # bob owns his personal group, so he may create an agent in it and use it
     resp = client.post("/api/agents", json={
         "name": "helper", "system_prompt": "You are helper.",
         "provider": "test", "model": "test-model",
         "tools": ["read_file", "write_file", "skills_list", "skill_view", "skill_manage", "memory"],
-    }, headers=admin)
+    }, headers=bob)
     assert resp.status_code == 201, resp.text
     return resp.json()["id"]
 
