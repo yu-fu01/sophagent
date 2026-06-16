@@ -6,8 +6,8 @@
 ## 特性
 
 - **模型**：任意 OpenAI 兼容第三方 API（可配 `base_url`）+ Anthropic 原生 API
-- **多 agent**：管理员可定义多个 agent（system prompt / 模型 / 工具白名单 / skill 白名单），用户开会话时选择
-- **多用户**：JWT 登录，admin / user 两级角色；session、工作目录、记忆全部按用户隔离
+- **多 agent**：在所属用户组内定义多个 agent（system prompt / 模型 / 工具白名单 / skill 白名单），用户开会话时选择
+- **多用户 + 用户组**：JWT 登录；每个用户自带一个本人为 owner 的组，agent/session 按组隔离；owner 可授予成员管理权、审批加入申请、邀请成员；管理员身份由 admin group 成员资格派生（root admin 受保护）。工作目录与记忆仍按用户隔离
 - **自进化**：skill 索引注入 system prompt，agent 通过 `skill_manage` 工具在运行时自主创建 / 改进 / 删除 skill（SKILL.md + YAML frontmatter，与 hermes 格式兼容）
 - **内置工具**：文件读写、终端、Python 执行、web 搜索 / 抓取、长期记忆、skill 管理、子 agent 委派（`delegate_task`，深度限 1）
 - **接口**：REST API + SSE 流式聊天 + OpenAI 兼容 `/v1/chat/completions` + 单文件 Web 界面（零前端依赖）
@@ -24,10 +24,11 @@ docker compose up -d --build
 
 ### 上手流程
 
-1. admin 登录 → Admin 页签 → 创建 agent（选 provider、填模型名、勾选工具）
-2. Admin 页签 → 添加普通用户
-3. 任意用户：New session → 选 agent → 聊天
-4. agent 在对话中学到可复用流程时会自建 skill；admin 可在 Skills 卡片审查 / 删除
+1. 登录 → Agents 页签 → 在自己拥有的组里创建 agent（选 provider、填模型名、勾选工具）
+2. admin 登录 → Admin 页签 → 添加用户（自动建其个人组）/ 管理全局用户与组 / 把用户加入 admin group 即授予管理员权
+3. Groups 页签 → 管理本组成员与权限、审批加入申请、邀请成员、申请加入其他组
+4. 任意用户：New session → 选 agent → 聊天
+5. agent 在对话中学到可复用流程时会自建 skill；admin 可在 Skills 卡片审查 / 删除
 
 ## 本地开发
 
@@ -61,12 +62,14 @@ API key 只存在于配置 / 环境变量中，不入库。
 
 | 方法 | 路径 | 权限 | 说明 |
 |---|---|---|---|
-| POST | `/api/auth/login` | 公开 | → `{token}` |
-| GET/POST/PATCH/DELETE | `/api/users[/{id}]` | admin | 用户管理 |
-| GET/POST/PUT/DELETE | `/api/agents[/{id}]` | 读:user 写:admin | agent 定义 |
-| GET/POST | `/api/sessions` | user | 自己的会话 |
-| POST | `/api/sessions/{id}/chat` | owner | SSE 流（text_delta / tool_call / tool_result / done / error） |
-| POST | `/api/sessions/{id}/stop` | owner | 中断当前 turn |
+| POST | `/api/auth/login` | 公开 | → `{token}`；`/api/auth/me` 返回 `is_admin` |
+| GET/POST/PATCH/DELETE | `/api/users[/{id}]` | admin | 用户管理（建用户自动建个人组；root admin 受保护） |
+| GET/POST/PATCH/DELETE | `/api/groups[/{id}]` | 成员读 / owner·admin 写 | 组与成员；含 `/{id}/members`、`/{id}/sessions` |
+| POST/GET/DELETE | `/api/groups/{id}/join·invite·pending`、`/api/me/invitations`、`/api/joinreq/{id}/...` | 见正文 | 加入申请与邀请审批 |
+| GET/POST/PUT/DELETE | `/api/agents[/{id}]` | 组成员读 / owner·can_manage 写 | agent 定义（按组隔离） |
+| GET/POST | `/api/sessions` | 组成员 | 自己的会话；owner/can_manage 可经 `/api/groups/{id}/sessions` 查全组 |
+| POST | `/api/sessions/{id}/chat` | 创建者 | SSE 流（text_delta / tool_call / tool_result / done / error） |
+| POST | `/api/sessions/{id}/stop` | 创建者 / 组管理者 | 中断当前 turn |
 | GET/PUT/DELETE | `/api/skills[/{name}]` | 读:user 写:admin | skill 库审查通道 |
 | POST | `/v1/chat/completions` | Bearer JWT | OpenAI 兼容；`model` = agent 名；支持 `stream` |
 | GET | `/v1/models` | Bearer JWT | 列出 agents |
