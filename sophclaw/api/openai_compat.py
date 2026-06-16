@@ -29,9 +29,13 @@ def _content_to_text(content) -> str:
     return "" if content is None else str(content)
 
 
+async def _visible_agents(db, user) -> list:
+    return await db.list_agents() if await db.is_admin(user["id"]) else await db.list_agents_for_user(user["id"])
+
+
 @router.get("/models")
-async def list_models(request: Request, _user=Depends(require_user)):
-    rows = await request.app.state.db.list_agents()
+async def list_models(request: Request, user=Depends(require_user)):
+    rows = await _visible_agents(request.app.state.db, user)
     return {
         "object": "list",
         "data": [{"id": r["name"], "object": "model", "owned_by": "sophclaw"} for r in rows],
@@ -41,7 +45,8 @@ async def list_models(request: Request, _user=Depends(require_user)):
 @router.post("/chat/completions")
 async def chat_completions(req: OpenAIChatRequest, request: Request, user=Depends(require_user)):
     state = request.app.state
-    row = await state.db.get_agent_by_name(req.model)
+    # resolve the model name among the caller's visible agents (cross-group: first match)
+    row = next((r for r in await _visible_agents(state.db, user) if r["name"] == req.model), None)
     if row is None:
         raise HTTPException(404, f"unknown model (agent) {req.model!r}")
     agent = AgentDef.from_row(row)

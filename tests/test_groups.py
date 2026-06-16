@@ -309,3 +309,21 @@ def test_root_admin_can_modify_other_admins(client, admin):
 def test_root_admin_cannot_be_deleted(client, admin):
     root_id = uid(client, admin, "admin")
     assert client.delete(f"/api/users/{root_id}", headers=admin).status_code == 400
+
+
+# -- Slice 7: openai-compat scoping ------------------------------------------
+
+
+def test_openai_models_scoped_to_visible_agents(client, admin, bob, agent_id):
+    alice = make_user(client, admin, "alice", "alicepw1")
+    assert "helper" in [m["id"] for m in client.get("/v1/models", headers=bob).json()["data"]]
+    assert "helper" not in [m["id"] for m in client.get("/v1/models", headers=alice).json()["data"]]
+    # admin sees every agent
+    assert "helper" in [m["id"] for m in client.get("/v1/models", headers=admin).json()["data"]]
+
+
+def test_openai_chat_denied_for_outsider(client, admin, bob, agent_id):
+    alice = make_user(client, admin, "alice", "alicepw1")
+    r = client.post("/v1/chat/completions", headers=alice,
+                    json={"model": "helper", "messages": [{"role": "user", "content": "hi"}]})
+    assert r.status_code == 404
