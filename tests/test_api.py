@@ -1,15 +1,8 @@
 """End-to-end API tests with a scripted fake provider (no real model calls)."""
 
-import json
-from typing import AsyncIterator
+from sophclaw.models import AssistantTurn, ToolCall
 
-import pytest
-from fastapi.testclient import TestClient
-
-import sophclaw.providers as providers_mod
-from sophclaw import config as config_mod
-from sophclaw.config import ProviderConfig
-from sophclaw.models import AssistantTurn, Message, StreamEvent, ToolCall
+from conftest import sse_events  # noqa: F401  (shared harness helper)
 
 SKILL_MD = """---
 name: greet
@@ -19,80 +12,6 @@ description: "How to greet users"
 # Greet
 Say hello warmly.
 """
-
-
-class EchoProvider:
-    """Echoes the last user message; runs scripted turns first if provided."""
-
-    def __init__(self):
-        self.script: list[AssistantTurn] = []
-
-    async def chat(self, *, model, system, messages, tools=None,
-                   temperature=None, max_tokens=None) -> AsyncIterator[StreamEvent]:
-        if self.script:
-            turn = self.script.pop(0)
-        else:
-            last_user = next((m.content for m in reversed(messages) if m.role == "user"), "")
-            turn = AssistantTurn(content=f"echo: {last_user}", stop_reason="stop",
-                                 input_tokens=10, output_tokens=5)
-        if turn.content:
-            yield StreamEvent("text_delta", text=turn.content)
-        yield StreamEvent("turn_done", turn=turn)
-
-
-@pytest.fixture
-def client(tmp_path, monkeypatch):
-    monkeypatch.setenv("SOPHCLAW_DATA_DIR", str(tmp_path / "data"))
-    monkeypatch.setenv("ADMIN_USERNAME", "admin")
-    monkeypatch.setenv("ADMIN_PASSWORD", "adminpw")
-    config_mod.reset_config()
-    providers_mod.reset_providers()
-    cfg = config_mod.get_config()
-    cfg.providers["test"] = ProviderConfig(name="test", api_mode="openai", context_limit=100_000)
-    provider = EchoProvider()
-    providers_mod._cache["test"] = provider
-
-    from sophclaw.main import create_app
-
-    app = create_app()
-    with TestClient(app) as c:
-        c.provider = provider
-        yield c
-    config_mod.reset_config()
-    providers_mod.reset_providers()
-
-
-def login(client, username, password) -> dict:
-    resp = client.post("/api/auth/login", json={"username": username, "password": password})
-    assert resp.status_code == 200, resp.text
-    return {"Authorization": f"Bearer {resp.json()['token']}"}
-
-
-@pytest.fixture
-def admin(client):
-    return login(client, "admin", "adminpw")
-
-
-@pytest.fixture
-def bob(client, admin):
-    resp = client.post("/api/users", json={"username": "bob", "password": "bobpw123"}, headers=admin)
-    assert resp.status_code == 201
-    return login(client, "bob", "bobpw123")
-
-
-@pytest.fixture
-def agent_id(client, admin) -> int:
-    resp = client.post("/api/agents", json={
-        "name": "helper", "system_prompt": "You are helper.",
-        "provider": "test", "model": "test-model",
-        "tools": ["read_file", "write_file", "skills_list", "skill_view", "skill_manage", "memory"],
-    }, headers=admin)
-    assert resp.status_code == 201, resp.text
-    return resp.json()["id"]
-
-
-def sse_events(resp) -> list[dict]:
-    return [json.loads(line[6:]) for line in resp.text.splitlines() if line.startswith("data: ")]
 
 
 def test_healthz(client):
