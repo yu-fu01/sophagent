@@ -3,7 +3,10 @@
 from __future__ import annotations
 
 import json
+import logging
 from typing import Any, AsyncIterator
+
+log = logging.getLogger(__name__)
 
 from openai import AsyncOpenAI
 
@@ -81,7 +84,10 @@ class OpenAIProvider:
                 **kwargs, stream_options={"include_usage": True}
             )
         except TypeError:
-            # some third-party endpoints reject stream_options or reasoning_effort
+            # some third-party endpoints reject stream_options / reasoning_effort;
+            # retry without them — note token usage will then be unavailable
+            log.warning("endpoint rejected stream_options/reasoning_effort; "
+                        "retrying without them (token counts unavailable)")
             kwargs.pop("reasoning_effort", None)
             stream = await self.client.chat.completions.create(**kwargs)
 

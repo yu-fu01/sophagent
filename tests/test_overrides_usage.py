@@ -50,3 +50,16 @@ def test_turn_usage_and_done_usage(client, bob, agent_id):
     done = next(p for p in payloads if p["type"] == "done")
     assert done["usage"]["input_tokens"] == 100
     assert "context_length" in done and "context_limit" in done
+
+
+def test_unknown_override_provider_falls_back(client, bob, agent_id):
+    s = client.post("/api/sessions", headers=bob, json={"agent_id": agent_id}).json()
+    client.patch(f"/api/sessions/{s['id']}", headers=bob,
+                 json={"override_provider": "ghost-provider"})
+    r = client.post(f"/api/sessions/{s['id']}/chat", headers=bob, json={"content": "hi"})
+    assert r.status_code == 200
+    # 回落到 agent 的 provider（test），chat 正常完成而非报错
+    import json
+    payloads = [json.loads(l[6:]) for l in r.text.splitlines() if l.startswith("data: ")]
+    assert any(p["type"] == "done" for p in payloads)
+    assert not any(p["type"] == "error" for p in payloads)
