@@ -1,6 +1,6 @@
 from fastapi import APIRouter, Depends, HTTPException, Request
 
-from ..auth import require_user
+from ..auth import require_admin
 from ..config import get_config
 from ..crypto import encrypt, mask_key
 from ..models import ProviderCreate, ProviderPatch
@@ -9,14 +9,8 @@ from ..providers.registry import get_registry
 router = APIRouter()
 
 
-async def _require_admin(request: Request, user) -> None:
-    if not await request.app.state.db.is_admin(user["id"]):
-        raise HTTPException(403, "admin only")
-
-
 @router.get("")
-async def list_providers(request: Request, user=Depends(require_user)):
-    await _require_admin(request, user)
+async def list_providers(request: Request, _admin=Depends(require_admin)):
     reg = get_registry()
     out = []
     for name in reg.names():
@@ -28,8 +22,7 @@ async def list_providers(request: Request, user=Depends(require_user)):
 
 
 @router.post("", status_code=201)
-async def create_provider(req: ProviderCreate, request: Request, user=Depends(require_user)):
-    await _require_admin(request, user)
+async def create_provider(req: ProviderCreate, request: Request, _admin=Depends(require_admin)):
     db = request.app.state.db
     if await db.get_provider(req.name) is not None:
         raise HTTPException(409, "provider name already exists")
@@ -41,8 +34,7 @@ async def create_provider(req: ProviderCreate, request: Request, user=Depends(re
 
 
 @router.put("/{name}")
-async def update_provider(name: str, req: ProviderPatch, request: Request, user=Depends(require_user)):
-    await _require_admin(request, user)
+async def update_provider(name: str, req: ProviderPatch, request: Request, _admin=Depends(require_admin)):
     db = request.app.state.db
     if await db.get_provider(name) is None:
         raise HTTPException(400, "cannot modify a non-DB (built-in) or missing provider")
@@ -54,8 +46,7 @@ async def update_provider(name: str, req: ProviderPatch, request: Request, user=
 
 
 @router.delete("/{name}")
-async def delete_provider(name: str, request: Request, user=Depends(require_user)):
-    await _require_admin(request, user)
+async def delete_provider(name: str, request: Request, _admin=Depends(require_admin)):
     db = request.app.state.db
     if await db.get_provider(name) is None:
         raise HTTPException(400, "cannot delete a non-DB (built-in) or missing provider")
@@ -65,9 +56,11 @@ async def delete_provider(name: str, request: Request, user=Depends(require_user
 
 
 @router.get("/{name}/models")
-async def list_models(name: str, request: Request, user=Depends(require_user)):
-    await _require_admin(request, user)
+async def list_models(name: str, request: Request, _admin=Depends(require_admin)):
+    reg = get_registry()
+    if name not in reg.names():
+        raise HTTPException(404, "unknown provider")
     try:
-        return {"models": await get_registry().list_models(name)}
+        return {"models": await reg.list_models(name)}
     except Exception as e:
         return {"models": [], "error": str(e)}
