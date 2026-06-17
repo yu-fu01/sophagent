@@ -77,7 +77,7 @@ async def test_tool_loop(ctx, fake_provider):
     runner = AgentRunner(ctx.agent, ctx, history=[])
     events = await collect(runner, "write a file")
     types = [e["type"] for e in events]
-    assert types == ["tool_call", "tool_result", "text_delta", "done"]
+    assert types == ["turn_usage", "tool_call", "tool_result", "text_delta", "turn_usage", "done"]
     assert (ctx.workspace / "f.txt").read_text() == "data"
     # tool result was fed back to the model on the second call
     assert any(m.role == "tool" for m in runner.history)

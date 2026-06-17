@@ -74,7 +74,8 @@ class AgentRunner:
         self._new_messages: list[Message] = []
         self.provider = get_provider(agent.provider)
         self.context_limit = _resolve_context_limit(agent.provider)
-        self.usage = {"input_tokens": 0, "output_tokens": 0}
+        self.usage = {"input_tokens": 0, "output_tokens": 0,
+                      "cache_read_tokens": 0, "cache_write_tokens": 0}
         self.compressed = False  # set when history was rewritten; caller may compact the DB
         self.thinking: str | None = None
 
@@ -155,6 +156,15 @@ class AgentRunner:
                 await asyncio.sleep(delay)
                 delay *= 2
 
+    def _done_payload(self, system: str) -> dict:
+        from ..usage import cache_hit_percent
+        u = self.usage
+        prompt_total = u["input_tokens"] + u["cache_read_tokens"] + u["cache_write_tokens"]
+        return {"type": "done", "usage": dict(u),
+                "context_length": history_tokens(system, self.history),
+                "context_limit": self.context_limit,
+                "cache_hit": cache_hit_percent(u["cache_read_tokens"], prompt_total)}
+
     async def run(self, user_input: str | None) -> AsyncIterator[dict[str, Any]]:
         """Yield UI events: text_delta / tool_call / tool_result / done / error."""
         if user_input is not None:
@@ -182,12 +192,19 @@ class AgentRunner:
             assert turn is not None
             self.usage["input_tokens"] += turn.input_tokens
             self.usage["output_tokens"] += turn.output_tokens
+            self.usage["cache_read_tokens"] += turn.cache_read_tokens
+            self.usage["cache_write_tokens"] += turn.cache_write_tokens
+            from ..usage import cache_hit_percent
+            turn_total = turn.input_tokens + turn.cache_read_tokens + turn.cache_write_tokens
+            yield {"type": "turn_usage", "input": turn.input_tokens,
+                   "output": turn.output_tokens, "cache_read": turn.cache_read_tokens,
+                   "cache_hit": cache_hit_percent(turn.cache_read_tokens, turn_total)}
             assistant_msg = turn.as_message()
             self.history.append(assistant_msg)
             await self._persist(assistant_msg)
 
             if not turn.tool_calls:
-                yield {"type": "done", "usage": dict(self.usage)}
+                yield self._done_payload(system)
                 return
 
             for tc in turn.tool_calls:
@@ -201,7 +218,9 @@ class AgentRunner:
             # system prompt may change after skill mutations
             system = self._build_system()
 
-        yield {"type": "done", "usage": dict(self.usage), "note": "max_iterations reached"}
+        payload = self._done_payload(system)
+        payload["note"] = "max_iterations reached"
+        yield payload
 
     def final_text(self) -> str:
         """Last assistant text produced in this run (for delegate / compat layer)."""

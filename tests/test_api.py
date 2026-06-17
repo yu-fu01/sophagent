@@ -90,7 +90,7 @@ def test_agent_tool_call_via_chat(client, bob, agent_id):
     sid = client.post("/api/sessions", json={"agent_id": agent_id}, headers=bob).json()["id"]
     resp = client.post(f"/api/sessions/{sid}/chat", json={"content": "save a note"}, headers=bob)
     types = [e["type"] for e in sse_events(resp)]
-    assert types == ["tool_call", "tool_result", "text_delta", "done"]
+    assert types == ["turn_usage", "tool_call", "tool_result", "text_delta", "turn_usage", "done"]
 
 
 def test_reasoning_streamed_and_persisted_via_chat(client, bob, agent_id):

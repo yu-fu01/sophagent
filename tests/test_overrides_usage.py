@@ -35,3 +35,18 @@ def test_cache_hit_percent():
     assert cache_hit_percent(50, 0) is None
     assert cache_hit_percent(30, 100) == 30
     assert cache_hit_percent(200, 100) == 100   # 截断
+
+
+def test_turn_usage_and_done_usage(client, bob, agent_id):
+    from sophclaw.models import AssistantTurn
+    client.provider.script = [AssistantTurn(content="hi", stop_reason="stop",
+        input_tokens=100, output_tokens=20, cache_read_tokens=40)]
+    s = client.post("/api/sessions", headers=bob, json={"agent_id": agent_id}).json()
+    r = client.post(f"/api/sessions/{s['id']}/chat", headers=bob, json={"content": "yo"})
+    import json
+    payloads = [json.loads(l[6:]) for l in r.text.splitlines() if l.startswith("data: ")]
+    turn_usage = next(p for p in payloads if p["type"] == "turn_usage")
+    assert turn_usage["cache_read"] == 40 and turn_usage["cache_hit"] == 29  # 40/140
+    done = next(p for p in payloads if p["type"] == "done")
+    assert done["usage"]["input_tokens"] == 100
+    assert "context_length" in done and "context_limit" in done
