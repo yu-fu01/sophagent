@@ -130,6 +130,16 @@ td .row-actions{display:flex;gap:6px}
       <div id="chatmain">
         <div id="msgs"><div id="empty">Select or create a session to start.</div></div>
         <div id="composer" class="hidden">
+          <div id="sesstools" style="display:flex;gap:8px;align-items:center;font-size:12px;color:var(--dim);flex-wrap:wrap">
+            <select id="st-provider" style="width:auto"></select>
+            <input id="st-model" list="st-models" placeholder="model" style="width:160px">
+            <datalist id="st-models"></datalist>
+            <select id="st-think" style="width:auto">
+              <option value="default">默认</option>
+              <option value="thinking">思考</option>
+              <option value="fast">快速</option>
+            </select>
+          </div>
           <div id="chips"></div>
           <div id="composerrow" style="display:flex;gap:8px">
             <input type="file" id="fileinput" class="hidden" onchange="onFileChosen(event)">
@@ -236,6 +246,7 @@ async function openSession(sid) {
   currentAgent = agents.find(a => a.id === detail.agent_id) || null;
   updateAttachHint();
   attached = []; renderChips();
+  await setupSessTools(detail);
   const msgs = $("msgs"); msgs.innerHTML = "";
   for (const m of detail.messages) {
     if (m.role === "user" && !m.content.startsWith("[Earlier conversation summary]")) addBubble("user", m.content);
@@ -685,6 +696,34 @@ async function fillModels(provider, datalistId) {
     const {models} = await apiJson("/api/providers/" + provider + "/models");
     for (const m of models || []) { const o = document.createElement("option"); o.value = m; dl.appendChild(o); }
   } catch (e) { /* 静默回退到手填（非 admin 会 403） */ }
+}
+
+async function setupSessTools(detail) {
+  // provider 选项：任意用户可拿 names
+  let providers = [];
+  try { providers = (await apiJson("/api/agents/meta/options")).providers || []; } catch (e) {}
+  const curProvider = detail.override_provider || (currentAgent && currentAgent.provider) || "";
+  const psel = $("st-provider");
+  psel.innerHTML = "";
+  for (const p of providers) { const o = document.createElement("option"); o.value = o.textContent = p; psel.appendChild(o); }
+  if (curProvider && !providers.includes(curProvider)) {
+    const o = document.createElement("option"); o.value = o.textContent = curProvider; psel.appendChild(o);
+  }
+  psel.value = curProvider;
+  $("st-model").value = detail.override_model || (currentAgent && currentAgent.model) || "";
+  $("st-think").value = detail.thinking_mode || "default";
+  fillModels(psel.value, "st-models");
+  psel.onchange = () => { fillModels(psel.value, "st-models"); saveOverrides(); };
+  $("st-model").onchange = saveOverrides;
+  $("st-think").onchange = saveOverrides;
+}
+
+async function saveOverrides() {
+  if (!currentSid) return;
+  await apiJson("/api/sessions/" + currentSid, {method: "PATCH", body: {
+    override_provider: $("st-provider").value || null,
+    override_model: $("st-model").value.trim() || null,
+    thinking_mode: $("st-think").value}}).catch(()=>{});
 }
 
 function agentForm(parent, options, existing, groups) {
