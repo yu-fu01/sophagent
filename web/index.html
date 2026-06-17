@@ -424,6 +424,7 @@ async function sendMsg() {
         } else if (ev.type === "error") {
           collapseThink(); addBubble("err", ev.message); bubble = null;
         } else if (ev.type === "turn_usage") {
+          collapseThink();
           const meta = document.createElement("div");
           meta.className = "turnmeta";
           meta.textContent = `本轮 ↑${ev.input_tokens} ↓${ev.output_tokens}` +
