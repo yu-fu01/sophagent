@@ -85,6 +85,16 @@ CREATE TABLE IF NOT EXISTS group_join (
   created_at TEXT NOT NULL,
   UNIQUE(group_id, user_id, kind)
 );
+CREATE TABLE IF NOT EXISTS providers (
+  id INTEGER PRIMARY KEY,
+  name TEXT UNIQUE NOT NULL,
+  api_mode TEXT NOT NULL,
+  base_url TEXT,
+  api_key_enc TEXT,
+  context_limit INTEGER NOT NULL DEFAULT 100000,
+  created_at TEXT NOT NULL,
+  updated_at TEXT NOT NULL
+);
 """
 
 
@@ -142,6 +152,10 @@ class Database:
         session_cols = await self._columns("sessions")
         if session_cols and "group_id" not in session_cols:
             await self._exec("ALTER TABLE sessions ADD COLUMN group_id INTEGER REFERENCES groups(id)")
+        session_cols = await self._columns("sessions")
+        for col in ("override_provider", "override_model", "thinking_mode"):
+            if session_cols and col not in session_cols:
+                await self._exec(f"ALTER TABLE sessions ADD COLUMN {col} TEXT")
 
     async def close(self) -> None:
         if self.conn:
@@ -284,6 +298,14 @@ class Database:
     async def delete_session(self, session_id: str) -> None:
         await self._exec("DELETE FROM sessions WHERE id=?", (session_id,))
 
+    async def set_session_overrides(self, session_id: str, *, override_provider=None,
+                                    override_model=None, thinking_mode=None) -> None:
+        await self._exec(
+            "UPDATE sessions SET override_provider=?, override_model=?, thinking_mode=?"
+            " WHERE id=?",
+            (override_provider, override_model, thinking_mode, session_id),
+        )
+
     # -- messages ------------------------------------------------------------
 
     async def append_messages(self, session_id: str, messages: list[Message]) -> None:
@@ -331,6 +353,42 @@ class Database:
     async def memory_remove(self, memory_id: int, user_id: int) -> bool:
         cur = await self._exec("DELETE FROM memory WHERE id=? AND user_id=?", (memory_id, user_id))
         return cur.rowcount > 0
+
+    # -- providers -----------------------------------------------------------
+
+    async def create_provider(self, f: dict[str, Any]) -> int:
+        cur = await self._exec(
+            "INSERT INTO providers (name, api_mode, base_url, api_key_enc, context_limit,"
+            " created_at, updated_at) VALUES (?,?,?,?,?,?,?)",
+            (f["name"], f["api_mode"], f.get("base_url"), f.get("api_key_enc"),
+             int(f.get("context_limit", 100_000)), now(), now()),
+        )
+        return cur.lastrowid
+
+    async def get_provider(self, name: str) -> Optional[aiosqlite.Row]:
+        return await self._one("SELECT * FROM providers WHERE name=?", (name,))
+
+    async def list_providers(self) -> list[aiosqlite.Row]:
+        return await self._all("SELECT * FROM providers ORDER BY name")
+
+    async def update_provider(self, name: str, f: dict[str, Any]) -> None:
+        # api_key_enc=None means "leave unchanged"
+        if f.get("api_key_enc") is None:
+            await self._exec(
+                "UPDATE providers SET api_mode=?, base_url=?, context_limit=?, updated_at=?"
+                " WHERE name=?",
+                (f["api_mode"], f.get("base_url"), int(f["context_limit"]), now(), name),
+            )
+        else:
+            await self._exec(
+                "UPDATE providers SET api_mode=?, base_url=?, api_key_enc=?, context_limit=?,"
+                " updated_at=? WHERE name=?",
+                (f["api_mode"], f.get("base_url"), f["api_key_enc"],
+                 int(f["context_limit"]), now(), name),
+            )
+
+    async def delete_provider(self, name: str) -> None:
+        await self._exec("DELETE FROM providers WHERE name=?", (name,))
 
     # -- groups --------------------------------------------------------------
 
