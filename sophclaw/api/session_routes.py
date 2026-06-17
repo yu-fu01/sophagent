@@ -62,6 +62,7 @@ async def get_session(session_id: str, request: Request, user=Depends(require_us
 async def patch_session(session_id: str, req: SessionOverridePatch, request: Request,
                         user=Depends(require_user)):
     db = request.app.state.db
+    # creator-only：覆盖参数只影响 chat，而 chat 本身就是创建者私有（与 chat 路由访问模型一致）
     if await db.get_session(session_id, user["id"]) is None:
         raise HTTPException(404, "session not found")
     await db.set_session_overrides(session_id, override_provider=req.override_provider,

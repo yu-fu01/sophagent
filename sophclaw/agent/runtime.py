@@ -3,6 +3,7 @@ the OpenAI-compat layer and delegate_task)."""
 
 from __future__ import annotations
 
+from dataclasses import replace as dc_replace
 from typing import Any, Awaitable, Callable, Optional
 
 from ..config import get_config
@@ -35,9 +36,9 @@ async def build_runner(
         skill_store=skill_store,
         services={"memories": memories},
     )
-    eff = AgentDef(**{**agent.__dict__,
-                      "provider": override_provider or agent.provider,
-                      "model": override_model or agent.model})
+    eff = dc_replace(agent,
+                     provider=override_provider or agent.provider,
+                     model=override_model or agent.model)
     ctx.agent = eff  # 让工具上下文也用 effective agent
     runner = AgentRunner(eff, ctx, history, on_persist=on_persist)
     runner.thinking = thinking_mode if thinking_mode and thinking_mode != "default" else None

@@ -1,7 +1,5 @@
 """会话覆盖字段贯通 runner 的集成测试。"""
 
-import pytest
-
 
 def test_session_override_thinking_passed_to_provider(client, bob, agent_id):
     s = client.post("/api/sessions", headers=bob, json={"agent_id": agent_id}).json()
@@ -11,3 +9,20 @@ def test_session_override_thinking_passed_to_provider(client, bob, agent_id):
     assert r.status_code == 200
     assert client.provider.last_kwargs["thinking"] == "thinking"
     assert client.provider.last_kwargs["model"] == "big-model"
+
+
+def test_no_override_falls_back_to_agent(client, bob, agent_id):
+    s = client.post("/api/sessions", headers=bob, json={"agent_id": agent_id}).json()
+    # 不设任何覆盖，直接 chat
+    r = client.post(f"/api/sessions/{s['id']}/chat", headers=bob, json={"content": "hi"})
+    assert r.status_code == 200
+    assert client.provider.last_kwargs["model"] == "test-model"   # agent 原 model
+    assert client.provider.last_kwargs["thinking"] is None
+
+
+def test_thinking_default_folds_to_none(client, bob, agent_id):
+    s = client.post("/api/sessions", headers=bob, json={"agent_id": agent_id}).json()
+    client.patch(f"/api/sessions/{s['id']}", headers=bob, json={"thinking_mode": "default"})
+    r = client.post(f"/api/sessions/{s['id']}/chat", headers=bob, json={"content": "hi"})
+    assert r.status_code == 200
+    assert client.provider.last_kwargs["thinking"] is None
