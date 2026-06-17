@@ -8,7 +8,7 @@ from fastapi.responses import StreamingResponse
 
 from ..agent.runtime import build_runner
 from ..auth import require_user
-from ..models import AgentDef, ChatRequest, SessionCreate
+from ..models import AgentDef, ChatRequest, SessionCreate, TruncateRequest
 from ..perms import can_access_group, can_manage_group
 
 log = logging.getLogger(__name__)
@@ -54,8 +54,8 @@ async def get_session(session_id: str, request: Request, user=Depends(require_us
     session = await db.get_session(session_id, user["id"])  # content stays creator-private
     if session is None:
         raise HTTPException(404, "session not found")
-    messages = await db.load_messages(session_id)
-    return {**dict(session), "messages": [m.to_dict() for m in messages]}
+    messages = await db.load_messages_with_ids(session_id)
+    return {**dict(session), "messages": [{"id": mid, **m.to_dict()} for mid, m in messages]}
 
 
 @router.delete("/{session_id}")
@@ -73,6 +73,22 @@ async def stop_session(session_id: str, request: Request, user=Depends(require_u
     if await _owned_or_managed(request, session_id, user) is None:
         raise HTTPException(404, "session not found")
     return {"stopped": request.app.state.manager.stop(session_id)}
+
+
+@router.post("/{session_id}/truncate")
+async def truncate_session(session_id: str, req: TruncateRequest, request: Request,
+                           user=Depends(require_user)):
+    """Restore / re-edit: delete the given message and everything after it.
+    Refused while a turn is running to avoid racing the chat worker."""
+    db = request.app.state.db
+    manager = request.app.state.manager
+    if await _owned_or_managed(request, session_id, user) is None:
+        raise HTTPException(404, "session not found")
+    if manager.is_busy(session_id):
+        raise HTTPException(409, "session is running a turn")
+    deleted = await db.truncate_from(session_id, req.message_id)
+    await db.touch_session(session_id)
+    return {"ok": True, "deleted": deleted}
 
 
 @router.post("/{session_id}/chat")
