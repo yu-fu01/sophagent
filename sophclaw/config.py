@@ -36,6 +36,7 @@ class Config:
     delegate_timeout: float = 300.0
     tool_timeout: float = 60.0
     tool_output_limit: int = 30_000  # chars per tool result
+    max_upload_bytes: int = 10 * 1024 * 1024  # 上传/下载单文件上限 (10MB)
     max_skill_md_bytes: int = 64 * 1024
     max_skill_file_bytes: int = 256 * 1024
     memory_max_items: int = 50
@@ -124,6 +125,7 @@ def load_config() -> Config:
         providers=_load_providers(data_dir),
         token_ttl_hours=int(os.environ.get("SOPHCLAW_TOKEN_TTL_HOURS", "24")),
         max_concurrent_turns=int(os.environ.get("SOPHCLAW_MAX_CONCURRENT_TURNS", "32")),
+        max_upload_bytes=int(os.environ.get("SOPHCLAW_MAX_UPLOAD_BYTES", str(10 * 1024 * 1024))),
         delegate_concurrency=int(os.environ.get("SOPHCLAW_DELEGATE_CONCURRENCY", "4")),
     )
     cfg.skills_dir.mkdir(parents=True, exist_ok=True)
