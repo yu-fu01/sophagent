@@ -103,7 +103,8 @@ def test_skill_self_evolution_via_chat(client, admin, bob, agent_id):
     resp = client.post(f"/api/sessions/{sid}/chat", json={"content": "learn to greet"}, headers=bob)
     assert any(e["type"] == "tool_result" and '"ok": true' in e["preview"] for e in sse_events(resp))
     # skill is now visible via the API to any user, and admin can delete it
-    assert client.get("/api/skills", headers=bob).json()[0]["name"] == "greet"
+    names = [s["name"] for s in client.get("/api/skills", headers=bob).json()]
+    assert "greet" in names
     assert "warmly" in client.get("/api/skills/greet", headers=bob).json()["content"]
     assert client.put("/api/skills/greet", json={"content": SKILL_MD}, headers=bob).status_code == 403
     assert client.delete("/api/skills/greet", headers=admin).status_code == 200

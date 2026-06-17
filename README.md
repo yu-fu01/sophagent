@@ -91,6 +91,8 @@ print(client.chat.completions.create(model="helper",
 /data/skills/<name>/references/  # 可选支持文件（另有 scripts/ templates/ assets/）
 ```
 
+**内置 skill 库**：`sophclaw/skills/builtin/` 随项目提交了一批从 hermes 精选、压平的开箱即用技能（28 个，覆盖 software-development / github / productivity / research / devops / data-science）。服务启动时自动播种进 `/data/skills`——**仅补缺失项，不覆盖**已存在的同名目录，因此用户/agent 对内置 skill 的改动会在重启后保留。想增删内置技能，直接增删 `builtin/` 下的目录即可，无需改代码。
+
 ## 安全边界（务必阅读）
 
 - **容器是唯一的硬隔离边界。** `terminal` / `python_exec` 在容器内以子进程运行（cwd 钉在用户工作目录、环境变量白名单、超时与输出限额），但容器内多用户之间是软隔离——恶意用户原则上可通过 shell 越过工作目录约束。多租户敏感场景请在 agent 定义中不勾选这两个工具，或按用户拆分容器。
