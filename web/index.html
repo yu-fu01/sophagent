@@ -62,14 +62,28 @@ label{display:block;margin:10px 0 4px;color:var(--dim);font-size:12px}
 .msg.assistant a{color:var(--accent)}
 .msg.assistant hr{border:0;border-top:1px solid var(--border);margin:8px 0}
 .msg.err{align-self:center;background:transparent;color:var(--red);font-size:13px}
-details.tool{align-self:flex-start;max-width:78%;background:var(--panel);border:1px solid var(--border);border-radius:8px;padding:6px 10px;font-size:12px;color:var(--dim)}
-details.tool pre{white-space:pre-wrap;word-break:break-word;margin:6px 0 0;max-height:240px;overflow:auto}
-details.thinking{align-self:flex-start;max-width:78%;border-left:3px solid var(--border);padding:2px 0 2px 10px;font-size:12.5px;color:var(--dim);opacity:.85}
-details.thinking summary{cursor:pointer;font-style:italic}
-details.thinking .think-body{margin-top:6px;white-space:normal;max-height:300px;overflow:auto}
-details.thinking .think-body p{margin:0 0 6px}details.thinking .think-body p:last-child{margin-bottom:0}
-details.thinking .think-body code{background:#0d1117;border:1px solid var(--border);border-radius:4px;padding:1px 5px;font-size:12px;font-family:ui-monospace,Consolas,monospace}
-details.thinking .think-body pre.code{background:#0d1117;border:1px solid var(--border);border-radius:8px;padding:10px;overflow-x:auto;margin:6px 0}
+/* worklog: 整轮活动折叠组（思考 + 工具合并） */
+details.worklog{align-self:flex-start;max-width:78%;margin:0}
+details.worklog>summary{list-style:none;cursor:pointer;display:flex;align-items:center;gap:6px;padding:3px 6px;margin-left:-6px;border-radius:7px;color:var(--dim);font-size:12.5px;font-style:italic}
+details.worklog>summary::-webkit-details-marker{display:none}
+details.worklog>summary:hover{background:var(--panel)}
+.wl-caret{display:inline-block;transition:transform .15s;font-style:normal;font-size:10px;color:var(--dim)}
+details.worklog[open]>summary .wl-caret{transform:rotate(90deg)}
+.wl-body{margin:6px 0 0 6px;padding-left:10px;border-left:1px solid var(--border);display:flex;flex-direction:column;gap:6px}
+/* worklog 内：思考卡 */
+.thinking-card{font-size:12.5px;color:var(--dim)}
+.thinking-card .tc-label{font-style:italic;opacity:.8}
+.thinking-card .think-body{margin-top:4px;white-space:normal;max-height:300px;overflow:auto;opacity:.9}
+.thinking-card .think-body p{margin:0 0 6px}.thinking-card .think-body p:last-child{margin-bottom:0}
+.thinking-card .think-body code{background:#0d1117;border:1px solid var(--border);border-radius:4px;padding:1px 5px;font-size:12px;font-family:ui-monospace,Consolas,monospace}
+.thinking-card .think-body pre.code{background:#0d1117;border:1px solid var(--border);border-radius:8px;padding:10px;overflow-x:auto;margin:6px 0}
+/* worklog 内：工具行（可逐个展开看明细） */
+details.tool-card-row{font-size:12px;color:var(--dim)}
+details.tool-card-row>summary{list-style:none;cursor:pointer;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+details.tool-card-row>summary::-webkit-details-marker{display:none}
+details.tool-card-row>summary:hover{color:var(--text)}
+details.tool-card-row pre{white-space:pre-wrap;word-break:break-word;margin:6px 0 0;max-height:240px;overflow:auto}
+details.tool-card-row.err>summary{color:var(--red)}
 #composer{display:flex;gap:8px;padding:12px;border-top:1px solid var(--border);flex-direction:column;align-items:stretch}
 #composer textarea{flex:1;height:60px}
 #empty{margin:auto;text-align:center;color:var(--dim)}
@@ -152,6 +166,7 @@ td .row-actions{display:flex;gap:6px}
   </div>
 </div>
 
+<script src="worklog.js"></script>
 <script>
 "use strict";
 const $ = id => document.getElementById(id);
@@ -240,8 +255,16 @@ async function openSession(sid) {
   for (const m of detail.messages) {
     if (m.role === "user" && !m.content.startsWith("[Earlier conversation summary]")) addBubble("user", m.content);
     else if (m.role === "assistant") {
-      if (m.reasoning) addThinking(m.reasoning).open = false;   // history: collapsed
-      for (const tc of m.tool_calls || []) addTool(tc.name, JSON.stringify(tc.arguments), "");
+      const tcs = m.tool_calls || [];
+      if (m.reasoning || tcs.length) {            // history: collapsed worklog
+        const wl = ensureWorklog(); delete wl.dataset.live;
+        if (m.reasoning) {
+          const body = worklogThinkingCard(wl).querySelector(".think-body");
+          body.dataset.raw = m.reasoning; body.innerHTML = mdToHtml(m.reasoning);
+        }
+        for (const tc of tcs) appendToolRow(wl, tc.name, JSON.stringify(tc.arguments, null, 2), null, true);
+        wl.open = false; syncWorklogSummary(wl);
+      }
       if (m.content) addBubble("assistant", m.content);
     }
   }
@@ -341,21 +364,59 @@ function renderUserContent(d, text) {
     d.appendChild(p);
   }
 }
-function addThinking(text) {
+// ---- worklog: 整轮活动折叠组（思考 + 工具合并为一行摘要，可展开看明细）-------
+function ensureWorklog() {
   const d = document.createElement("details");
-  d.className = "thinking"; d.open = true;           // expanded while streaming
-  const s = document.createElement("summary"); s.textContent = "💡 思考";
-  const body = document.createElement("div"); body.className = "think-body";
-  body.dataset.raw = text || ""; body.innerHTML = mdToHtml(body.dataset.raw);
+  d.className = "worklog"; d.open = true; d.dataset.live = "1";   // 流式时展开
+  const s = document.createElement("summary"); s.className = "wl-head";
+  s.innerHTML = `<span class="wl-caret">▸</span><span class="wl-sum"></span>`;
+  const body = document.createElement("div"); body.className = "wl-body";
   d.append(s, body); $("msgs").appendChild(d); return d;
 }
-function addTool(name, args, result) {
+function worklogThinkingCard(wl) {
+  let card = wl.querySelector(".thinking-card");
+  if (!card) {
+    card = document.createElement("div"); card.className = "thinking-card";
+    card.innerHTML = `<div class="tc-label">💡 思考</div><div class="think-body"></div>`;
+    card.querySelector(".think-body").dataset.raw = "";
+    wl.querySelector(".wl-body").prepend(card);     // 思考置于工具之前
+  }
+  return card;
+}
+function appendToolRow(wl, name, args, id, done) {
   const d = document.createElement("details");
-  d.className = "tool";
-  const s = document.createElement("summary"); s.textContent = "🔧 " + name;
-  const pre = document.createElement("pre");
-  pre.textContent = args + (result ? "\n→ " + result : "");
-  d.append(s, pre); $("msgs").appendChild(d); return pre;
+  d.className = "tool-card-row";
+  d.dataset.toolKind = toolKind(name);
+  d.dataset.toolDone = done ? "true" : "false";
+  if (id != null) d.dataset.id = id;
+  const first = String(args || "").split("\n")[0].slice(0, 80);
+  const s = document.createElement("summary");
+  s.textContent = "🔧 " + name + (first ? " · " + first : "");
+  const pre = document.createElement("pre"); pre.textContent = args || "";
+  d.append(s, pre); wl.querySelector(".wl-body").appendChild(d); return d;
+}
+function setToolResult(row, preview) {
+  if (row) row.querySelector("pre").textContent += "\n→ " + preview;
+}
+function setToolDone(row, isError) {
+  if (!row) return;
+  row.dataset.toolDone = "true";
+  if (isError) { row.dataset.toolError = "true"; row.classList.add("err"); }
+}
+function syncWorklogSummary(wl) {
+  if (!wl) return;
+  const hasThinking = !!wl.querySelector(".thinking-card");
+  const tools = [...wl.querySelectorAll(".tool-card-row")].map(r => ({
+    kind: r.dataset.toolKind,
+    done: r.dataset.toolDone !== "false",
+    error: r.dataset.toolError === "true",
+  }));
+  const live = wl.dataset.live === "1";
+  wl.querySelector(".wl-sum").textContent = worklogSummary({hasThinking, live, tools});
+}
+function closeWorklog(wl) {
+  if (!wl) return;
+  delete wl.dataset.live; wl.open = false; syncWorklogSummary(wl);
 }
 
 // ---- chat streaming ---------------------------------------------------------
@@ -368,8 +429,7 @@ async function sendMsg() {
   $("input").value = ""; streaming = true;
   $("send").classList.add("hidden"); $("stop").classList.remove("hidden");
   addBubble("user", content);
-  let bubble = null, thinkEl = null;
-  const collapseThink = () => { if (thinkEl) thinkEl.open = false; };
+  let bubble = null, wl = null;
   const msgs = $("msgs");
   try {
     const resp = await api(`/api/sessions/${currentSid}/chat`, {method: "POST", body: {content}});
@@ -386,23 +446,28 @@ async function sendMsg() {
         const ev = JSON.parse(line.slice(6));
         if (ev.type === "reasoning_delta") {
           if (bubble) continue;                  // answer started: lock out late reasoning
-          if (!thinkEl) thinkEl = addThinking("");
-          const body = thinkEl.querySelector(".think-body");
+          if (!wl) wl = ensureWorklog();
+          const body = worklogThinkingCard(wl).querySelector(".think-body");
           body.dataset.raw += ev.text;
           body.innerHTML = mdToHtml(body.dataset.raw);
+          syncWorklogSummary(wl);
         } else if (ev.type === "text_delta") {
-          if (!bubble) { collapseThink(); bubble = addBubble("assistant", ""); }
+          if (!bubble) { if (wl) { closeWorklog(wl); wl = null; } bubble = addBubble("assistant", ""); }
           bubble.dataset.raw += ev.text;
           bubble.innerHTML = mdToHtml(bubble.dataset.raw);
         } else if (ev.type === "tool_call") {
-          collapseThink(); bubble = null; thinkEl = null;
-          addTool(ev.name, JSON.stringify(ev.arguments, null, 2), "").dataset.id = ev.id;
+          bubble = null;                          // 正文后再来工具 -> 新开活动组
+          if (!wl) wl = ensureWorklog();
+          appendToolRow(wl, ev.name, JSON.stringify(ev.arguments, null, 2), ev.id, false);
+          syncWorklogSummary(wl);
         } else if (ev.type === "tool_result") {
-          const pres = msgs.querySelectorAll("details.tool pre");
-          const pre = [...pres].find(p => p.dataset.id === ev.id) || pres[pres.length - 1];
-          if (pre) pre.textContent += "\n→ " + ev.preview;
+          const rows = msgs.querySelectorAll("details.tool-card-row");
+          const row = [...rows].find(r => r.dataset.id === ev.id) || rows[rows.length - 1];
+          setToolResult(row, ev.preview); setToolDone(row, false);
+          syncWorklogSummary(row ? row.closest(".worklog") : wl);
         } else if (ev.type === "error") {
-          collapseThink(); addBubble("err", ev.message); bubble = null;
+          if (wl) { closeWorklog(wl); wl = null; }
+          addBubble("err", ev.message); bubble = null;
         }
         msgs.scrollTop = msgs.scrollHeight;
       }
@@ -410,7 +475,7 @@ async function sendMsg() {
   } catch (e) {
     addBubble("err", e.message);
   } finally {
-    collapseThink();
+    closeWorklog(wl);
     streaming = false;
     $("send").classList.remove("hidden"); $("stop").classList.add("hidden");
     loadSessions();

@@ -74,6 +74,10 @@ def create_app() -> FastAPI:
     async def index():
         return FileResponse(WEB_DIR / "index.html")
 
+    @app.get("/worklog.js", include_in_schema=False)
+    async def worklog_js():
+        return FileResponse(WEB_DIR / "worklog.js", media_type="application/javascript")
+
     return app
 
 
