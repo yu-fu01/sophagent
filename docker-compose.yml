@@ -2,7 +2,7 @@ services:
   sophclaw:
     build: .
     ports:
-      - "8000:8000"
+      - "${SOPHCLAW_PORT:-8000}:8000"
     volumes:
       - sophclaw-data:/data
       # recommended way to configure model providers (see README); comment out
