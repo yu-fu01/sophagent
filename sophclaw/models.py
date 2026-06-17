@@ -194,6 +194,21 @@ class SkillWrite(BaseModel):
     content: str  # full SKILL.md content
 
 
+class ProviderCreate(BaseModel):
+    name: str = Field(pattern=r"^[a-zA-Z0-9_.-]{1,64}$")
+    api_mode: str = Field(pattern=r"^(openai|anthropic)$")
+    base_url: Optional[str] = None
+    api_key: str = ""
+    context_limit: int = Field(default=100_000, ge=1)
+
+
+class ProviderPatch(BaseModel):
+    api_mode: str = Field(pattern=r"^(openai|anthropic)$")
+    base_url: Optional[str] = None
+    api_key: Optional[str] = None   # None/"" => 不变
+    context_limit: int = Field(default=100_000, ge=1)
+
+
 # OpenAI compatible layer ----------------------------------------------------
 
 
