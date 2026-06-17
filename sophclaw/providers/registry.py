@@ -55,6 +55,8 @@ class ProviderRegistry:
                 row["name"], row["api_mode"], key, row["base_url"],
                 row["context_limit"], "db")
         self._resolved = merged
+        active = {(n, r.fingerprint()) for n, r in self._resolved.items()}
+        self._clients = {k: v for k, v in self._clients.items() if k in active}
 
     def names(self) -> list[str]:
         return sorted(self._resolved)
@@ -65,10 +67,6 @@ class ProviderRegistry:
         return self._resolved[name]
 
     def client(self, name: str) -> Provider:
-        # test/back-compat path: an explicitly injected client wins
-        from . import _cache
-        if name in _cache:
-            return _cache[name]
         r = self.resolve(name)
         ckey = (name, r.fingerprint())
         if ckey not in self._clients:

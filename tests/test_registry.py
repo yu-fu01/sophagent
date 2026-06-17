@@ -1,5 +1,11 @@
 import pytest
+from sophclaw.config import ProviderConfig
+from sophclaw.crypto import encrypt
 from sophclaw.db import Database
+from sophclaw.providers.registry import ProviderRegistry, ResolvedProvider
+
+SECRET = "0" * 64
+
 
 @pytest.fixture
 async def db(tmp_path):
@@ -25,12 +31,6 @@ async def test_provider_crud(db):
     assert row["api_key_enc"] == before and row["base_url"] == "https://z/v1"
     await db.delete_provider("p1")
     assert await db.get_provider("p1") is None
-
-from sophclaw.providers.registry import ProviderRegistry, ResolvedProvider
-from sophclaw.config import ProviderConfig
-from sophclaw.crypto import encrypt
-
-SECRET = "0" * 64
 
 async def test_registry_merges_db_over_builtin(db):
     builtin = {"p1": ProviderConfig(name="p1", api_mode="openai",
