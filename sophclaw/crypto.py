@@ -13,6 +13,7 @@ from cryptography.hazmat.primitives.kdf.hkdf import HKDF
 
 
 def _fernet(secret: str) -> Fernet:
+    # salt=None: the server secret already carries sufficient entropy; a random salt would need per-key storage
     raw = HKDF(algorithm=hashes.SHA256(), length=32, salt=None,
                info=b"sophclaw-provider-key").derive(secret.encode("utf-8"))
     return Fernet(base64.urlsafe_b64encode(raw))

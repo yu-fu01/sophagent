@@ -1,3 +1,6 @@
+import pytest
+from cryptography.fernet import InvalidToken
+
 from sophclaw.crypto import encrypt, decrypt, mask_key
 
 SECRET = "0" * 64
@@ -9,8 +12,7 @@ def test_encrypt_decrypt_roundtrip():
 
 def test_decrypt_with_wrong_secret_raises():
     token = encrypt("abc", SECRET)
-    import pytest
-    with pytest.raises(Exception):
+    with pytest.raises(InvalidToken):
         decrypt(token, "1" * 64)
 
 def test_mask_key():
