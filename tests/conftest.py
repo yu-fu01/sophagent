@@ -13,8 +13,10 @@ def ctx(tmp_path, monkeypatch):
     monkeypatch.setenv("SOPHCLAW_DATA_DIR", str(tmp_path / "data"))
     config_mod.reset_config()
     from sophclaw.models import AgentDef
+    from sophclaw.tools import load_all
     from sophclaw.tools.registry import ToolContext, all_tool_names
 
+    load_all()  # populate the registry so all_tool_names() isn't order-dependent
     agent = AgentDef(
         id=1, name="t", description="", system_prompt="You are a test agent.",
         provider="test", model="test-model", tools=all_tool_names(), skills=None,
