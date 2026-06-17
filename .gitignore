@@ -15,3 +15,4 @@ data/
 .coverage
 .idea/
 .vscode/
+.worktrees/
