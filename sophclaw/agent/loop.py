@@ -19,6 +19,16 @@ KEEP_RECENT_TOOL_MSGS = 8  # tool messages within this tail are never truncated
 TOOL_TRUNCATE_NOTE = "[older tool output truncated: {n} chars]"
 
 
+def _resolve_context_limit(provider_name: str) -> int:
+    """Context limit from the provider registry; fall back to static config when
+    the registry isn't initialized (e.g. unit tests constructing AgentRunner directly)."""
+    from ..providers.registry import get_registry
+    try:
+        return get_registry().resolve(provider_name).context_limit
+    except (RuntimeError, KeyError):
+        return get_config().providers[provider_name].context_limit
+
+
 def estimate_tokens(text: str) -> int:
     """Conservative heuristic for mixed CJK/latin text; avoids tiktoken."""
     return len(text) // 3 + 1
@@ -63,7 +73,7 @@ class AgentRunner:
         self._on_persist = on_persist
         self._new_messages: list[Message] = []
         self.provider = get_provider(agent.provider)
-        self.context_limit = get_config().providers[agent.provider].context_limit
+        self.context_limit = _resolve_context_limit(agent.provider)
         self.usage = {"input_tokens": 0, "output_tokens": 0}
         self.compressed = False  # set when history was rewritten; caller may compact the DB
 

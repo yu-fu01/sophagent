@@ -56,7 +56,11 @@ async def lifespan(app: FastAPI):
         log.info("seeded %d built-in skills into %s", seeded, cfg.skills_dir)
     app.state.skill_store = SkillStore(cfg.skills_dir)
     app.state.manager = SessionManager(cfg.max_concurrent_turns)
-    if not cfg.providers:
+    from .providers.registry import init_registry
+    registry = init_registry(db, cfg)
+    await registry.refresh()
+    app.state.providers = registry
+    if not registry.names():
         log.warning("no model providers configured; set SOPHCLAW_PROVIDERS or providers.yaml")
     yield
     await db.close()
