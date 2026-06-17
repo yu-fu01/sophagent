@@ -61,6 +61,7 @@ class OpenAIProvider:
         tools: list[dict] | None = None,
         temperature: float | None = None,
         max_tokens: int | None = None,
+        thinking: str | None = None,
     ) -> AsyncIterator[StreamEvent]:
         kwargs: dict[str, Any] = {
             "model": model,
@@ -73,12 +74,15 @@ class OpenAIProvider:
             kwargs["temperature"] = temperature
         if max_tokens is not None:
             kwargs["max_tokens"] = max_tokens
+        if thinking == "thinking":
+            kwargs["reasoning_effort"] = "high"
         try:
             stream = await self.client.chat.completions.create(
                 **kwargs, stream_options={"include_usage": True}
             )
         except TypeError:
-            # some third-party endpoints reject stream_options
+            # some third-party endpoints reject stream_options or reasoning_effort
+            kwargs.pop("reasoning_effort", None)
             stream = await self.client.chat.completions.create(**kwargs)
 
         content_parts: list[str] = []

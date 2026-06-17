@@ -18,7 +18,7 @@ class FakeProvider:
         self.calls: list[list[Message]] = []
 
     async def chat(self, *, model, system, messages, tools=None,
-                   temperature=None, max_tokens=None) -> AsyncIterator[StreamEvent]:
+                   temperature=None, max_tokens=None, thinking=None) -> AsyncIterator[StreamEvent]:
         self.calls.append([Message.from_dict(m.to_dict()) for m in messages])
         turn = self.turns.pop(0)
         if turn.reasoning:

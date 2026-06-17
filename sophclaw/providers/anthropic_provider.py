@@ -72,6 +72,7 @@ class AnthropicProvider:
         tools: list[dict] | None = None,
         temperature: float | None = None,
         max_tokens: int | None = None,
+        thinking: str | None = None,
     ) -> AsyncIterator[StreamEvent]:
         kwargs: dict[str, Any] = {
             "model": model,
@@ -84,6 +85,9 @@ class AnthropicProvider:
             kwargs["tools"] = tools_to_anthropic(tools)
         if temperature is not None:
             kwargs["temperature"] = temperature
+        if thinking == "thinking":
+            kwargs["thinking"] = {"type": "enabled", "budget_tokens": 4096}
+            kwargs.pop("temperature", None)  # extended thinking 要求不自定义 temperature
 
         content_parts: list[str] = []
         tool_calls: list[ToolCall] = []

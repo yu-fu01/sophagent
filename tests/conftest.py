@@ -42,7 +42,8 @@ class EchoProvider:
         self.script: list = []
 
     async def chat(self, *, model, system, messages, tools=None,
-                   temperature=None, max_tokens=None) -> AsyncIterator:
+                   temperature=None, max_tokens=None, thinking=None) -> AsyncIterator:
+        self.last_kwargs = {"model": model, "thinking": thinking, "temperature": temperature}
         from sophclaw.models import StreamEvent
 
         if self.script:

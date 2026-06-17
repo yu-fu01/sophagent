@@ -22,6 +22,14 @@ class Provider(Protocol):
         tools: list[dict] | None = None,
         temperature: float | None = None,
         max_tokens: int | None = None,
+        thinking: str | None = None,
     ) -> AsyncIterator[StreamEvent]:
-        """Yield text_delta events followed by exactly one turn_done event."""
+        """Yield text_delta events followed by exactly one turn_done event.
+
+        thinking: controls extended reasoning mode.
+          "thinking" — enable native chain-of-thought (maps to reasoning_effort="high"
+                        on OpenAI-compat, or {"type":"enabled"} on Anthropic).
+          "fast"     — reserved for future fast-thinking mode; currently treated as None.
+          None       — default behaviour, no extended reasoning.
+        """
         ...
