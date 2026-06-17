@@ -80,9 +80,12 @@ class AnthropicProvider:
             "max_tokens": max_tokens or DEFAULT_MAX_TOKENS,
         }
         if system:
-            kwargs["system"] = system
+            kwargs["system"] = [{"type": "text", "text": system,
+                                 "cache_control": {"type": "ephemeral"}}]
         if tools:
-            kwargs["tools"] = tools_to_anthropic(tools)
+            t = tools_to_anthropic(tools)
+            t[-1]["cache_control"] = {"type": "ephemeral"}
+            kwargs["tools"] = t
         if temperature is not None:
             kwargs["temperature"] = temperature
         if thinking == "thinking":
@@ -95,6 +98,7 @@ class AnthropicProvider:
         pending: dict[int, dict[str, str]] = {}
         stop_reason = ""
         input_tokens = output_tokens = 0
+        cache_read_tokens = cache_write_tokens = 0
 
         async with self.client.messages.stream(**kwargs) as stream:
             async for event in stream:
@@ -121,7 +125,10 @@ class AnthropicProvider:
                             args = {"_raw": slot["json"]}
                         tool_calls.append(ToolCall(id=slot["id"], name=slot["name"], arguments=args))
                 elif etype == "message_start":
-                    input_tokens = event.message.usage.input_tokens or 0
+                    usage = event.message.usage
+                    input_tokens = usage.input_tokens or 0
+                    cache_read_tokens = getattr(usage, "cache_read_input_tokens", 0) or 0
+                    cache_write_tokens = getattr(usage, "cache_creation_input_tokens", 0) or 0
                 elif etype == "message_delta":
                     if event.delta.stop_reason:
                         stop_reason = event.delta.stop_reason
@@ -135,6 +142,8 @@ class AnthropicProvider:
                 tool_calls=tool_calls,
                 input_tokens=input_tokens,
                 output_tokens=output_tokens,
+                cache_read_tokens=cache_read_tokens,
+                cache_write_tokens=cache_write_tokens,
                 stop_reason=stop_reason,
             ),
         )

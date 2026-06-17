@@ -1,5 +1,7 @@
 """会话覆盖字段贯通 runner 的集成测试。"""
 
+from sophclaw.usage import cache_hit_percent
+
 
 def test_session_override_thinking_passed_to_provider(client, bob, agent_id):
     s = client.post("/api/sessions", headers=bob, json={"agent_id": agent_id}).json()
@@ -26,3 +28,10 @@ def test_thinking_default_folds_to_none(client, bob, agent_id):
     r = client.post(f"/api/sessions/{s['id']}/chat", headers=bob, json={"content": "hi"})
     assert r.status_code == 200
     assert client.provider.last_kwargs["thinking"] is None
+
+
+def test_cache_hit_percent():
+    assert cache_hit_percent(0, 100) is None
+    assert cache_hit_percent(50, 0) is None
+    assert cache_hit_percent(30, 100) == 30
+    assert cache_hit_percent(200, 100) == 100   # 截断

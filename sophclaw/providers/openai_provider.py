@@ -91,11 +91,15 @@ class OpenAIProvider:
         pending_calls: dict[int, dict[str, str]] = {}
         stop_reason = ""
         input_tokens = output_tokens = 0
+        cache_read_tokens = 0
 
         async for chunk in stream:
             if getattr(chunk, "usage", None):
                 input_tokens = chunk.usage.prompt_tokens or 0
                 output_tokens = chunk.usage.completion_tokens or 0
+                details = getattr(chunk.usage, "prompt_tokens_details", None)
+                if details is not None:
+                    cache_read_tokens = getattr(details, "cached_tokens", 0) or 0
             if not chunk.choices:
                 continue
             choice = chunk.choices[0]
@@ -136,6 +140,7 @@ class OpenAIProvider:
                 tool_calls=tool_calls,
                 input_tokens=input_tokens,
                 output_tokens=output_tokens,
+                cache_read_tokens=cache_read_tokens,
                 stop_reason=stop_reason,
                 reasoning="".join(reasoning_parts),
             ),

@@ -74,6 +74,8 @@ class AssistantTurn:
     tool_calls: list[ToolCall] = field(default_factory=list)
     input_tokens: int = 0
     output_tokens: int = 0
+    cache_read_tokens: int = 0
+    cache_write_tokens: int = 0
     stop_reason: str = ""
     reasoning: str = ""
 
