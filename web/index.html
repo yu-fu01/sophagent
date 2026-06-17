@@ -70,6 +70,7 @@ details.thinking .think-body{margin-top:6px;white-space:normal;max-height:300px;
 details.thinking .think-body p{margin:0 0 6px}details.thinking .think-body p:last-child{margin-bottom:0}
 details.thinking .think-body code{background:#0d1117;border:1px solid var(--border);border-radius:4px;padding:1px 5px;font-size:12px;font-family:ui-monospace,Consolas,monospace}
 details.thinking .think-body pre.code{background:#0d1117;border:1px solid var(--border);border-radius:8px;padding:10px;overflow-x:auto;margin:6px 0}
+.turnmeta{font-size:11px;color:var(--dim);align-self:flex-start;margin-top:-6px;opacity:.8}
 #composer{display:flex;gap:8px;padding:12px;border-top:1px solid var(--border);flex-direction:column;align-items:stretch}
 #composer textarea{flex:1;height:60px}
 #empty{margin:auto;text-align:center;color:var(--dim)}
@@ -139,6 +140,11 @@ td .row-actions{display:flex;gap:6px}
               <option value="thinking">思考</option>
               <option value="fast">快速</option>
             </select>
+          </div>
+          <div id="usagebar" style="font-size:11px;color:var(--dim);display:flex;gap:14px;padding:2px 0">
+            <span id="ub-tok">↑0 ↓0</span>
+            <span id="ub-ctx">ctx 0/0</span>
+            <span id="ub-cache">cache —</span>
           </div>
           <div id="chips"></div>
           <div id="composerrow" style="display:flex;gap:8px">
@@ -247,6 +253,9 @@ async function openSession(sid) {
   updateAttachHint();
   attached = []; renderChips();
   await setupSessTools(detail);
+  $("ub-tok").textContent = "↑0 ↓0";
+  $("ub-ctx").textContent = "ctx 0/0";
+  $("ub-cache").textContent = "cache —";
   const msgs = $("msgs"); msgs.innerHTML = "";
   for (const m of detail.messages) {
     if (m.role === "user" && !m.content.startsWith("[Earlier conversation summary]")) addBubble("user", m.content);
@@ -414,6 +423,18 @@ async function sendMsg() {
           if (pre) pre.textContent += "\n→ " + ev.preview;
         } else if (ev.type === "error") {
           collapseThink(); addBubble("err", ev.message); bubble = null;
+        } else if (ev.type === "turn_usage") {
+          const meta = document.createElement("div");
+          meta.className = "turnmeta";
+          meta.textContent = `本轮 ↑${ev.input_tokens} ↓${ev.output_tokens}` +
+            (ev.cache_hit != null ? ` · 缓存 ${ev.cache_hit}%` : "");
+          msgs.appendChild(meta);
+          bubble = null; thinkEl = null;     // 下一轮重新计
+        } else if (ev.type === "done") {
+          const u = ev.usage || {};
+          $("ub-tok").textContent = `↑${u.input_tokens||0} ↓${u.output_tokens||0}`;
+          $("ub-ctx").textContent = `ctx ${ev.context_length||0}/${ev.context_limit||0}`;
+          $("ub-cache").textContent = ev.cache_hit != null ? `cache ${ev.cache_hit}%` : "cache —";
         }
         msgs.scrollTop = msgs.scrollHeight;
       }
