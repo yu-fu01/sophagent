@@ -20,6 +20,9 @@ async def build_runner(
     history: list[Message],
     on_persist: Optional[Callable[[list[Message]], Awaitable[None]]] = None,
     depth: int = 0,
+    override_provider: Optional[str] = None,
+    override_model: Optional[str] = None,
+    thinking_mode: Optional[str] = None,
 ) -> AgentRunner:
     cfg = get_config()
     memories = [r["content"] for r in await db.memory_list(user_id)] if db else []
@@ -32,4 +35,10 @@ async def build_runner(
         skill_store=skill_store,
         services={"memories": memories},
     )
-    return AgentRunner(agent, ctx, history, on_persist=on_persist)
+    eff = AgentDef(**{**agent.__dict__,
+                      "provider": override_provider or agent.provider,
+                      "model": override_model or agent.model})
+    ctx.agent = eff  # 让工具上下文也用 effective agent
+    runner = AgentRunner(eff, ctx, history, on_persist=on_persist)
+    runner.thinking = thinking_mode if thinking_mode and thinking_mode != "default" else None
+    return runner

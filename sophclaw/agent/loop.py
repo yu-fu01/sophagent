@@ -76,6 +76,7 @@ class AgentRunner:
         self.context_limit = _resolve_context_limit(agent.provider)
         self.usage = {"input_tokens": 0, "output_tokens": 0}
         self.compressed = False  # set when history was rewritten; caller may compact the DB
+        self.thinking: str | None = None
 
     async def _persist(self, msg: Message) -> None:
         self._new_messages.append(msg)
@@ -141,6 +142,7 @@ class AgentRunner:
                     messages=self.history,
                     tools=tool_schemas or None,
                     temperature=self.agent.temperature,
+                    thinking=self.thinking,
                 ):
                     yield ev
                 return

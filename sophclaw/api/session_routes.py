@@ -8,7 +8,7 @@ from fastapi.responses import StreamingResponse
 
 from ..agent.runtime import build_runner
 from ..auth import require_user
-from ..models import AgentDef, ChatRequest, SessionCreate
+from ..models import AgentDef, ChatRequest, SessionCreate, SessionOverridePatch
 from ..perms import can_access_group, can_manage_group
 
 log = logging.getLogger(__name__)
@@ -58,6 +58,17 @@ async def get_session(session_id: str, request: Request, user=Depends(require_us
     return {**dict(session), "messages": [m.to_dict() for m in messages]}
 
 
+@router.patch("/{session_id}")
+async def patch_session(session_id: str, req: SessionOverridePatch, request: Request,
+                        user=Depends(require_user)):
+    db = request.app.state.db
+    if await db.get_session(session_id, user["id"]) is None:
+        raise HTTPException(404, "session not found")
+    await db.set_session_overrides(session_id, override_provider=req.override_provider,
+        override_model=req.override_model, thinking_mode=req.thinking_mode)
+    return dict(await db.get_session(session_id, user["id"]))
+
+
 @router.delete("/{session_id}")
 async def delete_session(session_id: str, request: Request, user=Depends(require_user)):
     db = request.app.state.db
@@ -103,6 +114,9 @@ async def chat(session_id: str, req: ChatRequest, request: Request, user=Depends
                 runner = await build_runner(
                     db=db, skill_store=state.skill_store, agent=agent,
                     user_id=user["id"], history=history, on_persist=persist,
+                    override_provider=session["override_provider"],
+                    override_model=session["override_model"],
+                    thinking_mode=session["thinking_mode"],
                 )
                 try:
                     async for ev in runner.run(req.content):

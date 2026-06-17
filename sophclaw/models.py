@@ -186,6 +186,12 @@ class MemberPatch(BaseModel):
     can_manage: bool
 
 
+class SessionOverridePatch(BaseModel):
+    override_provider: Optional[str] = None
+    override_model: Optional[str] = None
+    thinking_mode: Optional[str] = Field(default=None, pattern=r"^(default|thinking|fast)$")
+
+
 class ChatRequest(BaseModel):
     content: str = Field(min_length=1)
 
