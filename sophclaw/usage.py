@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 
-def cache_hit_percent(cache_read: int, prompt_total: int):
+def cache_hit_percent(cache_read: int | None, prompt_total: int | None) -> int | None:
     cache_read = int(cache_read or 0)
     prompt_total = int(prompt_total or 0)
     if cache_read <= 0 or prompt_total <= 0:
