@@ -10,6 +10,7 @@
 - **多用户 + 用户组**：JWT 登录；每个用户自带一个本人为 owner 的组，agent/session 按组隔离；owner 可授予成员管理权、审批加入申请、邀请成员；管理员身份由 admin group 成员资格派生（root admin 受保护）。工作目录与记忆仍按用户隔离
 - **自进化**：skill 索引注入 system prompt，agent 通过 `skill_manage` 工具在运行时自主创建 / 改进 / 删除 skill（SKILL.md + YAML frontmatter，与 hermes 格式兼容）
 - **内置工具**：文件读写、终端、Python 执行、web 搜索 / 抓取、长期记忆、skill 管理、子 agent 委派（`delegate_task`，深度限 1）
+- **文件管理**：web 右侧只读目录树（浏览 / 预览 / 下载）；对话框 📎 上传文件进个人工作目录，并以 `[附加文件: <path>]` 引用加入上下文，agent 用 `read_file` 按需读取（参考 hermes）
 - **接口**：REST API + SSE 流式聊天 + OpenAI 兼容 `/v1/chat/completions` + 单文件 Web 界面（零前端依赖）
 
 ## 快速开始（Docker）
