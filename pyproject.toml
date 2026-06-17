@@ -16,6 +16,7 @@ dependencies = [
     "PyJWT>=2.8,<3",
     "bcrypt>=4.0,<5",
     "PyYAML>=6.0,<7",
+    "cryptography>=42",
 ]
 
 [project.optional-dependencies]

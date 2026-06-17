@@ -42,7 +42,8 @@ class EchoProvider:
         self.script: list = []
 
     async def chat(self, *, model, system, messages, tools=None,
-                   temperature=None, max_tokens=None) -> AsyncIterator:
+                   temperature=None, max_tokens=None, thinking=None) -> AsyncIterator:
+        self.last_kwargs = {"model": model, "thinking": thinking, "temperature": temperature}
         from sophclaw.models import StreamEvent
 
         if self.script:
@@ -76,6 +77,7 @@ def client(tmp_path, monkeypatch):
     providers_mod._cache["test"] = provider
 
     from sophclaw.main import create_app
+    from sophclaw.providers.registry import reset_registry
 
     app = create_app()
     with TestClient(app) as c:
@@ -83,6 +85,7 @@ def client(tmp_path, monkeypatch):
         yield c
     config_mod.reset_config()
     providers_mod.reset_providers()
+    reset_registry()
 
 
 def login(client, username, password) -> dict:

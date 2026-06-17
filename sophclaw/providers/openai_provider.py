@@ -3,7 +3,10 @@
 from __future__ import annotations
 
 import json
+import logging
 from typing import Any, AsyncIterator
+
+log = logging.getLogger(__name__)
 
 from openai import AsyncOpenAI
 
@@ -61,6 +64,7 @@ class OpenAIProvider:
         tools: list[dict] | None = None,
         temperature: float | None = None,
         max_tokens: int | None = None,
+        thinking: str | None = None,
     ) -> AsyncIterator[StreamEvent]:
         kwargs: dict[str, Any] = {
             "model": model,
@@ -73,12 +77,18 @@ class OpenAIProvider:
             kwargs["temperature"] = temperature
         if max_tokens is not None:
             kwargs["max_tokens"] = max_tokens
+        if thinking == "thinking":
+            kwargs["reasoning_effort"] = "high"
         try:
             stream = await self.client.chat.completions.create(
                 **kwargs, stream_options={"include_usage": True}
             )
         except TypeError:
-            # some third-party endpoints reject stream_options
+            # some third-party endpoints reject stream_options / reasoning_effort;
+            # retry without them — note token usage will then be unavailable
+            log.warning("endpoint rejected stream_options/reasoning_effort; "
+                        "retrying without them (token counts unavailable)")
+            kwargs.pop("reasoning_effort", None)
             stream = await self.client.chat.completions.create(**kwargs)
 
         content_parts: list[str] = []
@@ -87,11 +97,15 @@ class OpenAIProvider:
         pending_calls: dict[int, dict[str, str]] = {}
         stop_reason = ""
         input_tokens = output_tokens = 0
+        cache_read_tokens = 0
 
         async for chunk in stream:
             if getattr(chunk, "usage", None):
                 input_tokens = chunk.usage.prompt_tokens or 0
                 output_tokens = chunk.usage.completion_tokens or 0
+                details = getattr(chunk.usage, "prompt_tokens_details", None)
+                if details is not None:
+                    cache_read_tokens = getattr(details, "cached_tokens", 0) or 0
             if not chunk.choices:
                 continue
             choice = chunk.choices[0]
@@ -132,6 +146,7 @@ class OpenAIProvider:
                 tool_calls=tool_calls,
                 input_tokens=input_tokens,
                 output_tokens=output_tokens,
+                cache_read_tokens=cache_read_tokens,
                 stop_reason=stop_reason,
                 reasoning="".join(reasoning_parts),
             ),

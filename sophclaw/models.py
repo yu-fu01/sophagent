@@ -74,6 +74,8 @@ class AssistantTurn:
     tool_calls: list[ToolCall] = field(default_factory=list)
     input_tokens: int = 0
     output_tokens: int = 0
+    cache_read_tokens: int = 0
+    cache_write_tokens: int = 0
     stop_reason: str = ""
     reasoning: str = ""
 
@@ -186,12 +188,33 @@ class MemberPatch(BaseModel):
     can_manage: bool
 
 
+class SessionOverridePatch(BaseModel):
+    override_provider: Optional[str] = None
+    override_model: Optional[str] = None
+    thinking_mode: Optional[str] = Field(default=None, pattern=r"^(default|thinking|fast)$")
+
+
 class ChatRequest(BaseModel):
     content: str = Field(min_length=1)
 
 
 class SkillWrite(BaseModel):
     content: str  # full SKILL.md content
+
+
+class ProviderCreate(BaseModel):
+    name: str = Field(pattern=r"^[a-zA-Z0-9_.-]{1,64}$")
+    api_mode: str = Field(pattern=r"^(openai|anthropic)$")
+    base_url: Optional[str] = None
+    api_key: str = ""
+    context_limit: int = Field(default=100_000, ge=1)
+
+
+class ProviderPatch(BaseModel):
+    api_mode: str = Field(pattern=r"^(openai|anthropic)$")
+    base_url: Optional[str] = None
+    api_key: Optional[str] = None   # None/"" => 不变
+    context_limit: int = Field(default=100_000, ge=1)
 
 
 # OpenAI compatible layer ----------------------------------------------------

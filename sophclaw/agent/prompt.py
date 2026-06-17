@@ -28,6 +28,13 @@ def build_system_prompt(
     parts = [agent.system_prompt.strip()]
 
     env_lines = [f"Current date: {datetime.now(timezone.utc).strftime('%Y-%m-%d')} (UTC)"]
+    # Model identity (BUG3.1): some endpoints don't echo the real model name, so
+    # inject it explicitly — the agent answers "what model are you?" from this.
+    # agent.model is the effective model (session overrides already applied).
+    env_lines.append(
+        f"You are powered by the model named {agent.model} (provider: {agent.provider}). "
+        f"When asked which model you are, answer with this name."
+    )
     if workspace is not None:
         env_lines.append("You have a private workspace directory; file and terminal tools operate inside it.")
     parts.append("## Environment\n" + "\n".join(env_lines))

@@ -3,12 +3,16 @@ the OpenAI-compat layer and delegate_task)."""
 
 from __future__ import annotations
 
+import logging
+from dataclasses import replace as dc_replace
 from typing import Any, Awaitable, Callable, Optional
 
 from ..config import get_config
 from ..models import AgentDef, Message
 from ..tools.registry import ToolContext
 from .loop import AgentRunner
+
+log = logging.getLogger(__name__)
 
 
 async def build_runner(
@@ -20,6 +24,9 @@ async def build_runner(
     history: list[Message],
     on_persist: Optional[Callable[[list[Message]], Awaitable[None]]] = None,
     depth: int = 0,
+    override_provider: Optional[str] = None,
+    override_model: Optional[str] = None,
+    thinking_mode: Optional[str] = None,
 ) -> AgentRunner:
     cfg = get_config()
     memories = [r["content"] for r in await db.memory_list(user_id)] if db else []
@@ -32,4 +39,17 @@ async def build_runner(
         skill_store=skill_store,
         services={"memories": memories},
     )
-    return AgentRunner(agent, ctx, history, on_persist=on_persist)
+    eff_provider = agent.provider
+    if override_provider:
+        from ..providers.registry import get_registry
+        try:
+            get_registry().resolve(override_provider)
+            eff_provider = override_provider
+        except (RuntimeError, KeyError):
+            log.warning("session override_provider %r not in registry; falling back to agent provider %r",
+                        override_provider, agent.provider)
+    eff = dc_replace(agent, provider=eff_provider, model=override_model or agent.model)
+    ctx.agent = eff  # 让工具上下文也用 effective agent
+    runner = AgentRunner(eff, ctx, history, on_persist=on_persist)
+    runner.thinking = thinking_mode if thinking_mode and thinking_mode != "default" else None
+    return runner
