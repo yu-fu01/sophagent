@@ -70,10 +70,14 @@ class SkillStore:
                 meta, _ = parse_frontmatter(md.read_text(encoding="utf-8", errors="replace"))
             except SkillError:
                 continue  # skip malformed entries rather than break every prompt
+            mblock = meta.get("metadata") if isinstance(meta.get("metadata"), dict) else {}
+            tags = mblock.get("tags")
+            if not tags and isinstance(mblock.get("hermes"), dict):  # hermes nests tags
+                tags = mblock["hermes"].get("tags")
             items.append({
                 "name": meta.get("name", md.parent.name),
                 "description": str(meta.get("description", "")).strip(),
-                "tags": (meta.get("metadata") or {}).get("tags", []) if isinstance(meta.get("metadata"), dict) else [],
+                "tags": tags or [],
                 "dir": md.parent.name,
             })
         return items

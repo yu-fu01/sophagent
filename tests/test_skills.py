@@ -1,5 +1,6 @@
 import pytest
 
+from sophclaw.skills.seed import builtin_dir, seed_builtin_skills
 from sophclaw.skills.store import SkillError, SkillStore, parse_frontmatter
 
 SKILL_MD = """---
@@ -101,3 +102,95 @@ async def test_skill_manage_tool_self_evolution(ctx, tmp_path):
     prompt = build_system_prompt(ctx.agent, ctx.skill_store.index(None), None, ctx.workspace)
     assert "deploy-checklist: Steps to deploy" in prompt
     assert "skill_manage" in prompt  # self-evolution guide present
+
+
+# ---------------------------------------------------------------------------
+# Built-in skill seeding (hermes import)
+# ---------------------------------------------------------------------------
+
+HERMES_TAGS_MD = """---
+name: hermes-tagged
+description: "Skill using hermes-style nested tags"
+metadata:
+  hermes:
+    tags: [GitHub, Git]
+---
+
+# Hermes Tagged
+body
+"""
+
+
+def _fake_source(tmp_path, names):
+    src = tmp_path / "src"
+    for n in names:
+        d = src / n
+        d.mkdir(parents=True)
+        (d / "SKILL.md").write_text(
+            f'---\nname: {n}\ndescription: "fake {n}"\n---\n\n# {n}\n', encoding="utf-8"
+        )
+    return src
+
+
+def test_seed_copies_missing(tmp_path):
+    src = _fake_source(tmp_path, ["alpha", "beta"])
+    dest = tmp_path / "skills"
+    n = seed_builtin_skills(dest, source=src)
+    assert n == 2
+    assert (dest / "alpha/SKILL.md").is_file()
+    assert (dest / "beta/SKILL.md").is_file()
+
+
+def test_seed_is_idempotent(tmp_path):
+    src = _fake_source(tmp_path, ["alpha"])
+    dest = tmp_path / "skills"
+    assert seed_builtin_skills(dest, source=src) == 1
+    assert seed_builtin_skills(dest, source=src) == 0
+
+
+def test_seed_does_not_overwrite(tmp_path):
+    src = _fake_source(tmp_path, ["alpha"])
+    dest = tmp_path / "skills"
+    (dest / "alpha").mkdir(parents=True)
+    (dest / "alpha/SKILL.md").write_text("SENTINEL", encoding="utf-8")
+    assert seed_builtin_skills(dest, source=src) == 0
+    assert (dest / "alpha/SKILL.md").read_text() == "SENTINEL"
+
+
+def test_seed_copies_support_subdirs(tmp_path):
+    src = _fake_source(tmp_path, ["alpha"])
+    (src / "alpha/scripts").mkdir()
+    (src / "alpha/scripts/run.sh").write_text("echo hi", encoding="utf-8")
+    dest = tmp_path / "skills"
+    seed_builtin_skills(dest, source=src)
+    assert (dest / "alpha/scripts/run.sh").read_text() == "echo hi"
+
+
+def test_seed_missing_source_returns_zero(tmp_path):
+    dest = tmp_path / "skills"
+    assert seed_builtin_skills(dest, source=tmp_path / "nope") == 0
+
+
+def test_real_bundle_seeds_and_parses(tmp_path):
+    """The shipped builtin/ bundle has the curated hermes skills, all parseable."""
+    dest = tmp_path / "skills"
+    n = seed_builtin_skills(dest)
+    assert n >= 28
+    assert (dest / "systematic-debugging/SKILL.md").is_file()
+    assert (dest / "github-auth/SKILL.md").is_file()
+    meta, _ = parse_frontmatter((dest / "systematic-debugging/SKILL.md").read_text())
+    assert meta["name"] == "systematic-debugging"
+    assert meta["description"]
+    # store can index the whole curated set without choking
+    store = SkillStore(dest)
+    assert len(store.index()) >= 28
+
+
+def test_builtin_dir_exists():
+    assert builtin_dir().is_dir()
+
+
+def test_index_reads_hermes_nested_tags(store):
+    store.create("hermes-tagged", HERMES_TAGS_MD)
+    idx = store.index()
+    assert idx[0]["tags"] == ["GitHub", "Git"]

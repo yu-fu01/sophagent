@@ -45,11 +45,15 @@ async def lifespan(app: FastAPI):
     await _bootstrap_admin(db)
     await db.ensure_groups()  # admin group + personal groups; idempotent (also migrates old DBs)
 
+    from .skills.seed import seed_builtin_skills
     from .skills.store import SkillStore
     from .tools import load_all
 
     load_all()
     app.state.db = db
+    seeded = seed_builtin_skills(cfg.skills_dir)  # populate missing built-in skills
+    if seeded:
+        log.info("seeded %d built-in skills into %s", seeded, cfg.skills_dir)
     app.state.skill_store = SkillStore(cfg.skills_dir)
     app.state.manager = SessionManager(cfg.max_concurrent_turns)
     if not cfg.providers:
