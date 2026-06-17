@@ -3,12 +3,14 @@
 from __future__ import annotations
 
 import logging
+import mimetypes
 import secrets
 from contextlib import asynccontextmanager
 from pathlib import Path
 
 from fastapi import FastAPI
 from fastapi.responses import FileResponse, JSONResponse
+from fastapi.staticfiles import StaticFiles
 
 from . import __version__
 from .agent.manager import SessionManager
@@ -77,6 +79,16 @@ def create_app() -> FastAPI:
     @app.get("/worklog.js", include_in_schema=False)
     async def worklog_js():
         return FileResponse(WEB_DIR / "worklog.js", media_type="application/javascript")
+
+    @app.get("/markdown.js", include_in_schema=False)
+    async def markdown_js():
+        return FileResponse(WEB_DIR / "markdown.js", media_type="application/javascript")
+
+    # 前端第三方资源（KaTeX 等）。woff2 需显式注册 mime，否则浏览器拒绝加载。
+    mimetypes.add_type("font/woff2", ".woff2")
+    vendor_dir = WEB_DIR / "vendor"
+    if vendor_dir.is_dir():
+        app.mount("/vendor", StaticFiles(directory=vendor_dir), name="vendor")
 
     return app
 

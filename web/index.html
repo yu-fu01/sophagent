@@ -4,6 +4,7 @@
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>sophclaw-agent</title>
+<link rel="stylesheet" href="/vendor/katex/katex.min.css">
 <style>
 :root{--bg:#101418;--panel:#1a2027;--panel2:#222a33;--border:#2e3742;--text:#dbe2ea;--dim:#8a96a3;--accent:#4f9cf9;--green:#3fb96f;--red:#e5604c}
 *{box-sizing:border-box}
@@ -61,6 +62,8 @@ label{display:block;margin:10px 0 4px;color:var(--dim);font-size:12px}
 .msg.assistant th{background:var(--panel);color:var(--text)}
 .msg.assistant a{color:var(--accent)}
 .msg.assistant hr{border:0;border-top:1px solid var(--border);margin:8px 0}
+/* 数学公式：行内默认；display 数学独立成块并居中（KaTeX 渲染 .math span） */
+.math[data-display="1"]{display:block;margin:8px 0;text-align:center;overflow-x:auto}
 .msg.err{align-self:center;background:transparent;color:var(--red);font-size:13px}
 /* worklog: 整轮活动折叠组（思考 + 工具合并） */
 details.worklog{align-self:flex-start;max-width:78%;margin:0}
@@ -166,6 +169,8 @@ td .row-actions{display:flex;gap:6px}
   </div>
 </div>
 
+<script src="/vendor/katex/katex.min.js"></script>
+<script src="markdown.js"></script>
 <script src="worklog.js"></script>
 <script>
 "use strict";
@@ -260,7 +265,7 @@ async function openSession(sid) {
         const wl = ensureWorklog(); delete wl.dataset.live;
         if (m.reasoning) {
           const body = worklogThinkingCard(wl).querySelector(".think-body");
-          body.dataset.raw = m.reasoning; body.innerHTML = mdToHtml(m.reasoning);
+          body.dataset.raw = m.reasoning; body.innerHTML = mdToHtml(m.reasoning); renderMathInElement(body);
         }
         for (const tc of tcs) appendToolRow(wl, tc.name, JSON.stringify(tc.arguments, null, 2), null, true);
         wl.open = false; syncWorklogSummary(wl);
@@ -272,73 +277,12 @@ async function openSession(sid) {
   msgs.scrollTop = msgs.scrollHeight;
 }
 
-// ---- minimal markdown renderer (escape first -> XSS safe) -------------------
-const escapeHtml = s => s.replace(/[&<>"']/g, c => ({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;","'":"&#39;"}[c]));
-
-function mdInline(t) {
-  t = escapeHtml(t);
-  t = t.replace(/`([^`]+)`/g, "<code>$1</code>");
-  t = t.replace(/\*\*([^*]+)\*\*/g, "<b>$1</b>");
-  t = t.replace(/(^|[^*\w])\*([^*\s][^*]*)\*/g, "$1<i>$2</i>");
-  t = t.replace(/\[([^\]]+)\]\((https?:[^)\s]+)\)/g, '<a href="$2" target="_blank" rel="noopener">$1</a>');
-  return t;
-}
-
-function mdToHtml(src) {
-  // protect fenced code blocks before any other transform
-  const blocks = [];
-  src = src.replace(/```[\w-]*\n?([\s\S]*?)(```|$)/g, (m, code) => {
-    blocks.push(`<pre class="code"><code>${escapeHtml(code.replace(/\n$/, ""))}</code></pre>`);
-    return `\x00${blocks.length - 1}\x00`;
-  });
-  const lines = src.split("\n");
-  const out = [];
-  let para = [], list = null, table = null;
-  const flushPara = () => { if (para.length) { out.push("<p>" + para.map(mdInline).join("<br>") + "</p>"); para = []; } };
-  const flushList = () => { if (list) { out.push(`<${list.tag}>` + list.items.map(i => `<li>${mdInline(i)}</li>`).join("") + `</${list.tag}>`); list = null; } };
-  const flushTable = () => {
-    if (!table) return;
-    const tr = (cells, tag) => "<tr>" + cells.map(c => `<${tag}>${mdInline(c)}</${tag}>`).join("") + "</tr>";
-    out.push("<table>" + tr(table.head, "th") + table.rows.map(r => tr(r, "td")).join("") + "</table>");
-    table = null;
-  };
-  const flushAll = () => { flushPara(); flushList(); flushTable(); };
-  for (const raw of lines) {
-    const line = raw.replace(/\s+$/, "");
-    let m;
-    if (/^\x00\d+\x00$/.test(line.trim())) { flushAll(); out.push(blocks[+line.trim().slice(1, -1)]); continue; }
-    if (!line.trim()) { flushAll(); continue; }
-    if ((m = line.match(/^(#{1,4})\s+(.*)/))) { flushAll(); out.push(`<h${m[1].length}>${mdInline(m[2])}</h${m[1].length}>`); continue; }
-    if (/^(-{3,}|\*{3,})$/.test(line.trim())) { flushAll(); out.push("<hr>"); continue; }
-    if ((m = line.match(/^>\s?(.*)/))) { flushAll(); out.push(`<blockquote>${mdInline(m[1])}</blockquote>`); continue; }
-    if ((m = line.match(/^\s*[-*+]\s+(.*)/))) {
-      flushPara(); flushTable();
-      if (!list || list.tag !== "ul") { flushList(); list = {tag: "ul", items: []}; }
-      list.items.push(m[1]); continue;
-    }
-    if ((m = line.match(/^\s*\d+[.)]\s+(.*)/))) {
-      flushPara(); flushTable();
-      if (!list || list.tag !== "ol") { flushList(); list = {tag: "ol", items: []}; }
-      list.items.push(m[1]); continue;
-    }
-    if (/^\s*\|.*\|\s*$/.test(line)) {
-      flushPara(); flushList();
-      const cells = line.trim().replace(/^\||\|$/g, "").split("|").map(c => c.trim());
-      if (!table) table = {head: cells, rows: []};
-      else if (!cells.every(c => /^:?-{2,}:?$/.test(c))) table.rows.push(cells);
-      continue;
-    }
-    flushList(); flushTable();
-    para.push(line);
-  }
-  flushAll();
-  return out.join("\n");
-}
+// ---- markdown 渲染 + LaTeX 数学见 markdown.js（escapeHtml/mdToHtml/renderMathInElement）----
 
 function addBubble(cls, text) {
   const d = document.createElement("div");
   d.className = "msg " + cls;
-  if (cls === "assistant") { d.dataset.raw = text; d.innerHTML = mdToHtml(text); }
+  if (cls === "assistant") { d.dataset.raw = text; d.innerHTML = mdToHtml(text); renderMathInElement(d); }
   else if (cls === "user") renderUserContent(d, text);
   else d.textContent = text;
   $("msgs").appendChild(d); return d;
@@ -450,11 +394,13 @@ async function sendMsg() {
           const body = worklogThinkingCard(wl).querySelector(".think-body");
           body.dataset.raw += ev.text;
           body.innerHTML = mdToHtml(body.dataset.raw);
+          renderMathInElement(body);
           syncWorklogSummary(wl);
         } else if (ev.type === "text_delta") {
           if (!bubble) { if (wl) { closeWorklog(wl); wl = null; } bubble = addBubble("assistant", ""); }
           bubble.dataset.raw += ev.text;
           bubble.innerHTML = mdToHtml(bubble.dataset.raw);
+          renderMathInElement(bubble);
         } else if (ev.type === "tool_call") {
           bubble = null;                          // 正文后再来工具 -> 新开活动组
           if (!wl) wl = ensureWorklog();
