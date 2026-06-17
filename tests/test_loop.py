@@ -43,6 +43,16 @@ async def collect(runner, user_input):
     return [ev async for ev in runner.run(user_input)]
 
 
+def test_system_prompt_includes_model_identity(ctx):
+    """The agent must know its own model name (BUG3.1): the system prompt injects
+    the effective model/provider so it can answer "what model are you?"."""
+    from sophclaw.agent.prompt import build_system_prompt
+
+    prompt = build_system_prompt(ctx.agent)
+    assert "test-model" in prompt   # ctx.agent.model
+    assert "test" in prompt          # ctx.agent.provider
+
+
 async def test_simple_turn(ctx, fake_provider):
     fake_provider([AssistantTurn(content="hello!", stop_reason="stop")])
     runner = AgentRunner(ctx.agent, ctx, history=[])
