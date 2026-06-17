@@ -3,6 +3,7 @@ from fastapi import FastAPI
 from . import (
     agent_routes,
     auth_routes,
+    file_routes,
     group_routes,
     membership_routes,
     openai_compat,
@@ -19,5 +20,6 @@ def mount_routes(app: FastAPI) -> None:
     app.include_router(membership_routes.router, prefix="/api", tags=["membership"])
     app.include_router(agent_routes.router, prefix="/api/agents", tags=["agents"])
     app.include_router(session_routes.router, prefix="/api/sessions", tags=["sessions"])
+    app.include_router(file_routes.router, prefix="/api/files", tags=["files"])
     app.include_router(skill_routes.router, prefix="/api/skills", tags=["skills"])
     app.include_router(openai_compat.router, prefix="/v1", tags=["openai-compat"])
