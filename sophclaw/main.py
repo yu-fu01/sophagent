@@ -75,17 +75,23 @@ def create_app() -> FastAPI:
     async def healthz():
         return JSONResponse({"status": "ok", "version": __version__})
 
+    # 前端外壳文件（HTML / 应用 JS）无版本指纹，文件名不随内容变化。
+    # 设 no-cache 强制浏览器每次带 etag 回源校验：未变返 304（廉价），
+    # 重新部署后改动立即生效，避免「改了前端却被旧缓存覆盖」（需硬刷新）的坑。
+    # 第三方资源（/vendor 下 KaTeX 等）极少变动，仍由 StaticFiles 默认缓存。
+    NO_CACHE = {"Cache-Control": "no-cache"}
+
     @app.get("/", include_in_schema=False)
     async def index():
-        return FileResponse(WEB_DIR / "index.html")
+        return FileResponse(WEB_DIR / "index.html", headers=NO_CACHE)
 
     @app.get("/worklog.js", include_in_schema=False)
     async def worklog_js():
-        return FileResponse(WEB_DIR / "worklog.js", media_type="application/javascript")
+        return FileResponse(WEB_DIR / "worklog.js", media_type="application/javascript", headers=NO_CACHE)
 
     @app.get("/markdown.js", include_in_schema=False)
     async def markdown_js():
-        return FileResponse(WEB_DIR / "markdown.js", media_type="application/javascript")
+        return FileResponse(WEB_DIR / "markdown.js", media_type="application/javascript", headers=NO_CACHE)
 
     # 前端第三方资源（KaTeX 等）。woff2 需显式注册 mime，否则浏览器拒绝加载。
     mimetypes.add_type("font/woff2", ".woff2")
