@@ -61,6 +61,21 @@ test("dollar inside fenced code is not treated as math", () => {
   assert.doesNotMatch(html, /class="math"/);
 });
 
+// ---- 行内反引号代码里的 $ 不被当数学（回归：`$$ ... $$` 字面量） ----------
+test("dollar inside inline backtick code is not treated as math", () => {
+  const html = mdToHtml("可用 `$$ ... $$` 表示块级公式");
+  // 反引号内应是字面代码，原样保留 $$，不得抽成 .math
+  assert.doesNotMatch(html, /class="math"/);
+  assert.match(html, /<code>\$\$ \.\.\. \$\$<\/code>/);
+});
+
+test("inline math outside backticks still works alongside backtick code", () => {
+  const html = mdToHtml("行内 $x^2$ 和字面 `$y$`");
+  // $x^2$ 抽成数学，`$y$` 保持字面代码
+  assert.match(html, /data-tex="x\^2"/);
+  assert.match(html, /<code>\$y\$<\/code>/);
+});
+
 // ---- 货币误判防护 ----------------------------------------------------------
 test("lone currency $5 and $6 not misread as math", () => {
   const html = mdToHtml("costs $5 and $6 today");

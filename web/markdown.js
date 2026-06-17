@@ -11,7 +11,8 @@
 
   function mdInline(t) {
     t = escapeHtml(t);
-    t = t.replace(/`([^`]+)`/g, "<code>$1</code>");
+    // 行内代码 `…` 已在 mdToHtml 里预先 stash（见 \x02 占位符），此处不再处理，
+    // 以免代码里的 $ / * / _ 被后续行内规则误伤。
     t = t.replace(/\*\*([^*]+)\*\*/g, "<b>$1</b>");
     t = t.replace(/~~([^~]+)~~/g, "<del>$1</del>");
     t = t.replace(/(^|[^*\w])\*([^*\s][^*]*)\*/g, "$1<i>$2</i>");
@@ -32,8 +33,16 @@
       return `\x00${blocks.length - 1}\x00`;
     });
 
+    // 1.5) 保护行内代码 `…`（单行）。必须在数学抽取之前，否则代码里的 $$…$$ / $…$
+    //      会被误当数学。围栏代码块已在上一步占位，剩下的反引号即行内代码。
+    const inlineCode = [];
+    src = src.replace(/`([^`\n]+)`/g, (m, code) => {
+      inlineCode.push(code);
+      return `\x02${inlineCode.length - 1}\x02`;
+    });
+
     // 2) 保护数学 span。顺序：先 display（$$ / \[），再 inline（\(...\) / $...$）。
-    //    代码块已被占位，故代码里的 $ 不会被当作数学。
+    //    代码块（围栏 + 行内）已被占位，故代码里的 $ 不会被当作数学。
     const math = [];
     const stash = (tex, display) => { math.push({tex, display}); return `\x01${math.length - 1}\x01`; };
     src = src.replace(/\$\$([\s\S]+?)\$\$/g, (m, t) => stash(t.trim(), true));
@@ -89,8 +98,11 @@
     }
     flushAll();
 
-    // 4) 还原数学占位符（行内 / 独占块在此一并替换）
-    return out.join("\n").replace(/\x01(\d+)\x01/g, (m, i) => mathSpan(math[+i]));
+    // 4) 还原占位符：数学（行内 / 独占块）与行内代码一并替换。
+    //    行内代码内容此时才转义，保证 `<` `&` 等原样显示且不破坏 HTML。
+    return out.join("\n")
+      .replace(/\x01(\d+)\x01/g, (m, i) => mathSpan(math[+i]))
+      .replace(/\x02(\d+)\x02/g, (m, i) => `<code>${escapeHtml(inlineCode[+i])}</code>`);
   }
 
   // 用全局 KaTeX 渲染容器内所有 .math span。KaTeX 未加载则保留兜底原文。
