@@ -21,6 +21,7 @@ class ProviderConfig:
     api_key: str = ""
     base_url: str | None = None
     context_limit: int = 100_000  # tokens (estimated)
+    source: str = "builtin"  # builtin (yaml) | db
 
 
 @dataclass
