@@ -603,6 +603,26 @@ async function renderAdmin() {
     renderAdmin();
   };
 
+  // providers card (REQ3.1)
+  const pc = card(box, "Providers (模型供应商 — admin)");
+  const providers = await apiJson("/api/providers");
+  const pt = table(pc, ["Name", "Mode", "Base URL", "Key", "Ctx", "Source", ""]);
+  for (const p of providers) {
+    const tr = row(pt, [p.name, p.api_mode, p.base_url || "—", p.api_key || "—",
+                        p.context_limit, p.source]);
+    const td = tr.insertCell(); td.innerHTML = `<div class="row-actions"></div>`;
+    if (p.source === "db") {
+      btn(td.firstChild, "edit", "ghost", () => providerForm(pc, p));
+      btn(td.firstChild, "delete", "danger", async () => {
+        if (!confirm(`Delete provider ${p.name}?`)) return;
+        await apiJson("/api/providers/" + p.name, {method: "DELETE"}).catch(alertErr);
+        renderAdmin();
+      });
+    }
+  }
+  const pnb = document.createElement("div"); pnb.style.marginTop = "10px"; pc.appendChild(pnb);
+  btn(pnb, "+ New provider", "", () => providerForm(pc, null));
+
   // skills card
   const sc = card(box, "Skills (agent-created knowledge — review here)");
   if (!skills.length) sc.insertAdjacentHTML("beforeend", `<div class="muted">No skills yet. Agents create them as they learn.</div>`);
@@ -623,6 +643,50 @@ async function renderAdmin() {
   }
 }
 
+function providerForm(parent, existing) {
+  const old = parent.querySelector(".provider-form"); if (old) old.remove();
+  const f = document.createElement("div"); f.className = "provider-form";
+  f.style.cssText = "margin-top:12px;border-top:1px solid var(--border);padding-top:8px";
+  f.innerHTML = `
+    <div class="grid2">
+      <div><label>Name</label><input id="pf-name"></div>
+      <div><label>API mode</label><select id="pf-mode">
+        <option value="openai">openai</option><option value="anthropic">anthropic</option></select></div>
+      <div><label>Base URL</label><input id="pf-url" placeholder="https://api.example.com/v1"></div>
+      <div><label>Context limit</label><input id="pf-ctx" type="number" value="100000"></div>
+      <div><label>API key${existing ? " (留空=不变)" : ""}</label><input id="pf-key" type="password"></div>
+    </div>
+    <div style="margin-top:12px;display:flex;gap:8px">
+      <button id="pf-save"></button><button class="ghost" id="pf-cancel">Cancel</button></div>`;
+  parent.appendChild(f);
+  if (existing) {
+    $("pf-name").value = existing.name; $("pf-name").disabled = true;
+    $("pf-mode").value = existing.api_mode; $("pf-url").value = existing.base_url || "";
+    $("pf-ctx").value = existing.context_limit;
+  }
+  $("pf-save").textContent = existing ? "Save" : "Create";
+  $("pf-cancel").onclick = () => f.remove();
+  $("pf-save").onclick = async () => {
+    const body = {api_mode: $("pf-mode").value, base_url: $("pf-url").value.trim() || null,
+                  context_limit: +$("pf-ctx").value, api_key: $("pf-key").value};
+    try {
+      if (existing) await apiJson("/api/providers/" + existing.name, {method: "PUT", body});
+      else { body.name = $("pf-name").value.trim();
+             await apiJson("/api/providers", {method: "POST", body}); }
+      renderAdmin();
+    } catch (e) { alert(e.message); }
+  };
+}
+
+async function fillModels(provider, datalistId) {
+  const dl = $(datalistId); if (!dl) return; dl.innerHTML = "";
+  if (!provider) return;
+  try {
+    const {models} = await apiJson("/api/providers/" + provider + "/models");
+    for (const m of models || []) { const o = document.createElement("option"); o.value = m; dl.appendChild(o); }
+  } catch (e) { /* 静默回退到手填（非 admin 会 403） */ }
+}
+
 function agentForm(parent, options, existing, groups) {
   const old = parent.querySelector(".agent-form"); if (old) old.remove();
   const f = document.createElement("div");
@@ -634,7 +698,7 @@ function agentForm(parent, options, existing, groups) {
       <div><label>Group</label><select id="af-group"></select></div>
       <div><label>Description</label><input id="af-desc"></div>
       <div><label>Provider</label><select id="af-provider"></select></div>
-      <div><label>Model</label><input id="af-model" placeholder="e.g. gpt-4o, claude-sonnet-4-6"></div>
+      <div><label>Model</label><input id="af-model" list="af-models" placeholder="e.g. gpt-4o, claude-sonnet-4-6"><datalist id="af-models"></datalist></div>
     </div>
     <label>System prompt</label><textarea id="af-prompt" rows="4"></textarea>
     <label>Tools</label><div id="af-tools"></div>
@@ -666,6 +730,8 @@ function agentForm(parent, options, existing, groups) {
     $("af-prompt").value = existing.system_prompt;
     for (const t of existing.tools) { const cb = $("aft-" + t); if (cb) cb.checked = true; }
   }
+  $("af-provider").onchange = () => fillModels($("af-provider").value, "af-models");
+  fillModels($("af-provider").value, "af-models");
   $("af-save").textContent = existing ? "Save changes" : "Create agent";
   $("af-cancel").onclick = () => f.remove();
   $("af-save").onclick = async () => {
