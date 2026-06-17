@@ -104,10 +104,12 @@ class OpenAIProvider:
                 content_parts.append(delta.content)
                 yield StreamEvent("text_delta", text=delta.content)
             # thinking models (DeepSeek et al.) stream reasoning separately;
-            # keep it out of the visible text but echo it back next call
+            # keep it out of the visible text but surface it as its own event
+            # (for live display) and echo it back next call
             reasoning_delta = getattr(delta, "reasoning_content", None)
             if reasoning_delta:
                 reasoning_parts.append(reasoning_delta)
+                yield StreamEvent("reasoning_delta", text=reasoning_delta)
             for tc in delta.tool_calls or []:
                 slot = pending_calls.setdefault(tc.index, {"id": "", "name": "", "arguments": ""})
                 if tc.id:

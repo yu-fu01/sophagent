@@ -49,6 +49,8 @@ class EchoProvider:
             last_user = next((m.content for m in reversed(messages) if m.role == "user"), "")
             turn = self._AssistantTurn(content=f"echo: {last_user}", stop_reason="stop",
                                        input_tokens=10, output_tokens=5)
+        if turn.reasoning:
+            yield StreamEvent("reasoning_delta", text=turn.reasoning)
         if turn.content:
             yield StreamEvent("text_delta", text=turn.content)
         yield StreamEvent("turn_done", turn=turn)

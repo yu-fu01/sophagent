@@ -86,7 +86,7 @@ class AssistantTurn:
 class StreamEvent:
     """Events yielded by Provider.chat(): incremental text or the final turn."""
 
-    type: Literal["text_delta", "turn_done"]
+    type: Literal["text_delta", "reasoning_delta", "turn_done"]
     text: str = ""
     turn: AssistantTurn | None = None
 
