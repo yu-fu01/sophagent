@@ -17,6 +17,12 @@ async def test_provider_crud(db):
         "api_key_enc": "ENC2", "context_limit": 128000})
     row = await db.get_provider("p1")
     assert row["base_url"] == "https://y/v1" and row["context_limit"] == 128000
+    # 不传 api_key_enc 时保留原 key（REQ: 编辑留空=不变）
+    before = (await db.get_provider("p1"))["api_key_enc"]
+    await db.update_provider("p1", {"api_mode": "openai",
+        "base_url": "https://z/v1", "context_limit": 32000})
+    row = await db.get_provider("p1")
+    assert row["api_key_enc"] == before and row["base_url"] == "https://z/v1"
     await db.delete_provider("p1")
     assert await db.get_provider("p1") is None
 

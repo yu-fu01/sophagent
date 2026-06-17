@@ -356,12 +356,12 @@ class Database:
 
     # -- providers -----------------------------------------------------------
 
-    async def create_provider(self, f: dict[str, Any]) -> int:
+    async def create_provider(self, fields: dict[str, Any]) -> int:
         cur = await self._exec(
             "INSERT INTO providers (name, api_mode, base_url, api_key_enc, context_limit,"
             " created_at, updated_at) VALUES (?,?,?,?,?,?,?)",
-            (f["name"], f["api_mode"], f.get("base_url"), f.get("api_key_enc"),
-             int(f.get("context_limit", 100_000)), now(), now()),
+            (fields["name"], fields["api_mode"], fields.get("base_url"), fields.get("api_key_enc"),
+             int(fields.get("context_limit", 100_000)), now(), now()),
         )
         return cur.lastrowid
 
@@ -371,20 +371,20 @@ class Database:
     async def list_providers(self) -> list[aiosqlite.Row]:
         return await self._all("SELECT * FROM providers ORDER BY name")
 
-    async def update_provider(self, name: str, f: dict[str, Any]) -> None:
+    async def update_provider(self, name: str, fields: dict[str, Any]) -> None:
         # api_key_enc=None means "leave unchanged"
-        if f.get("api_key_enc") is None:
+        if fields.get("api_key_enc") is None:
             await self._exec(
                 "UPDATE providers SET api_mode=?, base_url=?, context_limit=?, updated_at=?"
                 " WHERE name=?",
-                (f["api_mode"], f.get("base_url"), int(f["context_limit"]), now(), name),
+                (fields["api_mode"], fields.get("base_url"), int(fields["context_limit"]), now(), name),
             )
         else:
             await self._exec(
                 "UPDATE providers SET api_mode=?, base_url=?, api_key_enc=?, context_limit=?,"
                 " updated_at=? WHERE name=?",
-                (f["api_mode"], f.get("base_url"), f["api_key_enc"],
-                 int(f["context_limit"]), now(), name),
+                (fields["api_mode"], fields.get("base_url"), fields["api_key_enc"],
+                 int(fields["context_limit"]), now(), name),
             )
 
     async def delete_provider(self, name: str) -> None:
