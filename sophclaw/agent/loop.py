@@ -11,6 +11,7 @@ from ..config import get_config
 from ..models import AgentDef, Message, StreamEvent, ToolCall
 from ..providers import get_provider
 from ..tools import registry
+from ..usage import cache_hit_percent
 
 log = logging.getLogger(__name__)
 
@@ -157,7 +158,6 @@ class AgentRunner:
                 delay *= 2
 
     def _done_payload(self, system: str) -> dict:
-        from ..usage import cache_hit_percent
         u = self.usage
         prompt_total = u["input_tokens"] + u["cache_read_tokens"] + u["cache_write_tokens"]
         return {"type": "done", "usage": dict(u),
@@ -194,10 +194,11 @@ class AgentRunner:
             self.usage["output_tokens"] += turn.output_tokens
             self.usage["cache_read_tokens"] += turn.cache_read_tokens
             self.usage["cache_write_tokens"] += turn.cache_write_tokens
-            from ..usage import cache_hit_percent
             turn_total = turn.input_tokens + turn.cache_read_tokens + turn.cache_write_tokens
-            yield {"type": "turn_usage", "input": turn.input_tokens,
-                   "output": turn.output_tokens, "cache_read": turn.cache_read_tokens,
+            yield {"type": "turn_usage", "input_tokens": turn.input_tokens,
+                   "output_tokens": turn.output_tokens,
+                   "cache_read_tokens": turn.cache_read_tokens,
+                   "cache_write_tokens": turn.cache_write_tokens,
                    "cache_hit": cache_hit_percent(turn.cache_read_tokens, turn_total)}
             assistant_msg = turn.as_message()
             self.history.append(assistant_msg)
