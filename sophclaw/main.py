@@ -59,7 +59,6 @@ async def lifespan(app: FastAPI):
     from .providers.registry import init_registry
     registry = init_registry(db, cfg)
     await registry.refresh()
-    app.state.providers = registry
     if not registry.names():
         log.warning("no model providers configured; set SOPHCLAW_PROVIDERS or providers.yaml")
     yield

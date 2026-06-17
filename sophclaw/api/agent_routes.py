@@ -4,6 +4,7 @@ from fastapi import APIRouter, Depends, HTTPException, Request
 from ..auth import require_user
 from ..models import AgentCreate, AgentDef
 from ..perms import can_access_group, can_manage_group
+from ..providers.registry import get_registry
 from ..tools.registry import all_tool_names
 
 router = APIRouter()
@@ -21,7 +22,6 @@ def _public(row) -> dict:
 
 
 def _validate(req: AgentCreate) -> None:
-    from ..providers.registry import get_registry
     names = get_registry().names()
     if req.provider not in names:
         raise HTTPException(400, f"unknown provider {req.provider!r}; configured: {names}")
@@ -51,7 +51,6 @@ async def list_agents(request: Request, user=Depends(require_user)):
 @router.get("/meta/options")
 async def agent_options(_user=Depends(require_user)):
     """Building blocks for the agent editor."""
-    from ..providers.registry import get_registry
     return {"tools": all_tool_names(), "providers": get_registry().names()}
 
 
