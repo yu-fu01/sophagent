@@ -159,6 +159,8 @@ class AgentRunner:
                 async for ev in self._call_model(system, tool_schemas):
                     if ev.type == "text_delta":
                         yield {"type": "text_delta", "text": ev.text}
+                    elif ev.type == "reasoning_delta":
+                        yield {"type": "reasoning_delta", "text": ev.text}
                     elif ev.type == "turn_done":
                         turn = ev.turn
             except Exception as e:

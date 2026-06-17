@@ -93,6 +93,25 @@ def test_agent_tool_call_via_chat(client, bob, agent_id):
     assert types == ["tool_call", "tool_result", "text_delta", "done"]
 
 
+def test_reasoning_streamed_and_persisted_via_chat(client, bob, agent_id):
+    """A thinking turn surfaces reasoning_delta over SSE (kept out of the visible
+    text) and the reasoning is persisted on the assistant message."""
+    client.provider.script = [
+        AssistantTurn(content="the answer", reasoning="let me think", stop_reason="stop"),
+    ]
+    sid = client.post("/api/sessions", json={"agent_id": agent_id}, headers=bob).json()["id"]
+    resp = client.post(f"/api/sessions/{sid}/chat", json={"content": "ponder this"}, headers=bob)
+    events = sse_events(resp)
+    assert {"type": "reasoning_delta", "text": "let me think"} in events
+    # the visible text stream carries only the answer, not the thinking
+    assert any(e["type"] == "text_delta" and e["text"] == "the answer" for e in events)
+    assert not any(e["type"] == "text_delta" and "let me think" in e["text"] for e in events)
+    # reasoning persists on the stored assistant message (echo-back + history display)
+    detail = client.get(f"/api/sessions/{sid}", headers=bob).json()
+    asst = next(m for m in detail["messages"] if m["role"] == "assistant")
+    assert asst["reasoning"] == "let me think"
+
+
 def test_skill_self_evolution_via_chat(client, admin, bob, agent_id):
     client.provider.script = [
         AssistantTurn(tool_calls=[ToolCall(id="c1", name="skill_manage",

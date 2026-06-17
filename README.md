@@ -68,7 +68,7 @@ API key 只存在于配置 / 环境变量中，不入库。
 | POST/GET/DELETE | `/api/groups/{id}/join·invite·pending`、`/api/me/invitations`、`/api/joinreq/{id}/...` | 见正文 | 加入申请与邀请审批 |
 | GET/POST/PUT/DELETE | `/api/agents[/{id}]` | 组成员读 / owner·can_manage 写 | agent 定义（按组隔离） |
 | GET/POST | `/api/sessions` | 组成员 | 自己的会话；owner/can_manage 可经 `/api/groups/{id}/sessions` 查全组 |
-| POST | `/api/sessions/{id}/chat` | 创建者 | SSE 流（text_delta / tool_call / tool_result / done / error） |
+| POST | `/api/sessions/{id}/chat` | 创建者 | SSE 流（text_delta / reasoning_delta / tool_call / tool_result / done / error） |
 | POST | `/api/sessions/{id}/stop` | 创建者 / 组管理者 | 中断当前 turn |
 | GET/PUT/DELETE | `/api/skills[/{name}]` | 读:user 写:admin | skill 库审查通道 |
 | POST | `/v1/chat/completions` | Bearer JWT | OpenAI 兼容；`model` = agent 名；支持 `stream` |

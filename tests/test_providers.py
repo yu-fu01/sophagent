@@ -1,8 +1,11 @@
 """Format conversion tests for the two provider adapters."""
 
+from types import SimpleNamespace
+
+from sophclaw.config import ProviderConfig
 from sophclaw.models import Message, ToolCall
 from sophclaw.providers.anthropic_provider import messages_to_anthropic, tools_to_anthropic
-from sophclaw.providers.openai_provider import _parse_arguments, messages_to_openai
+from sophclaw.providers.openai_provider import OpenAIProvider, _parse_arguments, messages_to_openai
 
 HISTORY = [
     Message(role="user", content="hi"),
@@ -73,6 +76,39 @@ def test_anthropic_tool_schema():
 def test_message_roundtrip():
     m = Message(role="assistant", content="x", tool_calls=[ToolCall(id="1", name="n", arguments={"k": "v"})])
     assert Message.from_json(m.to_json()).to_dict() == m.to_dict()
+
+
+def _chunk(content=None, reasoning=None, finish=None):
+    delta = SimpleNamespace(content=content, reasoning_content=reasoning, tool_calls=None)
+    return SimpleNamespace(choices=[SimpleNamespace(delta=delta, finish_reason=finish)], usage=None)
+
+
+async def test_openai_streams_reasoning_delta():
+    """Thinking models stream reasoning_content separately; the adapter emits it
+    as reasoning_delta events, keeps it out of the visible text, and captures the
+    full reasoning on the final turn for echo-back."""
+    provider = OpenAIProvider(ProviderConfig(name="t", api_mode="openai"))
+
+    async def fake_stream():
+        yield _chunk(reasoning="think ")
+        yield _chunk(reasoning="more")
+        yield _chunk(content="answer")
+        yield _chunk(finish="stop")
+
+    async def fake_create(**kwargs):
+        return fake_stream()
+
+    provider.client.chat.completions.create = fake_create
+
+    events = [ev async for ev in provider.chat(
+        model="m", system="", messages=[Message(role="user", content="hi")])]
+    assert [e.text for e in events if e.type == "reasoning_delta"] == ["think ", "more"]
+    # reasoning is not leaked into the visible text stream
+    assert [e.text for e in events if e.type == "text_delta"] == ["answer"]
+    # the full reasoning is still captured on the turn (for persistence + echo-back)
+    turn = next(e.turn for e in events if e.type == "turn_done")
+    assert turn.reasoning == "think more"
+    assert turn.content == "answer"
 
 
 def test_openai_reasoning_roundtrip():

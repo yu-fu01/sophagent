@@ -21,6 +21,8 @@ class FakeProvider:
                    temperature=None, max_tokens=None) -> AsyncIterator[StreamEvent]:
         self.calls.append([Message.from_dict(m.to_dict()) for m in messages])
         turn = self.turns.pop(0)
+        if turn.reasoning:
+            yield StreamEvent("reasoning_delta", text=turn.reasoning)
         if turn.content:
             yield StreamEvent("text_delta", text=turn.content)
         yield StreamEvent("turn_done", turn=turn)
@@ -48,6 +50,22 @@ async def test_simple_turn(ctx, fake_provider):
     assert events[0] == {"type": "text_delta", "text": "hello!"}
     assert events[-1]["type"] == "done"
     assert [m.role for m in runner.history] == ["user", "assistant"]
+
+
+async def test_reasoning_delta_forwarded(ctx, fake_provider):
+    """Thinking-model reasoning is surfaced as a reasoning_delta UI event,
+    kept out of the visible text, and still captured on the turn for echo-back."""
+    fake_provider([AssistantTurn(content="the answer", reasoning="let me think", stop_reason="stop")])
+    runner = AgentRunner(ctx.agent, ctx, history=[])
+    events = await collect(runner, "hi")
+    types = [e["type"] for e in events]
+    # reasoning is emitted as its own event, before the visible answer
+    assert {"type": "reasoning_delta", "text": "let me think"} in events
+    assert types.index("reasoning_delta") < types.index("text_delta")
+    # the visible text stream carries only the answer, not the thinking
+    assert {"type": "text_delta", "text": "the answer"} in events
+    # reasoning is still captured on the persisted assistant message (echo-back)
+    assert runner.history[-1].reasoning == "let me think"
 
 
 async def test_tool_loop(ctx, fake_provider):
