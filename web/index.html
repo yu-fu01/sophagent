@@ -667,6 +667,32 @@ async function renderAdmin() {
   const pnb = document.createElement("div"); pnb.style.marginTop = "10px"; pc.appendChild(pnb);
   btn(pnb, "+ New provider", "", () => providerForm(pc, null));
 
+  // system settings card — 可调上传文件大小上限（admin）
+  const scfg = card(box, "系统设置 (System settings — admin)");
+  const s = await apiJson("/api/settings");
+  const toMB = (b) => +(b / 1048576).toFixed(3);
+  const minMB = toMB(s.min_bytes), maxMB = toMB(s.max_bytes), defMB = toMB(s.default_max_upload_bytes);
+  scfg.insertAdjacentHTML("beforeend", `
+    <label>上传/下载单文件大小上限 (MB)</label>
+    <div style="display:flex;gap:8px;align-items:center;max-width:360px">
+      <input id="cfg-upload-mb" type="number" step="0.001" min="${minMB}" max="${maxMB}"
+             value="${toMB(s.max_upload_bytes)}" style="flex:1">
+      <button id="cfg-upload-save">保存</button>
+    </div>
+    <div class="muted" style="margin-top:6px">允许范围：${minMB} – ${maxMB} MB（默认 ${defMB} MB）</div>`);
+  $("cfg-upload-save").onclick = async () => {
+    const mb = parseFloat($("cfg-upload-mb").value);
+    if (!(mb > 0) || mb < minMB || mb > maxMB) {
+      alert(`请输入 ${minMB} – ${maxMB} MB 之间的数值`); return;
+    }
+    try {
+      await apiJson("/api/settings/max_upload_bytes",
+        {method: "PUT", body: {max_upload_bytes: Math.round(mb * 1048576)}});
+      alert("已保存");
+      renderAdmin();
+    } catch (e) { alertErr(e); }
+  };
+
   // skills card
   const sc = card(box, "Skills (agent-created knowledge — review here)");
   if (!skills.length) sc.insertAdjacentHTML("beforeend", `<div class="muted">No skills yet. Agents create them as they learn.</div>`);

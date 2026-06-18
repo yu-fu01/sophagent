@@ -148,3 +148,16 @@ def reset_config() -> None:
     """For tests."""
     global _config
     _config = None
+
+
+async def effective_max_upload_bytes(db) -> int:
+    """Runtime-effective single-file size limit: an admin-set DB override
+    (key ``max_upload_bytes``) wins; otherwise fall back to the env/default
+    value baked into Config. A malformed DB value is ignored."""
+    raw = await db.get_setting("max_upload_bytes")
+    if raw is not None:
+        try:
+            return int(raw)
+        except ValueError:
+            pass
+    return get_config().max_upload_bytes

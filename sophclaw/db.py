@@ -95,6 +95,12 @@ CREATE TABLE IF NOT EXISTS providers (
   created_at TEXT NOT NULL,
   updated_at TEXT NOT NULL
 );
+CREATE TABLE IF NOT EXISTS settings (
+  key        TEXT PRIMARY KEY,
+  value      TEXT NOT NULL,
+  updated_at TEXT,
+  updated_by INTEGER
+);
 """
 
 
@@ -389,6 +395,20 @@ class Database:
 
     async def delete_provider(self, name: str) -> None:
         await self._exec("DELETE FROM providers WHERE name=?", (name,))
+
+    # -- settings (generic runtime key/value) --------------------------------
+
+    async def get_setting(self, key: str) -> Optional[str]:
+        row = await self._one("SELECT value FROM settings WHERE key=?", (key,))
+        return row["value"] if row else None
+
+    async def set_setting(self, key: str, value: str, user_id: int) -> None:
+        await self._exec(
+            "INSERT INTO settings (key, value, updated_at, updated_by) VALUES (?,?,?,?)"
+            " ON CONFLICT(key) DO UPDATE SET value=excluded.value,"
+            " updated_at=excluded.updated_at, updated_by=excluded.updated_by",
+            (key, value, now(), user_id),
+        )
 
     # -- groups --------------------------------------------------------------
 
