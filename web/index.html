@@ -46,15 +46,11 @@ label{display:block;margin:10px 0 4px;color:var(--dim);font-size:12px}
 .msg.user .filechip{display:flex;width:fit-content;align-items:center;gap:6px;background:rgba(255,255,255,.18);border-radius:8px;padding:4px 9px;margin:0 0 6px;font-size:13px}
 .msg.user .filechip .fi{font-size:15px}
 .msg.user .utext{white-space:pre-wrap;word-break:break-word}
-/* 用户气泡内的操作按钮（恢复） */
-.msg.user .msg-actions{display:flex;justify-content:flex-end;margin-top:6px}
-.restore-btn{background:rgba(255,255,255,.18);color:#fff;border:1px solid rgba(255,255,255,.28);border-radius:6px;font-size:12px;padding:2px 8px;cursor:pointer}
-.restore-btn:hover{background:rgba(255,255,255,.28)}
-/* 重新编辑按钮栏（最新气泡下方） */
-#reedit-bar{display:flex;justify-content:flex-start;margin:-2px 0}
-#reedit-bar button{font-size:12.5px;padding:3px 9px}
+/* 用户气泡下方的操作行（恢复 / 重新编辑 并排，右对齐） */
+.msg-user-actions{align-self:flex-end;display:flex;gap:6px;margin-top:-6px}
+.msg-user-actions button{font-size:12px;padding:2px 8px}
 /* 流式期间隐藏历史操作按钮 */
-body.streaming .msg-actions,body.streaming #reedit-bar{display:none!important}
+body.streaming .msg-user-actions{display:none!important}
 .msg.assistant{align-self:flex-start;background:var(--panel2);white-space:normal}
 /* markdown inside assistant bubbles */
 .msg.assistant p{margin:0 0 8px}.msg.assistant p:last-child{margin-bottom:0}
@@ -289,32 +285,46 @@ async function openSession(sid) {
       if (m.content) addBubble("assistant", m.content);
     }
   }
-  renderReeditBar();
+  // 最新用户气泡的操作行追加「重新编辑」（与「恢复」并排）
+  if (lastUserMid) {
+    const ar = document.querySelector(`.msg-user-actions[data-mid="${lastUserMid}"]`);
+    if (ar) ar.appendChild(makeReeditBtn());
+  }
   await loadSessions();
   msgs.scrollTop = msgs.scrollHeight;
 }
 
 // ---- markdown 渲染 + LaTeX 数学见 markdown.js（escapeHtml/mdToHtml/renderMathInElement）----
 
+function makeRestoreBtn(mid) {
+  const b = document.createElement("button");
+  b.className = "ghost"; b.textContent = "↩ 恢复";
+  b.onclick = () => restoreFrom(mid);
+  return b;
+}
+function makeReeditBtn() {
+  const b = document.createElement("button");
+  b.className = "ghost"; b.textContent = "✎ 重新编辑";
+  b.onclick = startReedit;
+  return b;
+}
 function addBubble(cls, text, mid) {
   const d = document.createElement("div");
   d.className = "msg " + cls;
   if (cls === "assistant") { d.dataset.raw = text; d.innerHTML = mdToHtml(text); renderMathInElement(d); }
-  else if (cls === "user") {
-    renderUserContent(d, text);
-    if (mid != null) {
-      d.dataset.mid = mid;
-      const actions = document.createElement("div");
-      actions.className = "msg-actions";
-      const rb = document.createElement("button");
-      rb.className = "restore-btn"; rb.textContent = "↩ 恢复";
-      rb.onclick = () => restoreFrom(mid);
-      actions.appendChild(rb);
-      d.appendChild(actions);
-    }
-  }
+  else if (cls === "user") renderUserContent(d, text);
   else d.textContent = text;
-  $("msgs").appendChild(d); return d;
+  $("msgs").appendChild(d);
+  // 用户气泡下方挂一行操作按钮（恢复；最新用户气泡还会追加「重新编辑」）
+  if (cls === "user" && mid != null) {
+    d.dataset.mid = mid;
+    const actions = document.createElement("div");
+    actions.className = "msg-user-actions";
+    actions.dataset.mid = mid;
+    actions.appendChild(makeRestoreBtn(mid));
+    $("msgs").appendChild(actions);
+  }
+  return d;
 }
 // 用户气泡：把 [附加文件: path] 引用行渲染成文件小图标 + 文件名，正文照常显示
 function renderUserContent(d, text) {
@@ -494,17 +504,6 @@ async function restoreFrom(mid) {
     await api(`/api/sessions/${currentSid}/truncate`, {method: "POST", body: {message_id: mid}});
   } catch (e) { alert("恢复失败: " + e.message); return; }
   await openSession(currentSid);
-}
-function renderReeditBar() {
-  const old = $("reedit-bar"); if (old) old.remove();
-  if (!lastUserMid || streaming) return;
-  const bar = document.createElement("div");
-  bar.id = "reedit-bar";
-  const b = document.createElement("button");
-  b.className = "ghost"; b.textContent = "✎ 重新编辑";
-  b.onclick = startReedit;
-  bar.appendChild(b);
-  $("msgs").appendChild(bar);
 }
 function startReedit() {
   if (!lastUserMid || streaming) return;
