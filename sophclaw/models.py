@@ -198,6 +198,11 @@ class ChatRequest(BaseModel):
     content: str = Field(min_length=1)
 
 
+class TruncateRequest(BaseModel):
+    """Restore / re-edit: delete the given user message and everything after it."""
+    message_id: int
+
+
 class SkillWrite(BaseModel):
     content: str  # full SKILL.md content
 

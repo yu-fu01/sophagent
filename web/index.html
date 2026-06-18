@@ -46,6 +46,11 @@ label{display:block;margin:10px 0 4px;color:var(--dim);font-size:12px}
 .msg.user .filechip{display:flex;width:fit-content;align-items:center;gap:6px;background:rgba(255,255,255,.18);border-radius:8px;padding:4px 9px;margin:0 0 6px;font-size:13px}
 .msg.user .filechip .fi{font-size:15px}
 .msg.user .utext{white-space:pre-wrap;word-break:break-word}
+/* 用户气泡下方的操作行（恢复 / 重新编辑 并排，右对齐） */
+.msg-user-actions{align-self:flex-end;display:flex;gap:6px;margin-top:-6px}
+.msg-user-actions button{font-size:12px;padding:2px 8px}
+/* 流式期间隐藏历史操作按钮 */
+body.streaming .msg-user-actions{display:none!important}
 .msg.assistant{align-self:flex-start;background:var(--panel2);white-space:normal}
 /* markdown inside assistant bubbles */
 .msg.assistant p{margin:0 0 8px}.msg.assistant p:last-child{margin-bottom:0}
@@ -193,6 +198,8 @@ td .row-actions{display:flex;gap:6px}
 const $ = id => document.getElementById(id);
 let token = localStorage.getItem("token") || "";
 let me = null, sessions = [], agents = [], currentSid = null, streaming = false;
+let editing = null;           // {mid} when re-editing the latest user message; cleared on send
+let lastUserMid = null, lastUserText = "";   // latest user message id+text (for re-edit)
 
 async function api(path, opts = {}) {
   opts.headers = Object.assign({"Content-Type": "application/json"}, opts.headers || {});
@@ -267,6 +274,8 @@ async function newSessionDialog() {
 
 async function openSession(sid) {
   currentSid = sid; showTab("chat");
+  editing = null;
+  lastUserMid = null; lastUserText = "";
   $("composer").classList.remove("hidden");
   const detail = await apiJson("/api/sessions/" + sid);
   currentAgent = agents.find(a => a.id === detail.agent_id) || null;
@@ -278,7 +287,10 @@ async function openSession(sid) {
   $("ub-cache").textContent = "cache —";
   const msgs = $("msgs"); msgs.innerHTML = "";
   for (const m of detail.messages) {
-    if (m.role === "user" && !m.content.startsWith("[Earlier conversation summary]")) addBubble("user", m.content);
+    if (m.role === "user" && !m.content.startsWith("[Earlier conversation summary]")) {
+      addBubble("user", m.content, m.id);
+      lastUserMid = m.id; lastUserText = m.content;
+    }
     else if (m.role === "assistant") {
       const tcs = m.tool_calls || [];
       if (m.reasoning || tcs.length) {            // history: collapsed worklog
@@ -293,19 +305,46 @@ async function openSession(sid) {
       if (m.content) addBubble("assistant", m.content);
     }
   }
+  // 最新用户气泡的操作行追加「重新编辑」（与「恢复」并排）
+  if (lastUserMid) {
+    const ar = document.querySelector(`.msg-user-actions[data-mid="${lastUserMid}"]`);
+    if (ar) ar.appendChild(makeReeditBtn());
+  }
   await loadSessions();
   msgs.scrollTop = msgs.scrollHeight;
 }
 
 // ---- markdown 渲染 + LaTeX 数学见 markdown.js（escapeHtml/mdToHtml/renderMathInElement）----
 
-function addBubble(cls, text) {
+function makeRestoreBtn(mid) {
+  const b = document.createElement("button");
+  b.className = "ghost"; b.textContent = "↩ 恢复";
+  b.onclick = () => restoreFrom(mid);
+  return b;
+}
+function makeReeditBtn() {
+  const b = document.createElement("button");
+  b.className = "ghost"; b.textContent = "✎ 重新编辑";
+  b.onclick = startReedit;
+  return b;
+}
+function addBubble(cls, text, mid) {
   const d = document.createElement("div");
   d.className = "msg " + cls;
   if (cls === "assistant") { d.dataset.raw = text; d.innerHTML = mdToHtml(text); renderMathInElement(d); }
   else if (cls === "user") renderUserContent(d, text);
   else d.textContent = text;
-  $("msgs").appendChild(d); return d;
+  $("msgs").appendChild(d);
+  // 用户气泡下方挂一行操作按钮（恢复；最新用户气泡还会追加「重新编辑」）
+  if (cls === "user" && mid != null) {
+    d.dataset.mid = mid;
+    const actions = document.createElement("div");
+    actions.className = "msg-user-actions";
+    actions.dataset.mid = mid;
+    actions.appendChild(makeRestoreBtn(mid));
+    $("msgs").appendChild(actions);
+  }
+  return d;
 }
 // 用户气泡：把 [附加文件: path] 引用行渲染成文件小图标 + 文件名，正文照常显示
 function renderUserContent(d, text) {
@@ -391,9 +430,27 @@ async function sendMsg() {
   const content = refs ? (refs + (text ? "\n\n" + text : "")) : text;
   attached = []; renderChips();
   $("input").value = ""; streaming = true;
+  document.body.classList.add("streaming");
   $("send").classList.add("hidden"); $("stop").classList.remove("hidden");
+
+  // 重新编辑：发送时才删除原用户消息及其回答，再以编辑后文本作为新轮发送
+  if (editing) {
+    try {
+      await api(`/api/sessions/${currentSid}/truncate`, {method: "POST", body: {message_id: editing.mid}});
+    } catch (e) {
+      document.body.classList.remove("streaming");
+      streaming = false;
+      $("send").classList.remove("hidden"); $("stop").classList.add("hidden");
+      alert("重新编辑失败: " + e.message);
+      return;
+    }
+    editing = null;
+    await openSession(currentSid);                 // re-render truncated history
+    document.body.classList.add("streaming");      // openSession 不动此 class，保持流式态
+  }
+
   addBubble("user", content);
-  let bubble = null, wl = null;
+  let bubble = null, wl = null, errored = false;
   const msgs = $("msgs");
   try {
     const resp = await api(`/api/sessions/${currentSid}/chat`, {method: "POST", body: {content}});
@@ -432,8 +489,13 @@ async function sendMsg() {
           setToolResult(row, ev.preview); setToolDone(row, false);
           syncWorklogSummary(row ? row.closest(".worklog") : wl);
         } else if (ev.type === "error") {
-          if (wl) { closeWorklog(wl); wl = null; }
-          addBubble("err", ev.message); bubble = null;
+          if (ev.message === "stopped by user") {  // 强行停止：不视为错误，finally 重渲染为干净状态
+            if (wl) { closeWorklog(wl); wl = null; }
+            bubble = null;
+          } else {
+            if (wl) { closeWorklog(wl); wl = null; }
+            addBubble("err", ev.message); bubble = null; errored = true;
+          }
         } else if (ev.type === "turn_usage") {
           if (wl) { closeWorklog(wl); wl = null; }   // 本轮结束，折叠活动组
           const meta = document.createElement("div");
@@ -452,18 +514,36 @@ async function sendMsg() {
       }
     }
   } catch (e) {
-    addBubble("err", e.message);
+    addBubble("err", e.message); errored = true;
   } finally {
     closeWorklog(wl);
     streaming = false;
+    document.body.classList.remove("streaming");
     $("send").classList.remove("hidden"); $("stop").classList.add("hidden");
-    loadSessions();
+    if (errored) loadSessions();
+    else await openSession(currentSid);   // 重渲染：补上恢复/重新编辑按钮与消息 id
   }
 }
 $("input").addEventListener("keydown", e => {
   if (e.key === "Enter" && !e.shiftKey) { e.preventDefault(); sendMsg(); }
 });
 async function stopTurn() { if (currentSid) await api(`/api/sessions/${currentSid}/stop`, {method: "POST"}); }
+
+// ---- 恢复 / 重新编辑（REQ4.2 / 4.3）-----------------------------------------
+async function restoreFrom(mid) {
+  if (!currentSid || streaming) return;
+  if (!confirm("此次对话之后的内容都将删除，确定重置？")) return;
+  try {
+    await api(`/api/sessions/${currentSid}/truncate`, {method: "POST", body: {message_id: mid}});
+  } catch (e) { alert("恢复失败: " + e.message); return; }
+  await openSession(currentSid);
+}
+function startReedit() {
+  if (!lastUserMid || streaming) return;
+  editing = {mid: lastUserMid};
+  $("input").value = lastUserText;
+  $("input").focus();
+}
 
 // ---- file tree (REQ2.1) -----------------------------------------------------
 function toggleFiles() {

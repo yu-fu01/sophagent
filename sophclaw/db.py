@@ -321,6 +321,25 @@ class Database:
         )
         return [Message.from_json(r["content"]) for r in rows]
 
+    async def load_messages_with_ids(self, session_id: str) -> list[tuple[int, Message]]:
+        """Same as load_messages but also returns each row's id (for restore/re-edit)."""
+        rows = await self._all(
+            "SELECT id, content FROM messages WHERE session_id=? AND archived=0 ORDER BY id",
+            (session_id,),
+        )
+        return [(r["id"], Message.from_json(r["content"])) for r in rows]
+
+    async def truncate_from(self, session_id: str, message_id: int) -> int:
+        """Delete the live (archived=0) message with id>=message_id and everything after it.
+        Used by restore (rewind to before a user message) and re-edit (send-time replace).
+        Returns the number of deleted rows."""
+        cur = await self.conn.execute(
+            "DELETE FROM messages WHERE session_id=? AND archived=0 AND id>=?",
+            (session_id, message_id),
+        )
+        await self.conn.commit()
+        return cur.rowcount
+
     async def compact_session(self, session_id: str, live_history: list[Message]) -> None:
         """After in-memory compression: archive current rows (kept for audit)
         and re-insert the compressed history as the live message log."""
