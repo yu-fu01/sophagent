@@ -2,8 +2,6 @@
 
 import base64
 
-from sophclaw.config import get_config
-
 
 def data_url(content: bytes, mime: str = "text/plain") -> str:
     return f"data:{mime};base64," + base64.b64encode(content).decode()
@@ -36,10 +34,12 @@ def test_path_escape_rejected(client, bob):
     assert client.get("/api/files/read", params={"path": "/etc/passwd"}, headers=bob).status_code == 400
 
 
-def test_upload_too_large(client, bob):
-    get_config().max_upload_bytes = 8  # 临时调低上限
+def test_upload_too_large(client, admin, bob):
+    # admin 把上限调到 1KB（运行时设置，落 DB），上传 2KB 应被拒
+    client.put("/api/settings/max_upload_bytes",
+               json={"max_upload_bytes": 1024}, headers=admin)
     resp = client.post("/api/files/upload",
-                       json={"path": "big.txt", "data_url": data_url(b"123456789")},
+                       json={"path": "big.txt", "data_url": data_url(b"x" * 2000)},
                        headers=bob)
     assert resp.status_code == 413
 

@@ -15,7 +15,7 @@ from fastapi import APIRouter, Depends, HTTPException, Request
 from pydantic import BaseModel
 
 from ..auth import require_user
-from ..config import get_config
+from ..config import effective_max_upload_bytes, get_config
 from ..tools.files import MAX_READ_BYTES, safe_path
 
 router = APIRouter()
@@ -102,9 +102,8 @@ async def read_file_api(request: Request, path: str, user=Depends(require_user))
     target = _safe(root, path)
     if not target.is_file():
         raise HTTPException(404, "file not found")
-    cfg = get_config()
     size = target.stat().st_size
-    if size > cfg.max_upload_bytes:
+    if size > await effective_max_upload_bytes(request.app.state.db):
         raise HTTPException(413, "file too large")
     mime = mimetypes.guess_type(target.name)[0] or "application/octet-stream"
     data = target.read_bytes()
@@ -122,8 +121,8 @@ async def read_file_api(request: Request, path: str, user=Depends(require_user))
 @router.post("/upload")
 async def upload_file_api(body: UploadBody, request: Request, user=Depends(require_user)):
     root = _root(user)
-    cfg = get_config()
-    data = _decode_data_url(body.data_url, cfg.max_upload_bytes)
+    limit = await effective_max_upload_bytes(request.app.state.db)
+    data = _decode_data_url(body.data_url, limit)
     name = Path(body.path).name  # 只取文件名：上传一律落工作目录根
     if not name:
         raise HTTPException(400, "invalid filename")
