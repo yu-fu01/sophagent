@@ -172,6 +172,59 @@ def test_memory_tool_and_injection(client, bob, agent_id):
     assert sse_events(resp)[-1]["type"] == "done"
 
 
+def test_get_session_returns_message_ids(client, bob, agent_id):
+    """get_session exposes each message's DB id (needed for restore/re-edit)."""
+    sid = client.post("/api/sessions", json={"agent_id": agent_id}, headers=bob).json()["id"]
+    client.post(f"/api/sessions/{sid}/chat", json={"content": "first"}, headers=bob)
+    client.post(f"/api/sessions/{sid}/chat", json={"content": "second"}, headers=bob)
+    detail = client.get(f"/api/sessions/{sid}", headers=bob).json()
+    ids = [m["id"] for m in detail["messages"]]
+    assert len(ids) == 4
+    assert ids == sorted(ids)  # ascending, unique
+    assert all(isinstance(i, int) for i in ids)
+
+
+def test_truncate_restores_to_user_message(client, bob, agent_id):
+    """Truncating at a user message deletes that message and everything after it."""
+    sid = client.post("/api/sessions", json={"agent_id": agent_id}, headers=bob).json()["id"]
+    client.post(f"/api/sessions/{sid}/chat", json={"content": "first"}, headers=bob)
+    client.post(f"/api/sessions/{sid}/chat", json={"content": "second"}, headers=bob)
+    detail = client.get(f"/api/sessions/{sid}", headers=bob).json()
+    assert [m["role"] for m in detail["messages"]] == ["user", "assistant", "user", "assistant"]
+    # id of the 2nd user message (the "second" turn)
+    second_user_id = detail["messages"][2]["id"]
+    resp = client.post(f"/api/sessions/{sid}/truncate", json={"message_id": second_user_id}, headers=bob)
+    assert resp.status_code == 200
+    assert resp.json()["deleted"] >= 2  # that user msg + its assistant reply
+    detail = client.get(f"/api/sessions/{sid}", headers=bob).json()
+    assert [m["role"] for m in detail["messages"]] == ["user", "assistant"]
+    assert detail["messages"][0]["content"] == "first"
+
+
+def test_truncate_busy_returns_409(client, bob, agent_id):
+    """Cannot truncate while a turn is running (is_busy guard fires)."""
+    sid = client.post("/api/sessions", json={"agent_id": agent_id}, headers=bob).json()["id"]
+    client.post(f"/api/sessions/{sid}/chat", json={"content": "x"}, headers=bob)
+    # simulate an in-flight turn: force the manager to report busy
+    client.app.state.manager.is_busy = lambda session_id: True
+    try:
+        resp = client.post(f"/api/sessions/{sid}/truncate", json={"message_id": 1}, headers=bob)
+        assert resp.status_code == 409
+    finally:
+        client.app.state.manager.is_busy = lambda session_id: False
+
+
+def test_truncate_isolation(client, admin, bob, agent_id):
+    """Another user's session cannot be truncated (404)."""
+    sid = client.post("/api/sessions", json={"agent_id": agent_id}, headers=bob).json()["id"]
+    client.post(f"/api/sessions/{sid}/chat", json={"content": "mine"}, headers=bob)
+    # carol: unrelated user
+    client.post("/api/users", json={"username": "carol", "password": "carolpw1"}, headers=admin)
+    carol = {"Authorization": f"Bearer {client.post('/api/auth/login', json={'username': 'carol', 'password': 'carolpw1'}).json()['token']}"}
+    resp = client.post(f"/api/sessions/{sid}/truncate", json={"message_id": 1}, headers=carol)
+    assert resp.status_code == 404
+
+
 def test_user_deletion_cascades(client, admin, bob, agent_id):
     sid = client.post("/api/sessions", json={"agent_id": agent_id}, headers=bob).json()["id"]
     bob_id = next(u["id"] for u in client.get("/api/users", headers=admin).json() if u["username"] == "bob")
