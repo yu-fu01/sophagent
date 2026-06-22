@@ -263,6 +263,10 @@ class Database:
         )
 
     async def delete_agent(self, agent_id: int) -> None:
+        """Remove an agent and all of its sessions (messages cascade)."""
+        rows = await self._all("SELECT id FROM sessions WHERE agent_id=?", (agent_id,))
+        for row in rows:
+            await self.delete_session(row["id"])
         await self._exec("DELETE FROM agents WHERE id=?", (agent_id,))
 
     # -- sessions ------------------------------------------------------------

@@ -88,9 +88,10 @@ async def update_agent(agent_id: int, req: AgentCreate, request: Request, user=D
 @router.delete("/{agent_id}")
 async def delete_agent(agent_id: int, request: Request, user=Depends(require_user)):
     db = request.app.state.db
+    manager = request.app.state.manager
     await _manageable_agent(request, agent_id, user)
-    try:
-        await db.delete_agent(agent_id)
-    except aiosqlite.IntegrityError:
-        raise HTTPException(409, "agent has sessions; delete them first")
+    rows = await db._all("SELECT id FROM sessions WHERE agent_id=?", (agent_id,))
+    for row in rows:
+        manager.stop(row["id"])
+    await db.delete_agent(agent_id)
     return {"ok": True}

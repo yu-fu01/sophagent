@@ -1,6 +1,6 @@
 <script setup lang="ts">
 import { onMounted, reactive, ref, watch } from "vue";
-import { agentsApi } from "../api/client";
+import { agentsApi, providersApi } from "../api/client";
 import type { Agent } from "../types";
 
 const props = defineProps<{ agent: Agent | null; startInForm?: boolean }>();
@@ -16,7 +16,9 @@ const options = ref<{ tools: string[]; providers: string[] }>({ tools: [], provi
 const editing = ref<Agent | null>(null);
 const mode = ref<"list" | "form">("list");
 const saving = ref(false);
+const deleting = ref(false);
 const error = ref("");
+const modelSuggestions = ref<string[]>([]);
 
 const form = reactive({
   name: "",
@@ -48,6 +50,23 @@ function fillForm(a: Agent | null) {
     mode.value = "form";
   }
   error.value = "";
+  void loadModelSuggestions(form.provider);
+}
+
+async function loadModelSuggestions(provider: string) {
+  modelSuggestions.value = await providersApi.listModels(provider);
+  if (form.model && !modelSuggestions.value.includes(form.model)) {
+    modelSuggestions.value = [form.model, ...modelSuggestions.value];
+  }
+}
+
+function queryModels(query: string, cb: (items: { value: string }[]) => void) {
+  const q = query.trim().toLowerCase();
+  const list = modelSuggestions.value
+    .filter(m => !q || m.toLowerCase().includes(q))
+    .slice(0, 30)
+    .map(m => ({ value: m }));
+  cb(list);
 }
 
 async function load() {
@@ -84,18 +103,28 @@ async function save() {
 }
 
 async function removeAgent(a: Agent) {
-  if (!confirm(`删除 Agent「${a.name}」？需先删除其所有 Session。`)) return;
+  if (!confirm(`删除 Agent「${a.name}」？其所有 Session 和对话记录将一并删除。`)) return;
+  deleting.value = true;
   try {
     await agentsApi.remove(a.id);
+    if (editing.value?.id === a.id) {
+      editing.value = null;
+      mode.value = "list";
+    }
     await load();
     emit("deleted");
   } catch (e) {
     alert(e instanceof Error ? e.message : String(e));
+  } finally {
+    deleting.value = false;
   }
 }
 
 watch(() => props.agent, () => {
   if (props.agent) fillForm(props.agent);
+});
+watch(() => form.provider, (p) => {
+  if (mode.value === "form") void loadModelSuggestions(p);
 });
 onMounted(load);
 </script>
@@ -123,7 +152,9 @@ onMounted(load);
             <td style="font-size: 11px">{{ a.tools.join(", ") }}</td>
             <td>
               <el-button size="small" text @click="fillForm(a)">编辑</el-button>
-              <el-button size="small" text type="danger" @click="removeAgent(a)">删除</el-button>
+              <el-button size="small" text type="danger" :loading="deleting" @click="removeAgent(a)">
+                删除
+              </el-button>
             </td>
           </tr>
         </tbody>
@@ -153,7 +184,16 @@ onMounted(load);
         </div>
         <div>
           <label>Model</label>
-          <el-input v-model="form.model" placeholder="模型名称" />
+          <el-autocomplete
+            v-model="form.model"
+            :fetch-suggestions="queryModels"
+            clearable
+            placeholder="输入或从建议中选择，如 gpt-4o"
+            style="width: 100%"
+          />
+          <div class="field-hint">
+            建议列表来自 provider API，仅供参考；可手动输入你账号实际可用的模型名。
+          </div>
         </div>
         <div class="full">
           <label>System prompt</label>
@@ -173,6 +213,15 @@ onMounted(load);
       <div class="panel-actions">
         <el-button type="primary" :loading="saving" @click="save">
           {{ editing ? "保存" : "创建" }}
+        </el-button>
+        <el-button
+          v-if="editing"
+          type="danger"
+          plain
+          :loading="deleting"
+          @click="removeAgent(editing)"
+        >
+          删除 Agent
         </el-button>
         <el-button @click="props.agent ? emit('close') : (mode = 'list')">
           {{ props.agent ? "取消" : "返回列表" }}

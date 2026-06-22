@@ -73,6 +73,19 @@ export const agentsApi = {
   remove: (id: number) => apiJson(`/api/agents/${id}`, { method: "DELETE" }),
 };
 
+export const providersApi = {
+  /** Returns model ids for a provider; empty list if unavailable (e.g. non-admin). */
+  async listModels(provider: string): Promise<string[]> {
+    if (!provider) return [];
+    try {
+      const r = await apiJson<{ models?: string[] }>(`/api/providers/${encodeURIComponent(provider)}/models`);
+      return r.models || [];
+    } catch {
+      return [];
+    }
+  },
+};
+
 export const sessionsApi = {
   list: () => apiJson<Session[]>("/api/sessions"),
   create: (agent_id: number, title = "") =>
