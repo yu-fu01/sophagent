@@ -1,0 +1,36 @@
+:root {
+  --brand-primary: #6200ee;
+  --brand-pressed: #4c00c7;
+  --brand-hover: #8628fa;
+  --brand-bg-light: #f2e2ff;
+  --brand-bg-lighter: #faf4ff;
+  --text-title: #1d2129;
+  --text-secondary: #4e5969;
+  --text-tertiary: #86909c;
+  --border-default: #e5e6eb;
+  --border-light: #f2f3f5;
+  --bg-page: #fff;
+  --bg-gray: #f7f8fa;
+  --bg-list-hover: #f9f9f9;
+  --radius-sm: 8px;
+  --radius-md: 12px;
+  --radius-lg: 16px;
+  --shadow-sm: 0 1px 2px rgb(0 0 0 / 6%);
+}
+
+* {
+  box-sizing: border-box;
+}
+
+html,
+body,
+#app {
+  height: 100%;
+  margin: 0;
+}
+
+body {
+  font-family: system-ui, -apple-system, "Segoe UI", sans-serif;
+  color: var(--text-title);
+  background: var(--bg-page);
+}

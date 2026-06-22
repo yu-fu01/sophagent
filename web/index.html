@@ -1088,7 +1088,10 @@ function btn(parent, label, cls, onclick) {
 }
 const alertErr = e => alert(e.message);
 
-if (token) boot(); else $("li-user").focus();
+if (token) boot(); else {
+  // SOPHCLAW_NO_LOGIN=1：无 token 也可直接进主界面
+  boot().catch(() => $("li-user").focus());
+}
 </script>
 </body>
 </html>

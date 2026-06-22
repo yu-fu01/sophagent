@@ -18,3 +18,4 @@ data/
 .worktrees/
 .claude/
 .cursor/
+frontend/node_modules/

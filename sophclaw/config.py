@@ -42,6 +42,7 @@ class Config:
     max_skill_file_bytes: int = 256 * 1024
     memory_max_items: int = 50
     memory_max_chars: int = 500
+    no_login: bool = False
 
     @property
     def db_path(self) -> Path:
@@ -128,6 +129,7 @@ def load_config() -> Config:
         max_concurrent_turns=int(os.environ.get("SOPHCLAW_MAX_CONCURRENT_TURNS", "32")),
         max_upload_bytes=int(os.environ.get("SOPHCLAW_MAX_UPLOAD_BYTES", str(10 * 1024 * 1024))),
         delegate_concurrency=int(os.environ.get("SOPHCLAW_DELEGATE_CONCURRENCY", "4")),
+        no_login=os.environ.get("SOPHCLAW_NO_LOGIN", "").lower() in ("1", "true", "yes"),
     )
     cfg.skills_dir.mkdir(parents=True, exist_ok=True)
     cfg.workspaces_dir.mkdir(parents=True, exist_ok=True)

@@ -40,12 +40,23 @@ def decode_token(token: str) -> dict[str, Any]:
     return jwt.decode(token, get_config().secret, algorithms=["HS256"])
 
 
+async def _default_user(request: Request) -> Any | None:
+    """In no-login mode, use the bootstrap admin as the implicit identity."""
+    cfg = get_config()
+    if not cfg.no_login:
+        return None
+    return await request.app.state.db.get_user_by_username(cfg.admin_username)
+
+
 async def require_user(
     request: Request,
     creds: HTTPAuthorizationCredentials | None = Depends(_bearer),
 ) -> Any:
     """Resolve the JWT to a live user row (revoked/deleted users fail here)."""
     if creds is None:
+        user = await _default_user(request)
+        if user is not None:
+            return user
         raise HTTPException(401, "missing bearer token")
     try:
         payload = decode_token(creds.credentials)

@@ -69,6 +69,7 @@ def client(tmp_path, monkeypatch):
     monkeypatch.setenv("SOPHCLAW_DATA_DIR", str(tmp_path / "data"))
     monkeypatch.setenv("ADMIN_USERNAME", "admin")
     monkeypatch.setenv("ADMIN_PASSWORD", "adminpw")
+    monkeypatch.delenv("SOPHCLAW_NO_LOGIN", raising=False)
     config_mod.reset_config()
     providers_mod.reset_providers()
     cfg = config_mod.get_config()

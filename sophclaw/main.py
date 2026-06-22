@@ -3,13 +3,12 @@
 from __future__ import annotations
 
 import logging
-import mimetypes
 import secrets
 from contextlib import asynccontextmanager
 from pathlib import Path
 
 from fastapi import FastAPI
-from fastapi.responses import FileResponse, JSONResponse
+from fastapi.responses import JSONResponse
 from fastapi.staticfiles import StaticFiles
 
 from . import __version__
@@ -22,6 +21,11 @@ from .db import Database
 log = logging.getLogger("sophclaw")
 
 WEB_DIR = Path(__file__).resolve().parent.parent / "web"
+WEB_DIST = WEB_DIR / "dist"
+
+
+def _using_dist() -> bool:
+    return (WEB_DIST / "index.html").is_file()
 
 
 async def _bootstrap_admin(db: Database) -> None:
@@ -33,7 +37,6 @@ async def _bootstrap_admin(db: Database) -> None:
     if cfg.admin_password:
         log.info("bootstrap: created admin user %r", cfg.admin_username)
     else:
-        # printed once; user must note it down or set ADMIN_PASSWORD
         log.warning("bootstrap: created admin user %r with generated password: %s",
                     cfg.admin_username, password)
 
@@ -42,10 +45,12 @@ async def _bootstrap_admin(db: Database) -> None:
 async def lifespan(app: FastAPI):
     logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(name)s: %(message)s")
     cfg = get_config()
+    if cfg.no_login:
+        log.info("no-login mode enabled — API accepts requests without JWT")
     db = Database(cfg.db_path)
     await db.connect()
     await _bootstrap_admin(db)
-    await db.ensure_groups()  # admin group + personal groups; idempotent (also migrates old DBs)
+    await db.ensure_groups()
 
     from .skills.seed import seed_builtin_skills
     from .skills.store import SkillStore
@@ -53,7 +58,7 @@ async def lifespan(app: FastAPI):
 
     load_all()
     app.state.db = db
-    seeded = seed_builtin_skills(cfg.skills_dir)  # populate missing built-in skills
+    seeded = seed_builtin_skills(cfg.skills_dir)
     if seeded:
         log.info("seeded %d built-in skills into %s", seeded, cfg.skills_dir)
     app.state.skill_store = SkillStore(cfg.skills_dir)
@@ -75,29 +80,31 @@ def create_app() -> FastAPI:
     async def healthz():
         return JSONResponse({"status": "ok", "version": __version__})
 
-    # 前端外壳文件（HTML / 应用 JS）无版本指纹，文件名不随内容变化。
-    # 设 no-cache 强制浏览器每次带 etag 回源校验：未变返 304（廉价），
-    # 重新部署后改动立即生效，避免「改了前端却被旧缓存覆盖」（需硬刷新）的坑。
-    # 第三方资源（/vendor 下 KaTeX 等）极少变动，仍由 StaticFiles 默认缓存。
-    NO_CACHE = {"Cache-Control": "no-cache"}
+    if _using_dist():
+        # Vue SPA (built by frontend/ → web/dist). html=True enables client-side routing fallback.
+        app.mount("/", StaticFiles(directory=WEB_DIST, html=True), name="frontend")
+    else:
+        from fastapi.responses import FileResponse
+        import mimetypes
 
-    @app.get("/", include_in_schema=False)
-    async def index():
-        return FileResponse(WEB_DIR / "index.html", headers=NO_CACHE)
+        NO_CACHE = {"Cache-Control": "no-cache"}
 
-    @app.get("/worklog.js", include_in_schema=False)
-    async def worklog_js():
-        return FileResponse(WEB_DIR / "worklog.js", media_type="application/javascript", headers=NO_CACHE)
+        @app.get("/", include_in_schema=False)
+        async def index():
+            return FileResponse(WEB_DIR / "index.html", headers=NO_CACHE)
 
-    @app.get("/markdown.js", include_in_schema=False)
-    async def markdown_js():
-        return FileResponse(WEB_DIR / "markdown.js", media_type="application/javascript", headers=NO_CACHE)
+        @app.get("/worklog.js", include_in_schema=False)
+        async def worklog_js():
+            return FileResponse(WEB_DIR / "worklog.js", media_type="application/javascript", headers=NO_CACHE)
 
-    # 前端第三方资源（KaTeX 等）。woff2 需显式注册 mime，否则浏览器拒绝加载。
-    mimetypes.add_type("font/woff2", ".woff2")
-    vendor_dir = WEB_DIR / "vendor"
-    if vendor_dir.is_dir():
-        app.mount("/vendor", StaticFiles(directory=vendor_dir), name="vendor")
+        @app.get("/markdown.js", include_in_schema=False)
+        async def markdown_js():
+            return FileResponse(WEB_DIR / "markdown.js", media_type="application/javascript", headers=NO_CACHE)
+
+        mimetypes.add_type("font/woff2", ".woff2")
+        vendor_dir = WEB_DIR / "vendor"
+        if vendor_dir.is_dir():
+            app.mount("/vendor", StaticFiles(directory=vendor_dir), name="vendor")
 
     return app
 

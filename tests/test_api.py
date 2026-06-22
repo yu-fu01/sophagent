@@ -18,14 +18,22 @@ def test_healthz(client):
     assert client.get("/healthz").json()["status"] == "ok"
 
 
-def test_frontend_shell_served_with_no_cache(client):
-    # 外壳文件无版本指纹：必须带 no-cache，避免重新部署后被浏览器旧缓存覆盖。
-    for path in ("/", "/markdown.js", "/worklog.js"):
-        resp = client.get(path)
-        assert resp.status_code == 200, path
-        assert resp.headers.get("cache-control") == "no-cache", path
-    # markdown.js 以 JS MIME 返回，浏览器才肯当脚本执行
-    assert "javascript" in client.get("/markdown.js").headers["content-type"]
+def test_frontend_shell_served(client):
+    from pathlib import Path
+
+    root = Path(__file__).resolve().parents[1] / "web"
+    legacy = not (root / "dist" / "index.html").is_file()
+    resp = client.get("/")
+    assert resp.status_code == 200
+    if legacy:
+        for path in ("/", "/markdown.js", "/worklog.js"):
+            r = client.get(path)
+            assert r.status_code == 200, path
+            assert r.headers.get("cache-control") == "no-cache", path
+        assert "javascript" in client.get("/markdown.js").headers["content-type"]
+    else:
+        assert "text/html" in resp.headers.get("content-type", "")
+        assert client.get("/markdown.js").status_code == 200
 
 
 def test_login_failures(client):
