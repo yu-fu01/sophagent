@@ -1,6 +1,9 @@
 """End-to-end API tests with a scripted fake provider (no real model calls)."""
 
-from sophclaw.models import AssistantTurn, ToolCall
+import asyncio
+import threading
+
+from sophclaw.models import AssistantTurn, StreamEvent, ToolCall
 
 from conftest import sse_events  # noqa: F401  (shared harness helper)
 
@@ -75,6 +78,112 @@ def test_chat_flow_and_persistence(client, bob, agent_id):
     assert len(detail["messages"]) == 4
 
 
+def test_queued_chat_turns_persist_in_order_without_duplicates(client, bob, agent_id):
+    started = threading.Event()
+    release = threading.Event()
+    provider_calls = []
+
+    async def blocking_chat(*, model, system, messages, tools=None,
+                            temperature=None, max_tokens=None, thinking=None):
+        provider_calls.append([m.content for m in messages])
+        if len(provider_calls) == 1:
+            started.set()
+            await asyncio.to_thread(release.wait, 5)
+        last_user = next((m.content for m in reversed(messages) if m.role == "user"), "")
+        turn = AssistantTurn(content=f"echo: {last_user}", stop_reason="stop",
+                             input_tokens=10, output_tokens=5)
+        yield StreamEvent("text_delta", text=turn.content)
+        yield StreamEvent("turn_done", turn=turn)
+
+    client.provider.chat = blocking_chat
+    sid = client.post("/api/sessions", json={"agent_id": agent_id}, headers=bob).json()["id"]
+    first_response = {}
+
+    def post_first_turn():
+        first_response["resp"] = client.post(
+            f"/api/sessions/{sid}/chat", json={"content": "first"}, headers=bob,
+        )
+
+    thread = threading.Thread(target=post_first_turn)
+    thread.start()
+    assert started.wait(2)
+
+    for position, content in enumerate(["second", "third", "fourth"], start=1):
+        queued = client.post(f"/api/sessions/{sid}/chat", json={"content": content}, headers=bob)
+        assert queued.status_code == 200
+        assert queued.json() == {"queued": True, "position": position}
+    overflow = client.post(f"/api/sessions/{sid}/chat", json={"content": "fifth"}, headers=bob)
+    assert overflow.status_code == 429
+
+    release.set()
+    thread.join(5)
+    assert not thread.is_alive()
+    events = sse_events(first_response["resp"])
+    assert {"type": "queued_next", "content": "second"} in events
+    assert {"type": "queued_next", "content": "third"} in events
+    assert {"type": "queued_next", "content": "fourth"} in events
+
+    detail = client.get(f"/api/sessions/{sid}", headers=bob).json()
+    assert [(m["role"], m["content"]) for m in detail["messages"]] == [
+        ("user", "first"),
+        ("assistant", "echo: first"),
+        ("user", "second"),
+        ("assistant", "echo: second"),
+        ("user", "third"),
+        ("assistant", "echo: third"),
+        ("user", "fourth"),
+        ("assistant", "echo: fourth"),
+    ]
+    assert provider_calls == [
+        ["first"],
+        ["first", "echo: first", "second"],
+        ["first", "echo: first", "second", "echo: second", "third"],
+        ["first", "echo: first", "second", "echo: second", "third", "echo: third", "fourth"],
+    ]
+
+
+def test_stop_during_busy_turn_closes_stream_and_clears_queue(client, bob, agent_id):
+    started = threading.Event()
+    release = threading.Event()
+
+    async def blocking_chat(*, model, system, messages, tools=None,
+                            temperature=None, max_tokens=None, thinking=None):
+        started.set()
+        await asyncio.to_thread(release.wait, 5)
+        turn = AssistantTurn(content="too late", stop_reason="stop",
+                             input_tokens=10, output_tokens=5)
+        yield StreamEvent("text_delta", text=turn.content)
+        yield StreamEvent("turn_done", turn=turn)
+
+    client.provider.chat = blocking_chat
+    sid = client.post("/api/sessions", json={"agent_id": agent_id}, headers=bob).json()["id"]
+    first_response = {}
+
+    def post_first_turn():
+        first_response["resp"] = client.post(
+            f"/api/sessions/{sid}/chat", json={"content": "first"}, headers=bob,
+        )
+
+    thread = threading.Thread(target=post_first_turn)
+    thread.start()
+    assert started.wait(2)
+
+    queued = client.post(f"/api/sessions/{sid}/chat", json={"content": "second"}, headers=bob)
+    assert queued.status_code == 200
+    assert queued.json() == {"queued": True, "position": 1}
+
+    stopped = client.post(f"/api/sessions/{sid}/stop", headers=bob)
+    assert stopped.status_code == 200
+    assert stopped.json() == {"stopped": True}
+    release.set()
+    thread.join(5)
+    assert not thread.is_alive()
+
+    events = sse_events(first_response["resp"])
+    assert {"type": "error", "message": "stopped by user"} in events
+    assert client.app.state.manager.pending_count(sid) == 0
+
+
 def test_session_isolation(client, admin, bob, agent_id):
     # carol is in her own group, unrelated to bob (neither manages the other)
     resp = client.post("/api/users", json={"username": "carol", "password": "carolpw1"}, headers=admin)
@@ -120,6 +229,40 @@ def test_reasoning_streamed_and_persisted_via_chat(client, bob, agent_id):
     detail = client.get(f"/api/sessions/{sid}", headers=bob).json()
     asst = next(m for m in detail["messages"] if m["role"] == "assistant")
     assert asst["reasoning"] == "let me think"
+
+
+def test_retry_replaces_last_assistant_without_duplicating_user(client, bob, agent_id):
+    provider_messages = []
+
+    async def scripted_chat(*, model, system, messages, tools=None,
+                            temperature=None, max_tokens=None, thinking=None):
+        provider_messages.append([(m.role, m.content) for m in messages])
+        turn = client.provider.script.pop(0)
+        if turn.content:
+            yield StreamEvent("text_delta", text=turn.content)
+        yield StreamEvent("turn_done", turn=turn)
+
+    client.provider.chat = scripted_chat
+    client.provider.script = [
+        AssistantTurn(content="old answer", stop_reason="stop"),
+        AssistantTurn(content="new answer", stop_reason="stop"),
+    ]
+    sid = client.post("/api/sessions", json={"agent_id": agent_id}, headers=bob).json()["id"]
+    client.post(f"/api/sessions/{sid}/chat", json={"content": "question"}, headers=bob)
+
+    resp = client.post(f"/api/sessions/{sid}/chat", json={"content": "/retry"}, headers=bob)
+    events = sse_events(resp)
+    assert any(e["type"] == "text_delta" and e["text"] == "new answer" for e in events)
+
+    detail = client.get(f"/api/sessions/{sid}", headers=bob).json()
+    assert [(m["role"], m["content"]) for m in detail["messages"]] == [
+        ("user", "question"),
+        ("assistant", "new answer"),
+    ]
+    assert provider_messages == [
+        [("user", "question")],
+        [("user", "question")],
+    ]
 
 
 def test_skill_self_evolution_via_chat(client, admin, bob, agent_id):
