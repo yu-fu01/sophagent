@@ -48,6 +48,9 @@ class Config:
     memory_total_chars: int = 2200  # MEMORY 段（agent 笔记，~800 token）
     user_total_chars: int = 1375    # USER 段（用户画像，~500 token）
     memory_max_chars: int = 500     # 单条上限
+    # 后台自改进 review（③）：turn 后重放对话自动写记忆/改 skill
+    self_improve_enabled: bool = True
+    review_max_iterations: int = 6
     # WebSocket DNS-rebinding defence: when non-empty, the gateway only accepts
     # handshakes whose Host header matches one of these (host or host:port).
     # Empty => accept any host (development / tests).
