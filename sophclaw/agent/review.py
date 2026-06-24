@@ -64,14 +64,19 @@ def _review_tools(agent: AgentDef) -> list[str]:
     return [t for t in REVIEW_TOOLS if t in agent.tools]
 
 
+# Result-prefixes that mark an actual memory write (not a read / no-op / error).
+_MEMORY_WRITE_PREFIXES = ("Saved", "Updated", "Removed", "Staged")
+
+
 def _describe(name: str, result_preview: str) -> str | None:
-    """Turn a successful mutating tool result into a short action line, or None
-    if it wasn't a real change (error / no-op / read)."""
+    """Turn a successful *write* tool result into a short action line, or None
+    if it wasn't a real change (error / no-op / read). A memory `read` returns
+    the entry listing, which must NOT be counted as a change."""
     p = (result_preview or "").strip()
-    if p.startswith("Error") or p.startswith("OK (no duplicate"):
+    if p.startswith("Error"):
         return None
     if name == "memory":
-        return p  # e.g. "Saved user memory [3]"
+        return p if p.startswith(_MEMORY_WRITE_PREFIXES) else None
     if name == "skill_manage":
         return p
     return None

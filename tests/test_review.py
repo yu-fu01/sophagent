@@ -83,6 +83,29 @@ async def test_review_saves_memory_returns_changed(tmp_path, monkeypatch):
 
 
 @pytest.mark.asyncio
+async def test_review_read_only_is_not_a_change(tmp_path, monkeypatch):
+    """review 只是 read 记忆查看现状、未写入 → changed=False（不能把 read 当变更）。"""
+    from sophclaw.agent.review import run_review
+
+    script = [
+        AssistantTurn(tool_calls=[ToolCall("c1", "memory", {
+            "action": "read", "target": "user"})],
+            stop_reason="tool_calls", input_tokens=5, output_tokens=5),
+        AssistantTurn(content="Nothing to save.", stop_reason="stop", input_tokens=1, output_tokens=1),
+    ]
+    db, agent, provider = await _setup(tmp_path, monkeypatch, script, ["memory"])
+    await db.memory_add(1, "existing user fact", target="user")
+    try:
+        result = await run_review(db=db, skill_store=None, agent=agent, user_id=1,
+                                  history=[Message(role="user", content="hi")])
+        assert result.changed is False  # 只读不算变更
+    finally:
+        await db.close()
+        config_mod.reset_config()
+        providers_mod.reset_providers()
+
+
+@pytest.mark.asyncio
 async def test_review_nothing_to_save(tmp_path, monkeypatch):
     from sophclaw.agent.review import run_review
 
