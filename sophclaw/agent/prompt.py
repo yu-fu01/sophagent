@@ -44,6 +44,13 @@ a workflow worth repeating, capture it with skill_manage(action="create").
 When an existing skill turns out to be wrong or incomplete, improve it with
 skill_manage(action="patch"). Keep skills narrow, procedural and actionable."""
 
+SESSION_SEARCH_GUIDE = """\
+## Recall
+When the user references something from a past conversation ("last time", "as I
+mentioned", "we did this before") or you suspect relevant prior context exists,
+use session_search to recall it before asking them to repeat themselves. It
+searches only this user's own past conversations."""
+
 
 def build_system_prompt(
     agent: AgentDef,
@@ -64,6 +71,9 @@ def build_system_prompt(
     if workspace is not None:
         env_lines.append("You have a private workspace directory; file and terminal tools operate inside it.")
     parts.append("## Environment\n" + "\n".join(env_lines))
+
+    if "session_search" in agent.tools:
+        parts.append(SESSION_SEARCH_GUIDE)
 
     has_skill_tools = any(t in agent.tools for t in ("skills_list", "skill_view", "skill_manage"))
     if has_skill_tools:

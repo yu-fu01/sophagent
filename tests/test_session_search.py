@@ -235,3 +235,40 @@ async def test_tool_handles_invalid_fts_query(tmp_path, monkeypatch):
     finally:
         await db.close()
         config_mod.reset_config()
+
+
+# -- 单元 3：system prompt 引导语 -------------------------------------------
+
+
+def _agent_with_tools(tools):
+    from sophclaw.models import AgentDef
+
+    return AgentDef(
+        id=1, name="t", description="", system_prompt="You help.",
+        provider="test", model="m", tools=tools, skills=None,
+    )
+
+
+def test_prompt_includes_session_search_guidance_when_tool_enabled(tmp_path, monkeypatch):
+    monkeypatch.setenv("SOPHCLAW_DATA_DIR", str(tmp_path / "data"))
+    config_mod.reset_config()
+    from sophclaw.agent.prompt import build_system_prompt
+
+    try:
+        out = build_system_prompt(_agent_with_tools(["session_search"]))
+        assert "session_search" in out
+        assert "past conversation" in out.lower()
+    finally:
+        config_mod.reset_config()
+
+
+def test_prompt_omits_guidance_without_tool(tmp_path, monkeypatch):
+    monkeypatch.setenv("SOPHCLAW_DATA_DIR", str(tmp_path / "data"))
+    config_mod.reset_config()
+    from sophclaw.agent.prompt import build_system_prompt
+
+    try:
+        out = build_system_prompt(_agent_with_tools(["read_file"]))
+        assert "session_search" not in out
+    finally:
+        config_mod.reset_config()
