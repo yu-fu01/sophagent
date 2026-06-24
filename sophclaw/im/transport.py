@@ -1,0 +1,71 @@
+"""TelegramTransport: 内部 agent 事件 -> Telegram edit-in-place 流式。
+
+消费 sophclaw 内部事件（text_delta/done/error/...），不使用 WS 的 wire 帧。
+首轮首帧 sendMessage 记 message_id；后续累积文本 editMessageText（限频）；
+done 落最终全文并清 message_id（下一轮首帧重发新消息）。
+reasoning/tool/turn_usage/session.info/queued_next 忽略。
+"""
+
+from __future__ import annotations
+
+import asyncio
+import time
+from typing import Any, Protocol
+
+
+class TelegramLikeClient(Protocol):
+    async def send_message(self, chat_id: str, text: str) -> int: ...
+    async def edit_message(self, chat_id: str, message_id: int, text: str) -> None: ...
+
+
+class TelegramTransport:
+    def __init__(self, chat_id: str, client: TelegramLikeClient,
+                 *, min_edit_interval: float = 0.6) -> None:
+        self.chat_id = chat_id
+        self.client = client
+        self.min_edit_interval = min_edit_interval
+        self.message_id: int | None = None
+        self._text = ""
+        self._last_edit_at = 0.0
+
+    async def on_event(self, ev: dict[str, Any]) -> None:
+        t = ev.get("type")
+        if t == "text_delta":
+            self._text += ev.get("text", "")
+            await self._flush(force=False)
+        elif t == "done":
+            await self._flush(force=True)            # 落最终全文
+            self.message_id = None
+            self._text = ""
+        elif t == "error":
+            msg = ev.get("message", "error")
+            if self.message_id is None:
+                await self.client.send_message(self.chat_id, msg)
+                # 不记 message_id：错误是终结，下一轮若来 text_delta 自然新发
+                self.message_id = None
+            else:
+                await self.client.edit_message(self.chat_id, self.message_id, msg)
+                self.message_id = None
+            self._text = ""
+        # reasoning_delta / tool_call / tool_result / turn_usage / session_info / queued_next: 忽略
+
+    async def _flush(self, *, force: bool) -> None:
+        if not self._text:
+            return
+        now = time.monotonic()
+        if self.message_id is None:
+            self.message_id = await self.client.send_message(self.chat_id, self._text)
+            self._last_edit_at = now
+            return
+        # 限频：非正 min_edit_interval 禁用中间 edit（仅 done/close 强制落）；
+        # 否则距上次 edit 不足间隔则等下次或 done。
+        if not force and (
+            self.min_edit_interval <= 0
+            or now - self._last_edit_at < self.min_edit_interval
+        ):
+            return
+        await self.client.edit_message(self.chat_id, self.message_id, self._text)
+        self._last_edit_at = now
+
+    async def close(self) -> None:
+        await self._flush(force=True)  # 兜底落全文
