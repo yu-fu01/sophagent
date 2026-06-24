@@ -658,15 +658,19 @@ async function sendMsg(consumeQueued = false) {
 
   // 重新编辑：发送时才截断原用户消息及其回答，再以编辑后文本作为新轮发送
   if (editing) {
+    const mid = editing.mid; editing = null;
+    $("input").value = "";
     startStreamingUI();
+    addBubble("user", content);
+    turn = freshTurn(content, {shown: true});
     try {
-      await api(`/api/sessions/${currentSid}/truncate`, {method: "POST", body: {message_id: editing.mid}});
+      const res = await wsSend("message.edit", {session_id: currentSid, message_id: mid, content});
+      // res: {deleted, started} — 流式事件陆续到达，于 turn.settled 收尾
+      if (!res || !res.started) { stopStreamingUI(); turn = null; await openSession(currentSid); }
     } catch (e) {
-      stopStreamingUI(); alert("重新编辑失败: " + e.message); return;
+      addBubble("err", e.message); stopStreamingUI(); turn = null; await openSession(currentSid);
     }
-    editing = null;
-    await openSession(currentSid);
-    startStreamingUI();
+    return;
   }
 
   // ── 正在 streaming：尝试排队，不显示气泡 ──────────────────────────────
@@ -917,7 +921,7 @@ async function restoreFrom(mid) {
   if (!currentSid || streaming) return;
   if (!confirm("此次对话之后的内容都将删除，确定重置？")) return;
   try {
-    await api(`/api/sessions/${currentSid}/truncate`, {method: "POST", body: {message_id: mid}});
+    await wsSend("session.truncate", {session_id: currentSid, message_id: mid});
   } catch (e) { alert("恢复失败: " + e.message); return; }
   await openSession(currentSid);
 }
