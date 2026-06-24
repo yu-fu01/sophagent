@@ -101,6 +101,22 @@ CREATE TABLE IF NOT EXISTS settings (
   updated_at TEXT,
   updated_by INTEGER
 );
+CREATE TABLE IF NOT EXISTS im_pair_codes (
+  code       TEXT PRIMARY KEY,
+  user_id    INTEGER NOT NULL,
+  agent_id   INTEGER NOT NULL,
+  expires_at TEXT NOT NULL,
+  used       INTEGER DEFAULT 0
+);
+CREATE TABLE IF NOT EXISTS im_bindings (
+  platform   TEXT NOT NULL,
+  chat_id    TEXT NOT NULL,
+  user_id    INTEGER NOT NULL,
+  agent_id   INTEGER NOT NULL,
+  session_id TEXT NOT NULL,
+  created_at TEXT NOT NULL,
+  PRIMARY KEY (platform, chat_id)
+);
 """
 
 
@@ -571,4 +587,46 @@ class Database:
         await self._exec(
             "UPDATE sessions SET group_id=(SELECT id FROM groups WHERE owner_id=sessions.user_id LIMIT 1)"
             " WHERE group_id IS NULL"
+        )
+
+    # -- IM pairing / bindings ---------------------------------------------
+
+    async def create_pair_code(self, user_id: int, agent_id: int, ttl_seconds: int = 600) -> str:
+        import secrets as _secrets
+        from datetime import datetime, timezone, timedelta
+        code = _secrets.token_hex(4)  # 8 字符
+        expires = (datetime.now(timezone.utc) + timedelta(seconds=ttl_seconds)).isoformat(timespec="seconds")
+        await self._exec(
+            "INSERT INTO im_pair_codes (code, user_id, agent_id, expires_at, used) VALUES (?,?,?,?,0)",
+            (code, user_id, agent_id, expires),
+        )
+        return code
+
+    async def consume_pair_code(self, code: str) -> Optional[tuple[int, int]]:
+        """返回 (user_id, agent_id) 或 None（不存在/已用/已过期）。命中即标记 used。"""
+        from datetime import datetime, timezone
+        row = await self._one(
+            "SELECT user_id, agent_id, expires_at, used FROM im_pair_codes WHERE code=?",
+            (code,),
+        )
+        if row is None or row["used"]:
+            return None
+        if datetime.fromisoformat(row["expires_at"]) < datetime.now(timezone.utc):
+            return None
+        await self._exec("UPDATE im_pair_codes SET used=1 WHERE code=?", (code,))
+        return row["user_id"], row["agent_id"]
+
+    async def upsert_binding(self, platform: str, chat_id: str, user_id: int,
+                             agent_id: int, session_id: str) -> None:
+        await self._exec(
+            "INSERT INTO im_bindings (platform, chat_id, user_id, agent_id, session_id, created_at)"
+            " VALUES (?,?,?,?,?,?) ON CONFLICT(platform, chat_id) DO UPDATE SET"
+            " user_id=excluded.user_id, agent_id=excluded.agent_id, session_id=excluded.session_id",
+            (platform, chat_id, user_id, agent_id, session_id, now()),
+        )
+
+    async def get_binding(self, platform: str, chat_id: str) -> Optional[aiosqlite.Row]:
+        return await self._one(
+            "SELECT * FROM im_bindings WHERE platform=? AND chat_id=?",
+            (platform, chat_id),
         )
