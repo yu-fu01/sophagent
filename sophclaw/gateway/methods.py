@@ -161,6 +161,19 @@ async def m_slash_exec(params: dict[str, Any], ctx: GatewayContext) -> dict[str,
     return {"kind": kind, "result": payload}
 
 
+async def m_session_truncate(params: dict[str, Any], ctx: GatewayContext) -> dict[str, Any]:
+    """Restore: drop the message with ``message_id`` and everything after it.
+    No turn is started (unlike ``message.edit``). Refused while a turn runs."""
+    session_id = params["session_id"]
+    message_id = params["message_id"]
+    if ctx.manager.is_busy(session_id):
+        raise GatewayError(protocol.ERR_BUSY, "session is running a turn")
+    await _require_session(ctx, session_id)   # 归属校验（4401）
+    deleted = await ctx.db.truncate_from(session_id, message_id)
+    await ctx.db.touch_session(session_id)
+    return {"deleted": deleted}
+
+
 async def m_queue_submit(params: dict[str, Any], ctx: GatewayContext) -> dict[str, Any]:
     """Explicitly enqueue a message (used by the client when it already knows
     the session is busy)."""
@@ -179,6 +192,7 @@ METHODS: dict[str, Callable[[dict[str, Any], GatewayContext], Awaitable[dict[str
     "prompt.submit": m_prompt_submit,
     "session.interrupt": m_session_interrupt,
     "message.edit": m_message_edit,
+    "session.truncate": m_session_truncate,
     "slash.exec": m_slash_exec,
     "queue.submit": m_queue_submit,
 }

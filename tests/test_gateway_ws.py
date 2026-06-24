@@ -232,3 +232,49 @@ def test_disconnect_then_reconnect_replays_inflight(client, bob, agent_id, monke
     detail = client.get(f"/api/sessions/{sid}", headers=bob).json()
     contents = [m["content"] for m in detail["messages"] if m["role"] == "assistant"]
     assert any("chunk1:hi" in c and "chunk2" in c for c in contents), contents
+
+
+def test_session_truncate_via_ws(client, bob, agent_id):
+    sid = client.post("/api/sessions", json={"agent_id": agent_id}, headers=bob).json()["id"]
+    # 两条 turn 产生 4 条消息
+    for c in ("first", "second"):
+        with client.websocket_connect(_ws_url(client, bob["Authorization"].split(" ", 1)[1])) as ws:
+            _recv(ws)
+            _send(ws, "session.resume", 1, session_id=sid); _recv_response(ws, 1)
+            _send(ws, "prompt.submit", 2, session_id=sid, content=c)
+            _recv_response(ws, 2)
+            _collect_events_until(ws, "turn.settled")
+    detail = client.get(f"/api/sessions/{sid}", headers=bob).json()
+    second_user_id = detail["messages"][2]["id"]
+
+    with client.websocket_connect(_ws_url(client, bob["Authorization"].split(" ", 1)[1])) as ws:
+        _recv(ws)
+        _send(ws, "session.resume", 1, session_id=sid); _recv_response(ws, 1)
+        _send(ws, "session.truncate", 3, session_id=sid, message_id=second_user_id)
+        resp = _recv_response(ws, 3)
+        assert resp["result"]["deleted"] >= 2
+    detail = client.get(f"/api/sessions/{sid}", headers=bob).json()
+    assert [m["role"] for m in detail["messages"]] == ["user", "assistant"]
+    assert detail["messages"][0]["content"] == "first"
+
+
+def test_session_truncate_busy_returns_4009(client, bob, agent_id):
+    sid = client.post("/api/sessions", json={"agent_id": agent_id}, headers=bob).json()["id"]
+    with client.websocket_connect(_ws_url(client, bob["Authorization"].split(" ", 1)[1])) as ws:
+        _recv(ws)
+        _send(ws, "session.resume", 1, session_id=sid); _recv_response(ws, 1)
+        client.app.state.manager.is_busy = lambda s: True
+        try:
+            _send(ws, "session.truncate", 2, session_id=sid, message_id=1)
+            assert _recv_response(ws, 2)["error"]["code"] == 4009
+        finally:
+            client.app.state.manager.is_busy = lambda s: False
+
+
+def test_session_truncate_other_user_forbidden(client, bob, agent_id, admin):
+    sid = client.post("/api/sessions", json={"agent_id": agent_id}, headers=bob).json()["id"]
+    admin_tok = admin["Authorization"].split(" ", 1)[1]
+    with client.websocket_connect(_ws_url(client, admin_tok)) as ws:
+        _recv(ws)
+        _send(ws, "session.truncate", 1, session_id=sid, message_id=1)
+        assert _recv_response(ws, 1)["error"]["code"] == 4401
