@@ -131,3 +131,12 @@ async def test_summarize_redacts_leaked_credentials_in_output():
     assert "Pa55w0rd!2026" not in out
     assert "AKIA1234567890SOPHNET" not in out
     assert "[REDACTED]" in out
+
+
+def test_make_summary_message_redacts_unsanitized_input():
+    """make_summary_message 对传入文本兜底脱敏（覆盖存量未脱敏的 prev 摘要）。"""
+    leaked = "旧摘要遗留明文 sk-test-DO-NOT-COMMIT-9f8a7b6c5d4e3f2a1b0c"
+    m = C.make_summary_message(leaked)
+    assert "sk-test-DO-NOT-COMMIT-9f8a7b6c5d4e3f2a1b0c" not in m.content
+    assert "[REDACTED]" in m.content
+    assert m.compressed is True

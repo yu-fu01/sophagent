@@ -131,6 +131,7 @@ def _strip_summary_wrappers(content: str) -> str:
 
 
 def make_summary_message(summary: str) -> Message:
+    summary = redact_sensitive_text(summary)
     return Message(role="user", content=SUMMARY_PREFIX + summary.strip() + SUMMARY_SUFFIX,
                    compressed=True)
 
