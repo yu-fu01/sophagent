@@ -1,0 +1,116 @@
+"""凭据脱敏 redact_sensitive_text 的单元测试。"""
+
+import importlib
+
+import pytest
+
+from sophclaw.agent import redact as R
+
+
+# -- 逐类凭据被替换为 [REDACTED] --------------------------------------------
+
+def test_vendor_prefix_openai():
+    out = R.redact_sensitive_text("key is sk-test-DO-NOT-COMMIT-9f8a7b6c5d4e3f2a1b0c done")
+    assert "sk-test-DO-NOT-COMMIT-9f8a7b6c5d4e3f2a1b0c" not in out
+    assert "[REDACTED]" in out
+
+
+def test_vendor_prefix_aws():
+    out = R.redact_sensitive_text("aws id AKIA1234567890SOPHNET here")
+    assert "AKIA1234567890SOPHNET" not in out
+    assert "[REDACTED]" in out
+
+
+def test_vendor_prefix_github_and_others():
+    for secret in ("ghp_abcdefghij1234567890", "xai-abcdefghij1234567890abcdefghij12",
+                   "tvly-abcdefghij1234567890"):
+        out = R.redact_sensitive_text(f"token={secret}")
+        assert secret not in out, secret
+        assert "[REDACTED]" in out
+
+
+def test_env_assignment():
+    out = R.redact_sensitive_text("OPENAI_API_KEY=super-secret-value-123")
+    assert "super-secret-value-123" not in out
+    assert "OPENAI_API_KEY=" in out  # 键名保留
+    assert "[REDACTED]" in out
+
+
+def test_env_assignment_password():
+    out = R.redact_sensitive_text("DB_PASSWORD='Pa55w0rd!2026'")
+    assert "Pa55w0rd!2026" not in out
+    assert "[REDACTED]" in out
+
+
+def test_json_field():
+    out = R.redact_sensitive_text('{"api_key": "abcd1234efgh5678", "name": "ok"}')
+    assert "abcd1234efgh5678" not in out
+    assert "[REDACTED]" in out
+    assert "ok" in out  # 非敏感字段不动
+
+
+def test_authorization_header():
+    out = R.redact_sensitive_text("Authorization: Bearer abcdef.ghijkl.mnopqr")
+    assert "abcdef.ghijkl.mnopqr" not in out
+    assert "Authorization:" in out
+    assert "[REDACTED]" in out
+
+
+def test_api_key_header():
+    out = R.redact_sensitive_text("x-api-key: my-opaque-key-value-9999")
+    assert "my-opaque-key-value-9999" not in out
+    assert "[REDACTED]" in out
+
+
+def test_db_connection_string_password():
+    out = R.redact_sensitive_text("postgres://admin:Pa55w0rd!2026@db.internal:5432/sophclaw")
+    assert "Pa55w0rd!2026" not in out
+    assert "[REDACTED]" in out
+    assert "admin" in out          # 用户名保留
+    assert "db.internal" in out    # host 保留
+
+
+def test_jwt():
+    jwt = "eyJhbGciOiJIUzI1Ni}.eyJzdWIiOiIxMjM0NTY3ODkwIn0.dozjgNryP4J3jVmNHl0w5N"
+    out = R.redact_sensitive_text(f"token {jwt} end")
+    assert jwt not in out
+    assert "[REDACTED]" in out
+
+
+def test_private_key_block():
+    pk = ("-----BEGIN RSA PRIVATE KEY-----\n"
+          "MIIEowIBAAKCAQEA1234567890abcdef\n"
+          "-----END RSA PRIVATE KEY-----")
+    out = R.redact_sensitive_text(f"here is the key:\n{pk}\ndone")
+    assert "MIIEowIBAAKCAQEA1234567890abcdef" not in out
+    assert "[REDACTED]" in out
+
+
+# -- 不误伤正常文本 ---------------------------------------------------------
+
+def test_normal_text_untouched():
+    txt = "这是一段正常的中文说明，包含代码 foo() 和路径 sophclaw/agent/loop.py:42。"
+    assert R.redact_sensitive_text(txt) == txt
+
+
+def test_plain_numbers_and_urls_untouched():
+    txt = "访问 https://example.com/docs?page=2 共 12345 行，版本 v1.2.3。"
+    assert R.redact_sensitive_text(txt) == txt
+
+
+# -- 开关 -------------------------------------------------------------------
+
+def test_disabled_returns_original(monkeypatch):
+    monkeypatch.setenv("SOPHCLAW_REDACT_SECRETS", "0")
+    importlib.reload(R)
+    try:
+        secret = "sk-test-DO-NOT-COMMIT-9f8a7b6c5d4e3f2a1b0c"
+        assert R.redact_sensitive_text(f"key {secret}") == f"key {secret}"
+    finally:
+        monkeypatch.setenv("SOPHCLAW_REDACT_SECRETS", "1")
+        importlib.reload(R)
+
+
+def test_empty_and_none():
+    assert R.redact_sensitive_text("") == ""
+    assert R.redact_sensitive_text(None) is None
