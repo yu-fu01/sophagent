@@ -1264,12 +1264,15 @@ function providerForm(parent, existing) {
 }
 
 async function fillModels(provider, datalistId) {
-  const dl = $(datalistId); if (!dl) return; dl.innerHTML = "";
-  if (!provider) return;
+  const dl = $(datalistId); if (!dl) return {models: [], default: ""}; dl.innerHTML = "";
+  if (!provider) return {models: [], default: ""};
   try {
-    const {models} = await apiJson("/api/providers/" + provider + "/models");
-    for (const m of models || []) { const o = document.createElement("option"); o.value = m; dl.appendChild(o); }
+    const data = await apiJson("/api/providers/" + provider + "/models");
+    const models = data.models || [];
+    for (const m of models) { const o = document.createElement("option"); o.value = m; dl.appendChild(o); }
+    return {models, default: data.default || ""};
   } catch (e) { /* 静默回退到手填（非 admin 会 403） */ }
+  return {models: [], default: ""};
 }
 
 async function setupSessTools(detail) {
@@ -1334,6 +1337,7 @@ function agentForm(parent, options, existing, groups) {
     lbl.style.cssText = "display:inline-flex;align-items:center;gap:4px;margin:2px 10px 2px 0;color:var(--text);font-size:13px";
     const cb = document.createElement("input");
     cb.type = "checkbox"; cb.id = id; cb.value = t; cb.style.width = "auto";
+    cb.checked = !existing;  // new agent: default every tool on; editing: set from existing.tools below
     lbl.append(cb, document.createTextNode(t));
     $("af-tools").appendChild(lbl);
   }
@@ -1342,9 +1346,22 @@ function agentForm(parent, options, existing, groups) {
     $("af-provider").value = existing.provider; $("af-model").value = existing.model;
     $("af-prompt").value = existing.system_prompt;
     for (const t of existing.tools) { const cb = $("aft-" + t); if (cb) cb.checked = true; }
+  } else {
+    // New-agent name default: smallest free "agentN" (tools default all-on above).
+    const taken = new Set((agents || []).map(a => a.name));
+    let n = 1; while (taken.has("agent" + n)) n++;
+    $("af-name").value = "agent" + n;
   }
-  $("af-provider").onchange = () => fillModels($("af-provider").value, "af-models");
-  fillModels($("af-provider").value, "af-models");
+  // Fill the model datalist; for a new agent preselect the first model so the
+  // field isn't left blank (editing keeps the agent's saved model).
+  const fillModelsDefault = async () => {
+    const {models, default: dflt} = await fillModels($("af-provider").value, "af-models");
+    // Prefer the provider's configured default model (providers.yaml `model:`);
+    // fall back to the first listed model so the field is never left blank.
+    if (!existing) $("af-model").value = dflt || (models[0] || "");
+  };
+  $("af-provider").onchange = fillModelsDefault;
+  fillModelsDefault();
   $("af-save").textContent = existing ? "Save changes" : "Create agent";
   $("af-cancel").onclick = () => f.remove();
   $("af-save").onclick = async () => {
@@ -1523,7 +1540,18 @@ function btn(parent, label, cls, onclick) {
 }
 const alertErr = e => alert(e.message);
 
-if (token) boot(); else $("li-user").focus();
+(async () => {
+  // No token yet? Under SOPHAGENT_NO_LOGIN the backend hands out an admin
+  // token without credentials (404 when the switch is off), letting the
+  // normal token path drive HTTP + WebSocket. Otherwise show the login form.
+  if (!token) {
+    try {
+      const data = await apiJson("/api/auth/no-login");
+      token = data.token; localStorage.setItem("token", token);
+    } catch (e) { /* no-login disabled → fall through to login form */ }
+  }
+  if (token) boot(); else $("li-user").focus();
+})();
 </script>
 </body>
 </html>
