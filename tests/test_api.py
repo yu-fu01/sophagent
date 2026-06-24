@@ -152,30 +152,20 @@ def test_stop_during_busy_turn_closes_stream_and_clears_queue(client, bob, agent
 
     client.provider.chat = blocking_chat
     sid = client.post("/api/sessions", json={"agent_id": agent_id}, headers=bob).json()["id"]
-    first_response = {}
 
-    def post_first_turn():
-        first_response["resp"] = client.post(
-            f"/api/sessions/{sid}/chat", json={"content": "first"}, headers=bob,
-        )
-
-    thread = threading.Thread(target=post_first_turn)
-    thread.start()
-    assert started.wait(2)
-
-    queued = client.post(f"/api/sessions/{sid}/chat", json={"content": "second"}, headers=bob)
-    assert queued.status_code == 200
-    assert queued.json() == {"queued": True, "position": 1}
-
-    stopped = client.post(f"/api/sessions/{sid}/stop", headers=bob)
-    assert stopped.status_code == 200
-    assert stopped.json() == {"stopped": True}
-    release.set()
-    thread.join(5)
-    assert not thread.is_alive()
-
-    events = sse_events(first_response["resp"])
-    assert {"type": "error", "message": "stopped by user"} in events
+    with client.websocket_connect(f"/ws?token={ws_token(bob)}") as ws:
+        ws_recv_frame(ws)
+        ws_send(ws, "session.resume", 1, session_id=sid); ws_response(ws, 1)
+        ws_send(ws, "prompt.submit", 2, session_id=sid, content="first")
+        ws_response(ws, 2)
+        assert started.wait(2)
+        ws_send(ws, "prompt.submit", 3, session_id=sid, content="second")
+        assert ws_response(ws, 3)["result"] == {"kind": "queued", "position": 1}
+        ws_send(ws, "session.interrupt", 4, session_id=sid)
+        assert ws_response(ws, 4)["result"]["stopped"] is True
+        events = ws_events_until(ws, "turn.settled")
+    release.set()  # 放行被取消的 provider 线程
+    assert any(e["type"] == "error" and e["payload"]["message"] == "stopped by user" for e in events)
     assert client.app.state.manager.pending_count(sid) == 0
 
 
