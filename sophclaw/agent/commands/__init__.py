@@ -38,6 +38,7 @@ def _init() -> None:
     register(CommandDef("retry", "重新生成最后一条助手回复", "会话",
                         handler=cmd_retry.handle))
     register(CommandDef("compact", "手动压缩对话以节省上下文", "会话",
+                        args_hint="[聚焦主题]",
                         handler=cmd_compact.handle))
 
 

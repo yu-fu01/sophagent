@@ -1,45 +1,39 @@
-"""Slash command: /compact — manually trigger conversation compression."""
+"""Slash command: /compact [focus] — 手动触发对话压缩（可带引导主题）。"""
 
 from __future__ import annotations
 
 import logging
 from typing import Any
 
-from ....models import Message
+from ....agent import compaction as C
 
 log = logging.getLogger(__name__)
 
+PROTECT_TAIL_TOKENS = 200  # 手动压缩保护的尾部 token 预算（手动 /compact 比自动压缩更激进）
+
 
 async def handle(args: str, ctx: dict[str, Any]) -> dict[str, Any]:
-    """Manually compact the current session's history in-database.
-
-    Loads the full history, runs ``AgentRunner._summarize_oldest_half``-style
-    compression directly, and writes the compacted result back to the DB.
-    """
+    """手动压缩当前会话历史。``args`` 非空时作为引导式压缩的 focus 主题。"""
     db = ctx["db"]
     session = ctx["session"]
     if session is None:
         return {"content": "No active session.", "action": None}
 
+    focus = args.strip() or None
     session_id = session["id"]
 
-    # load live (non-archived) messages
     messages = await db.load_messages(session_id)
     if not messages:
         return {"content": "No messages to compact.", "action": None}
-
     if len(messages) < 6:
-        return {"content": f"Only {len(messages)} messages — too few to compact (need at least 6).", "action": None}
+        return {"content": f"Only {len(messages)} messages — too few to compact "
+                           f"(need at least 6).", "action": None}
 
-    # reproduce the compression logic from loop.py
-    cut = len(messages) // 2
-    old, rest = messages[:cut], messages[cut:]
+    old, rest = C.split_for_summary(messages, PROTECT_TAIL_TOKENS)
+    if not old:
+        return {"content": "Nothing old enough to compact.", "action": None}
 
-    transcript = "\n".join(
-        f"[{m.role}] {m.content[:1000]}" for m in old if m.content
-    )
-
-    # use the session's configured provider + model for summarization
+    # 解析 provider/model（沿用既有逻辑）
     from ....providers import get_provider
 
     provider_name = session["override_provider"] if "override_provider" in session.keys() and session["override_provider"] else None
@@ -53,42 +47,25 @@ async def handle(args: str, ctx: dict[str, Any]) -> dict[str, Any]:
         return {"content": "Cannot determine provider/model for compression.", "action": None}
 
     provider = get_provider(provider_name)
-    summary_parts: list[str] = []
+    prev = C.find_previous_summary(messages)
+    turns = [m for m in old if not C.is_summary_message(m)]
 
-    try:
-        async for ev in provider.chat(
-            model=model_name,
-            system="Summarize this conversation excerpt into a compact brief that preserves "
-                   "goals, decisions, key facts, file names and unresolved items. Plain text.",
-            messages=[Message(role="user", content=transcript[:60_000])],
-            max_tokens=1500,
-        ):
-            if ev.type == "turn_done" and ev.turn:
-                summary_parts.append(ev.turn.content)
-    except Exception as e:
-        log.exception("manual compression failed")
-        return {"content": f"Compression failed: {e}", "action": None}
-
-    summary = "".join(summary_parts).strip()
-    if not summary:
+    summary = await C.summarize(provider, model_name, turns, prev_summary=prev, focus=focus)
+    if summary is None:
         return {"content": "Compression produced empty summary — aborting.", "action": None}
 
-    new_history = [Message(role="user", content=f"[Earlier conversation summary]\n{summary}")] + rest
-
-    # archive old rows + insert compacted history
+    new_history = [C.make_summary_message(summary)] + rest
     await db.compact_session(session_id, new_history)
 
-    orig_count = len(messages)
-    new_count = len(new_history)
     dropped = sum(len(m.content) for m in old)
     kept = sum(len(m.content) for m in new_history)
-
+    focus_note = f"（聚焦：{focus}）" if focus else ""
     return {
         "content": (
-            f"✅ **Conversation compacted.**\n"
-            f"- Original: {orig_count} messages ({dropped:,} chars)\n"
-            f"- After: {new_count} messages ({kept:,} chars)\n"
-            f"- Oldest {cut} messages summarized into a single brief."
+            f"✅ **对话已压缩。**{focus_note}\n"
+            f"- 原始：{len(messages)} 条消息（{dropped:,} 字符）\n"
+            f"- 压缩后：{len(new_history)} 条消息（{kept:,} 字符）\n"
+            f"- 最旧 {len(old)} 条消息已摘要为单条结构化简报。"
         ),
         "action": "reload",
     }
