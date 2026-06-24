@@ -151,3 +151,41 @@ def test_new_limit_enforced_on_read(client, admin, bob):
     (ws / "huge.bin").write_bytes(b"x" * 2000)
     resp = client.get("/api/files/read", params={"path": "huge.bin"}, headers=bob)
     assert resp.status_code == 413
+
+
+# -- 压缩触发阈值 effective_compress_threshold -------------------------------
+
+from sophclaw.config import effective_compress_threshold, DEFAULT_COMPRESS_THRESHOLD
+
+
+@pytest.mark.asyncio
+async def test_compress_threshold_default(tmp_path, monkeypatch):
+    monkeypatch.setenv("SOPHCLAW_DATA_DIR", str(tmp_path / "data"))
+    config_mod.reset_config()
+    db = Database(tmp_path / "s.db")
+    await db.connect()
+    try:
+        assert await effective_compress_threshold(db) == DEFAULT_COMPRESS_THRESHOLD
+    finally:
+        await db.close()
+        config_mod.reset_config()
+
+
+@pytest.mark.asyncio
+async def test_compress_threshold_override_and_clamp(tmp_path, monkeypatch):
+    monkeypatch.setenv("SOPHCLAW_DATA_DIR", str(tmp_path / "data"))
+    config_mod.reset_config()
+    db = Database(tmp_path / "s.db")
+    await db.connect()
+    try:
+        await db.set_setting("compress_threshold", "0.7", 1)
+        assert await effective_compress_threshold(db) == 0.7
+        # 越界值被 clamp 进 [0.3, 0.9]
+        await db.set_setting("compress_threshold", "9.9", 1)
+        assert await effective_compress_threshold(db) == 0.9
+        # 非法值回退默认
+        await db.set_setting("compress_threshold", "abc", 1)
+        assert await effective_compress_threshold(db) == DEFAULT_COMPRESS_THRESHOLD
+    finally:
+        await db.close()
+        config_mod.reset_config()
