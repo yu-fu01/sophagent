@@ -180,7 +180,11 @@ def test_session_isolation(client, admin, bob, agent_id):
     sid = client.post("/api/sessions", json={"agent_id": caid}, headers=carol).json()["id"]
     # bob cannot see, chat into, or delete carol's session, nor list it
     assert client.get(f"/api/sessions/{sid}", headers=bob).status_code == 404
-    assert client.post(f"/api/sessions/{sid}/chat", json={"content": "x"}, headers=bob).status_code == 404
+    # bob cannot resume carol's session via WS (4401)
+    with client.websocket_connect(f"/ws?token={ws_token(bob)}") as ws:
+        ws_recv_frame(ws)
+        ws_send(ws, "session.resume", 1, session_id=sid)
+        assert ws_response(ws, 1)["error"]["code"] == 4401
     assert client.delete(f"/api/sessions/{sid}", headers=bob).status_code in (403, 404)
     assert [s["id"] for s in client.get("/api/sessions", headers=bob).json()] == []
 
@@ -341,42 +345,55 @@ def test_get_session_returns_message_ids(client, bob, agent_id):
 def test_truncate_restores_to_user_message(client, bob, agent_id):
     """Truncating at a user message deletes that message and everything after it."""
     sid = client.post("/api/sessions", json={"agent_id": agent_id}, headers=bob).json()["id"]
-    client.post(f"/api/sessions/{sid}/chat", json={"content": "first"}, headers=bob)
-    client.post(f"/api/sessions/{sid}/chat", json={"content": "second"}, headers=bob)
+    for c in ("first", "second"):
+        with client.websocket_connect(f"/ws?token={ws_token(bob)}") as ws:
+            ws_recv_frame(ws)
+            ws_send(ws, "session.resume", 1, session_id=sid); ws_response(ws, 1)
+            ws_send(ws, "prompt.submit", 2, session_id=sid, content=c)
+            ws_response(ws, 2)
+            ws_events_until(ws, "turn.settled")
     detail = client.get(f"/api/sessions/{sid}", headers=bob).json()
     assert [m["role"] for m in detail["messages"]] == ["user", "assistant", "user", "assistant"]
-    # id of the 2nd user message (the "second" turn)
     second_user_id = detail["messages"][2]["id"]
-    resp = client.post(f"/api/sessions/{sid}/truncate", json={"message_id": second_user_id}, headers=bob)
-    assert resp.status_code == 200
-    assert resp.json()["deleted"] >= 2  # that user msg + its assistant reply
+    with client.websocket_connect(f"/ws?token={ws_token(bob)}") as ws:
+        ws_recv_frame(ws)
+        ws_send(ws, "session.resume", 1, session_id=sid); ws_response(ws, 1)
+        ws_send(ws, "session.truncate", 2, session_id=sid, message_id=second_user_id)
+        assert ws_response(ws, 2)["result"]["deleted"] >= 2
     detail = client.get(f"/api/sessions/{sid}", headers=bob).json()
     assert [m["role"] for m in detail["messages"]] == ["user", "assistant"]
     assert detail["messages"][0]["content"] == "first"
 
 
-def test_truncate_busy_returns_409(client, bob, agent_id):
+def test_truncate_busy_returns_4009(client, bob, agent_id):
     """Cannot truncate while a turn is running (is_busy guard fires)."""
     sid = client.post("/api/sessions", json={"agent_id": agent_id}, headers=bob).json()["id"]
-    client.post(f"/api/sessions/{sid}/chat", json={"content": "x"}, headers=bob)
-    # simulate an in-flight turn: force the manager to report busy
-    client.app.state.manager.is_busy = lambda session_id: True
-    try:
-        resp = client.post(f"/api/sessions/{sid}/truncate", json={"message_id": 1}, headers=bob)
-        assert resp.status_code == 409
-    finally:
-        client.app.state.manager.is_busy = lambda session_id: False
+    with client.websocket_connect(f"/ws?token={ws_token(bob)}") as ws:
+        ws_recv_frame(ws)  # ready
+        ws_send(ws, "session.resume", 1, session_id=sid); ws_response(ws, 1)
+        client.app.state.manager.is_busy = lambda session_id: True
+        try:
+            ws_send(ws, "session.truncate", 2, session_id=sid, message_id=1)
+            assert ws_response(ws, 2)["error"]["code"] == 4009
+        finally:
+            client.app.state.manager.is_busy = lambda session_id: False
 
 
 def test_truncate_isolation(client, admin, bob, agent_id):
-    """Another user's session cannot be truncated (404)."""
+    """Another user's session cannot be truncated (4401)."""
     sid = client.post("/api/sessions", json={"agent_id": agent_id}, headers=bob).json()["id"]
-    client.post(f"/api/sessions/{sid}/chat", json={"content": "mine"}, headers=bob)
-    # carol: unrelated user
+    with client.websocket_connect(f"/ws?token={ws_token(bob)}") as ws:
+        ws_recv_frame(ws)
+        ws_send(ws, "session.resume", 1, session_id=sid); ws_response(ws, 1)
+        ws_send(ws, "prompt.submit", 2, session_id=sid, content="mine")
+        ws_response(ws, 2)
+        ws_events_until(ws, "turn.settled")
     client.post("/api/users", json={"username": "carol", "password": "carolpw1"}, headers=admin)
     carol = {"Authorization": f"Bearer {client.post('/api/auth/login', json={'username': 'carol', 'password': 'carolpw1'}).json()['token']}"}
-    resp = client.post(f"/api/sessions/{sid}/truncate", json={"message_id": 1}, headers=carol)
-    assert resp.status_code == 404
+    with client.websocket_connect(f"/ws?token={ws_token(carol)}") as ws:
+        ws_recv_frame(ws)
+        ws_send(ws, "session.truncate", 1, session_id=sid, message_id=1)
+        assert ws_response(ws, 1)["error"]["code"] == 4401
 
 
 def test_user_deletion_cascades(client, admin, bob, agent_id):
