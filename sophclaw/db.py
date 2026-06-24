@@ -57,6 +57,7 @@ CREATE INDEX IF NOT EXISTS idx_messages_session ON messages(session_id, id);
 CREATE TABLE IF NOT EXISTS memory (
   id INTEGER PRIMARY KEY,
   user_id INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+  target TEXT NOT NULL DEFAULT 'memory',
   content TEXT NOT NULL,
   created_at TEXT NOT NULL,
   updated_at TEXT NOT NULL
@@ -162,6 +163,12 @@ class Database:
         for col in ("override_provider", "override_model", "thinking_mode"):
             if session_cols and col not in session_cols:
                 await self._exec(f"ALTER TABLE sessions ADD COLUMN {col} TEXT")
+        memory_cols = await self._columns("memory")
+        if memory_cols and "target" not in memory_cols:
+            # dual-store: legacy single-store rows become agent-notes ('memory')
+            await self._exec(
+                "ALTER TABLE memory ADD COLUMN target TEXT NOT NULL DEFAULT 'memory'"
+            )
 
     async def close(self) -> None:
         if self.conn:
@@ -358,13 +365,23 @@ class Database:
 
     # -- memory ----------------------------------------------------------------
 
-    async def memory_list(self, user_id: int) -> list[aiosqlite.Row]:
-        return await self._all("SELECT * FROM memory WHERE user_id=? ORDER BY id", (user_id,))
+    async def memory_list(
+        self, user_id: int, target: str | None = None
+    ) -> list[aiosqlite.Row]:
+        if target is None:
+            return await self._all(
+                "SELECT * FROM memory WHERE user_id=? ORDER BY id", (user_id,)
+            )
+        return await self._all(
+            "SELECT * FROM memory WHERE user_id=? AND target=? ORDER BY id",
+            (user_id, target),
+        )
 
-    async def memory_add(self, user_id: int, content: str) -> int:
+    async def memory_add(self, user_id: int, content: str, target: str = "memory") -> int:
         cur = await self._exec(
-            "INSERT INTO memory (user_id, content, created_at, updated_at) VALUES (?,?,?,?)",
-            (user_id, content, now(), now()),
+            "INSERT INTO memory (user_id, target, content, created_at, updated_at) "
+            "VALUES (?,?,?,?,?)",
+            (user_id, target, content, now(), now()),
         )
         return cur.lastrowid
 

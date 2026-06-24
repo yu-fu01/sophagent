@@ -5,7 +5,33 @@ from __future__ import annotations
 from datetime import datetime, timezone
 from pathlib import Path
 
+from ..config import get_config
 from ..models import AgentDef
+
+_MEMORY_SECTIONS = (
+    ("memory", "MEMORY (your notes)",
+     "Facts you saved about the environment, conventions, and lessons learned:"),
+    ("user", "USER PROFILE",
+     "What you know about this user — identity, preferences, communication style:"),
+)
+
+
+def _render_memory(memories: dict[str, list[str]]) -> list[str]:
+    """Render the dual-store memory blocks, each with a hermes-style usage
+    header. Empty stores are omitted entirely."""
+    cfg = get_config()
+    limits = {"memory": cfg.memory_total_chars, "user": cfg.user_total_chars}
+    parts: list[str] = []
+    for key, heading, intro in _MEMORY_SECTIONS:
+        entries = memories.get(key) or []
+        if not entries:
+            continue
+        used = sum(len(e) for e in entries)
+        limit = limits[key]
+        pct = round(used / limit * 100) if limit else 0
+        body = "\n".join(f"- {e}" for e in entries)
+        parts.append(f"## {heading} [{pct}% — {used}/{limit} chars]\n{intro}\n{body}")
+    return parts
 
 SELF_EVOLVE_GUIDE = """\
 ## Skills
@@ -22,7 +48,7 @@ skill_manage(action="patch"). Keep skills narrow, procedural and actionable."""
 def build_system_prompt(
     agent: AgentDef,
     skill_index: list[dict] | None = None,
-    memories: list[str] | None = None,
+    memories: dict[str, list[str]] | None = None,
     workspace: Path | None = None,
 ) -> str:
     parts = [agent.system_prompt.strip()]
@@ -49,7 +75,6 @@ def build_system_prompt(
             parts.append("## Available Skills\n(none yet — create the first one when you learn something reusable)")
 
     if memories:
-        parts.append("## Memory\nFacts you saved in earlier conversations with this user:\n" +
-                     "\n".join(f"- {m}" for m in memories))
+        parts.extend(_render_memory(memories))
 
     return "\n\n".join(parts)

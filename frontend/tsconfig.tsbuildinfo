@@ -1,0 +1,1 @@
+{"root":["./src/env.d.ts","./src/main.ts","./src/types.ts","./src/api/client.ts","./src/App.vue","./src/components/AgentPanel.vue","./src/components/ChatPanel.vue","./src/components/Sidebar.vue"],"version":"5.7.3"}
