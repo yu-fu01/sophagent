@@ -101,42 +101,33 @@ def test_queued_chat_turns_persist_in_order_without_duplicates(client, bob, agen
 
     client.provider.chat = blocking_chat
     sid = client.post("/api/sessions", json={"agent_id": agent_id}, headers=bob).json()["id"]
-    first_response = {}
 
-    def post_first_turn():
-        first_response["resp"] = client.post(
-            f"/api/sessions/{sid}/chat", json={"content": "first"}, headers=bob,
-        )
+    with client.websocket_connect(f"/ws?token={ws_token(bob)}") as ws:
+        ws_recv_frame(ws)  # ready
+        ws_send(ws, "session.resume", 1, session_id=sid); ws_response(ws, 1)
+        # 首轮（provider 首次调用阻塞）
+        ws_send(ws, "prompt.submit", 2, session_id=sid, content="first")
+        assert ws_response(ws, 2)["result"]["kind"] == "start"
+        assert started.wait(2)
+        # 排队三条
+        for pos, content in enumerate(["second", "third", "fourth"], start=1):
+            ws_send(ws, "prompt.submit", 10 + pos, session_id=sid, content=content)
+            r = ws_response(ws, 10 + pos)
+            assert r["result"] == {"kind": "queued", "position": pos}, r
+        # 溢出 → 4009
+        ws_send(ws, "prompt.submit", 99, session_id=sid, content="fifth")
+        assert ws_response(ws, 99)["error"]["code"] == 4009
+        release.set()
+        events = ws_events_until(ws, "turn.settled")
 
-    thread = threading.Thread(target=post_first_turn)
-    thread.start()
-    assert started.wait(2)
-
-    for position, content in enumerate(["second", "third", "fourth"], start=1):
-        queued = client.post(f"/api/sessions/{sid}/chat", json={"content": content}, headers=bob)
-        assert queued.status_code == 200
-        assert queued.json() == {"queued": True, "position": position}
-    overflow = client.post(f"/api/sessions/{sid}/chat", json={"content": "fifth"}, headers=bob)
-    assert overflow.status_code == 429
-
-    release.set()
-    thread.join(5)
-    assert not thread.is_alive()
-    events = sse_events(first_response["resp"])
-    assert {"type": "queued_next", "content": "second"} in events
-    assert {"type": "queued_next", "content": "third"} in events
-    assert {"type": "queued_next", "content": "fourth"} in events
-
+    qnext = [e["payload"]["content"] for e in events if e["type"] == "queued_next"]
+    assert qnext == ["second", "third", "fourth"]
     detail = client.get(f"/api/sessions/{sid}", headers=bob).json()
     assert [(m["role"], m["content"]) for m in detail["messages"]] == [
-        ("user", "first"),
-        ("assistant", "echo: first"),
-        ("user", "second"),
-        ("assistant", "echo: second"),
-        ("user", "third"),
-        ("assistant", "echo: third"),
-        ("user", "fourth"),
-        ("assistant", "echo: fourth"),
+        ("user", "first"), ("assistant", "echo: first"),
+        ("user", "second"), ("assistant", "echo: second"),
+        ("user", "third"), ("assistant", "echo: third"),
+        ("user", "fourth"), ("assistant", "echo: fourth"),
     ]
     assert provider_calls == [
         ["first"],
