@@ -150,6 +150,8 @@ def load_config() -> Config:
             (os.environ.get("SOPHCLAW_ALLOWED_HOSTS") or "").split(",") if h
         ),
         ws_grace_seconds=float(os.environ.get("SOPHCLAW_WS_GRACE_SECONDS", "60")),
+        self_improve_enabled=os.environ.get("SOPHCLAW_SELF_IMPROVE", "true").lower()
+        not in {"0", "false", "no", "off"},
     )
     cfg.skills_dir.mkdir(parents=True, exist_ok=True)
     cfg.workspaces_dir.mkdir(parents=True, exist_ok=True)

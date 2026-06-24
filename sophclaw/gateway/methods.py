@@ -12,12 +12,14 @@ transports.
 
 from __future__ import annotations
 
+import asyncio
 import functools
 import logging
 from dataclasses import dataclass
-from typing import Any, Awaitable, Callable
+from typing import Any, Awaitable, Callable, Optional
 
 from ..agent.turn import pre_submit, run_turns
+from ..config import get_config
 from ..gateway import protocol
 from ..gateway.session_state import SessionRegistry, SessionState
 from ..gateway.transport import Transport
@@ -58,7 +60,11 @@ async def _require_session(ctx: GatewayContext, session_id: str) -> SessionState
 
 
 async def _start_turn(ctx: GatewayContext, state: SessionState, content: str | None) -> dict[str, Any]:
-    """Start a turn on ``state`` streaming events onto its transport."""
+    """Start a turn on ``state`` streaming events onto its transport. When the
+    turn settles, a decoupled background self-improvement review is scheduled."""
+    async def _on_done() -> None:
+        schedule_review(ctx, state)
+
     task = state.start_turn(functools.partial(
         run_turns,
         session_id=state.session_id,
@@ -67,9 +73,47 @@ async def _start_turn(ctx: GatewayContext, state: SessionState, content: str | N
         manager=ctx.manager,
         skill_store=ctx.skill_store,
         user_id=ctx.user["id"],
-    ))
+    ), on_done=_on_done)
     ctx.manager.register_task(state.session_id, task)
     return {"started": True, "session_id": state.session_id}
+
+
+async def _review_and_notify(ctx: GatewayContext, state: SessionState) -> None:
+    """Run the background review for the session's latest history and, if it
+    saved anything, push an out-of-turn notice. Never raises; always clears the
+    in-flight flag."""
+    from ..agent.review import run_review
+    from ..models import AgentDef
+
+    try:
+        session = await ctx.db.get_session(state.session_id, state.user_id)
+        if session is None:
+            return
+        agent_row = await ctx.db.get_agent(session["agent_id"])
+        if agent_row is None:
+            return
+        history = await ctx.db.load_messages(state.session_id)
+        result = await run_review(
+            db=ctx.db, skill_store=ctx.skill_store,
+            agent=AgentDef.from_row(agent_row), user_id=state.user_id, history=history,
+        )
+        if result.changed:
+            await state.push_review_notice(result.summary, result.actions)
+    except Exception:
+        log.exception("background review failed session=%s", state.session_id)
+    finally:
+        state.review_running = False
+
+
+def schedule_review(ctx: GatewayContext, state: SessionState) -> Optional[asyncio.Task]:
+    """Spawn a decoupled background review task, or return None when it's off /
+    already running. Sets ``review_running`` so rapid turns don't stack reviews."""
+    if not get_config().self_improve_enabled:
+        return None
+    if state.review_running:
+        return None
+    state.review_running = True
+    return asyncio.create_task(_review_and_notify(ctx, state))
 
 
 # ── methods ────────────────────────────────────────────────────────────────

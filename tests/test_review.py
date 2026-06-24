@@ -147,3 +147,129 @@ def test_review_tool_whitelist():
     allowed = set(_review_tools(agent))
     assert "memory" in allowed and "skill_manage" in allowed
     assert "terminal" not in allowed and "read_file" not in allowed
+
+
+# -- ③ 单元 4：网关调度 + out-of-turn 通知 ---------------------------------
+
+
+class CaptureTransport:
+    def __init__(self):
+        self.frames = []
+
+    async def emit(self, frame):
+        self.frames.append(frame)
+        return True
+
+    def close(self):
+        pass
+
+
+def _state(session_id="s1", user_id=1, transport=None):
+    from sophclaw.gateway.session_state import SessionRegistry, SessionState
+
+    reg = SessionRegistry()
+    st = SessionState(session_id=session_id, user_id=user_id, registry=reg)
+    if transport is not None:
+        st.transport = transport
+    return st
+
+
+def _gctx(db, transport, user_id=1):
+    from sophclaw.gateway.methods import GatewayContext
+    from sophclaw.gateway.session_state import SessionRegistry
+
+    return GatewayContext(
+        db=db, manager=None, skill_store=None,
+        user={"id": user_id}, registry=SessionRegistry(), transport=transport,
+    )
+
+
+@pytest.mark.asyncio
+async def test_push_review_notice_emits_review_event(tmp_path, monkeypatch):
+    cap = CaptureTransport()
+    st = _state(transport=cap)
+    await st.push_review_notice("💾 Saved user memory [1]", ["Saved user memory [1]"])
+    assert len(cap.frames) == 1
+    assert cap.frames[0]["params"]["type"] == "memory.review"
+    assert "Saved" in cap.frames[0]["params"]["payload"]["summary"]
+
+
+@pytest.mark.asyncio
+async def test_push_review_notice_silent_when_detached(tmp_path, monkeypatch):
+    from sophclaw.gateway.transport import DetachedTransport
+
+    st = _state(transport=DetachedTransport())
+    # 不应抛异常
+    await st.push_review_notice("x", ["x"])
+
+
+@pytest.mark.asyncio
+async def test_schedule_review_skipped_when_disabled(tmp_path, monkeypatch):
+    from sophclaw.gateway.methods import schedule_review
+
+    db, agent, provider = await _setup(tmp_path, monkeypatch, [], ["memory"])
+    config_mod.get_config().self_improve_enabled = False
+    try:
+        st = _state(transport=CaptureTransport())
+        task = schedule_review(_gctx(db, st.transport), st)
+        assert task is None
+        assert st.review_running is False
+    finally:
+        await db.close()
+        config_mod.reset_config()
+        providers_mod.reset_providers()
+
+
+@pytest.mark.asyncio
+async def test_schedule_review_guarded_against_double_spawn(tmp_path, monkeypatch):
+    from sophclaw.gateway.methods import schedule_review
+
+    db, agent, provider = await _setup(tmp_path, monkeypatch, [], ["memory"])
+    try:
+        st = _state(transport=CaptureTransport())
+        st.review_running = True  # 已有 review 在飞
+        task = schedule_review(_gctx(db, st.transport), st)
+        assert task is None
+    finally:
+        await db.close()
+        config_mod.reset_config()
+        providers_mod.reset_providers()
+
+
+@pytest.mark.asyncio
+async def test_schedule_review_happy_path_writes_and_notifies(tmp_path, monkeypatch):
+    from sophclaw.gateway.methods import schedule_review
+
+    script = [
+        AssistantTurn(tool_calls=[ToolCall("c1", "memory", {
+            "action": "add", "content": "User likes dark mode", "target": "user"})],
+            stop_reason="tool_calls", input_tokens=5, output_tokens=5),
+        AssistantTurn(content="Saved.", stop_reason="stop", input_tokens=1, output_tokens=1),
+    ]
+    db, agent, provider = await _setup(tmp_path, monkeypatch, script, ["memory"])
+    # 建 agent + session + 历史消息
+    cur = await db._exec(
+        "INSERT INTO agents (name, description, system_prompt, provider, model, "
+        "tools, created_at, updated_at) VALUES ('a','','p','test','test-model','[\"memory\"]','t','t')"
+    )
+    aid = cur.lastrowid
+    await db._exec(
+        "INSERT INTO sessions (id, user_id, agent_id, title, created_at, updated_at) "
+        "VALUES ('s1',1,?,'','t','t')", (aid,))
+    await db.conn.commit()
+    await db.append_messages("s1", [Message(role="user", content="i prefer dark mode")])
+    try:
+        cap = CaptureTransport()
+        st = _state(transport=cap)
+        task = schedule_review(_gctx(db, cap), st)
+        assert task is not None
+        await task  # 等后台 review 跑完
+        # 记忆已落库
+        assert [r["content"] for r in await db.memory_list(1, target="user")] == ["User likes dark mode"]
+        # 通知已推送
+        assert any(f["params"]["type"] == "memory.review" for f in cap.frames)
+        assert st.review_running is False  # finally 清标志
+    finally:
+        await db.close()
+        config_mod.reset_config()
+        providers_mod.reset_providers()

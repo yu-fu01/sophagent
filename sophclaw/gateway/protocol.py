@@ -57,6 +57,7 @@ _EVENT_REMAP: dict[str, str] = {
     "queued_next": "queued_next",
     "turn_usage": "turn.usage",
     "settled": "turn.settled",
+    "review": "memory.review",
 }
 
 
