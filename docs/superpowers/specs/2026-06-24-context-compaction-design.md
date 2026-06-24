@@ -23,7 +23,7 @@ sophclaw 已内置基础上下文压缩，但实现简单：
 | 多次压缩 | 每次重新摘要，有损 | 迭代式摘要合并，跨压缩保信息 |
 | 尾部保护 | 固定取一半 | 按 token 预算保护尾部 |
 | 前端识别 | 无标记 | `_compressed` 元数据标记，前端可区分渲染 |
-| 触发阈值 | 硬编码 0.8 | 可配置（settings 表，admin 可调） |
+| 触发阈值 | 硬编码 0.8 | 可配置（settings 表，admin 可调），默认 0.5 对齐 hermes |
 | 代码复用 | compact.py 重复 loop.py 逻辑 | 单一压缩引擎，两者共用 |
 | 凭据安全 | 无 | summarizer 提示词要求 `[REDACTED]` 脱敏 |
 
@@ -31,7 +31,9 @@ sophclaw 已内置基础上下文压缩，但实现简单：
 
 1. **范围**：全面增强对齐 hermes。
 2. **引导式压缩**：支持 `/compact <focus>` 可选参数（类 Claude Code），摘要时优先保留 focus 相关信息。
-3. **触发阈值**：做成可配置项（settings 表 + admin 接口），默认 0.8。
+3. **触发阈值**：做成可配置项（settings 表 + admin 接口），默认 **0.5**，与 hermes `threshold_percent` 默认值对齐（更激进的早压缩，保活尾部上下文）。
+
+   > 备注：hermes 的 0.5 搭配 `MINIMUM_CONTEXT_LENGTH` 下限以避免大上下文模型过早压缩。sophclaw 精简模型暂不引入该下限（YAGNI）；典型 128K 上下文下 0.5 触发约 64K，合理。若后续接入极小上下文 provider 再考虑加绝对下限。
 
 ## 设计
 
@@ -88,7 +90,7 @@ sophclaw 已内置基础上下文压缩，但实现简单：
 ### 5. `sophclaw/agent/loop.py` 重构
 
 - `_compress_if_needed`：
-  - 阈值改为读取 `effective_compress_threshold(db)`（默认 0.8）。
+  - 阈值改为读取 `effective_compress_threshold(db)`（默认 0.5）。
   - 先执行 Layer 1（`truncate_old_tool_messages`）。
   - 仍超预算时进入 Layer 2 迭代摘要。
 - `_summarize_oldest_half` 改为调用 compaction 引擎：
@@ -109,11 +111,11 @@ sophclaw 已内置基础上下文压缩，但实现简单：
 ### 7. 可配置阈值
 
 - `sophclaw/config.py`：
-  - 新增常量 `DEFAULT_COMPRESS_THRESHOLD = 0.8`。
+  - 新增常量 `DEFAULT_COMPRESS_THRESHOLD = 0.5`（对齐 hermes）。
   - 新增 `async effective_compress_threshold(db) -> float`，读 settings 表 `compress_threshold` 覆盖默认值，对齐既有 `effective_max_upload_bytes` 模式。
 - `sophclaw/api/settings_routes.py`：
   - `GET /settings` 响应增加 `compress_threshold` 与 `default_compress_threshold`。
-  - 新增 `PUT /settings/compress_threshold`（admin 权限），校验范围 **0.5 ~ 0.95**，越界返回 400。
+  - 新增 `PUT /settings/compress_threshold`（admin 权限），校验范围 **0.3 ~ 0.9**，越界返回 400。
 
 ### 8. 前端识别（纳入本次）
 
