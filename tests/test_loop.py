@@ -178,3 +178,28 @@ async def test_iterative_compaction_reuses_previous_summary(ctx, fake_provider):
     # 压缩后历史以一条带前缀的摘要消息开头
     assert runner.history[0].content.startswith(SUMMARY_PREFIX)
     assert runner.compressed is True
+
+
+@pytest.mark.asyncio
+async def test_compaction_fallback_keeps_prev_summary_on_failure(ctx, fake_provider, monkeypatch):
+    """summarize 失败返回 None 时，应保留上一份摘要并保住尾部消息。"""
+    async def _fail(*a, **k):
+        return None
+    monkeypatch.setattr("sophclaw.agent.loop.summarize", _fail)
+
+    big = "字" * 1500
+    history = [make_summary_message("旧摘要正文")] + [
+        Message(role="user", content=big) for _ in range(6)
+    ]
+    provider = fake_provider([])  # 不会真正调用摘要（已被 patch）
+    runner = AgentRunner(ctx.agent, ctx, history=history, compress_threshold=0.5)
+    assert runner.context_limit == 1000
+    await runner._compress_if_needed(system="sys")
+
+    # 失败兜底：首条仍是带前缀的摘要消息（用 prev 重新包裹），且 runner.compressed=True
+    assert is_summary_message(runner.history[0])
+    assert runner.history[0].content.startswith(SUMMARY_PREFIX)
+    assert "旧摘要正文" in runner.history[0].content
+    # 尾部消息没有全部丢失
+    assert len(runner.history) >= 2
+    assert runner.compressed is True

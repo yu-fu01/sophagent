@@ -38,6 +38,7 @@ __all__ = [
 log = logging.getLogger(__name__)
 
 RETRYABLE_ATTEMPTS = 3
+TAIL_BUDGET_RATIO = 0.25  # 每次 LLM 摘要保护的尾部上下文占 context_limit 的比例
 
 
 def _resolve_context_limit(provider_name: str) -> int:
@@ -107,7 +108,7 @@ class AgentRunner:
     async def _summarize_oldest_half(self) -> None:
         """Layer 2: replace older turns with a structured LLM summary, protecting
         a token-budgeted tail and iteratively merging any prior summary."""
-        tail_budget = int(self.context_limit * 0.25)
+        tail_budget = int(self.context_limit * TAIL_BUDGET_RATIO)
         old, rest = split_for_summary(self.history, tail_budget)
         if not old:
             return
