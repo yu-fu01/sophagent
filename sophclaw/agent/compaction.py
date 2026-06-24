@@ -5,7 +5,7 @@
 - 结构化中文模板（活动任务 / 已完成 / 历史待办 ...）
 - 迭代式摘要合并（已有上一份摘要时做更新而非从头重摘）
 - token 预算尾部保护
-- 凭据脱敏（[REDACTED]）与温度锚定
+- 凭据脱敏（[REDACTED]）与时间锚定
 """
 
 from __future__ import annotations
@@ -134,22 +134,29 @@ def make_summary_message(summary: str) -> Message:
                    compressed=True)
 
 
+def _clip(text: str, limit: int = 2000) -> str:
+    return text if len(text) <= limit else text[:limit] + " …[已截断]"
+
+
 def serialize_turns(turns: list[Message]) -> str:
     """Serialize messages into summarizer input, keeping tool call/result detail."""
     lines: list[str] = []
     for m in turns:
         if m.role == "tool":
-            lines.append(f"[工具结果] {m.content[:2000]}")
+            lines.append(f"[工具结果] {_clip(m.content)}")
         elif m.tool_calls:
             calls = "; ".join(
                 f"{tc.name}({json.dumps(tc.arguments, ensure_ascii=False)[:300]})"
                 for tc in m.tool_calls
             )
             text = (m.content or "").strip()
-            lines.append(f"[assistant] {text[:2000]}" + (f"\n  调用工具: {calls}" if calls else ""))
+            lines.append(f"[assistant] {_clip(text)}" + (f"\n  调用工具: {calls}" if calls else ""))
         elif m.content:
-            lines.append(f"[{m.role}] {m.content[:2000]}")
-    return "\n".join(lines)[:60_000]
+            lines.append(f"[{m.role}] {_clip(m.content)}")
+    joined = "\n".join(lines)
+    if len(joined) > 60_000:
+        joined = joined[:60_000] + "\n…[更早内容已截断]"
+    return joined
 
 
 def split_for_summary(
@@ -190,7 +197,7 @@ def build_summary_prompt(
     budget = _summary_budget(turns)
     today = today or date.today().isoformat()
     temporal = (
-        f"\n温度锚定：今天是 {today}。已经完成的动作请写成带日期的过去式事实，"
+        f"\n时间锚定：今天是 {today}。已经完成的动作请写成带日期的过去式事实，"
         "不要把已完成的事写得像还需要做；也不要给尚未发生的工作编造日期。"
     )
     focus_rule = (
