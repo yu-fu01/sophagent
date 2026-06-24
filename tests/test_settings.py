@@ -189,3 +189,33 @@ async def test_compress_threshold_override_and_clamp(tmp_path, monkeypatch):
     finally:
         await db.close()
         config_mod.reset_config()
+
+
+# -- /api/settings 压缩阈值读写 --------------------------------------------
+
+def test_settings_get_includes_compress_threshold(client, bob):
+    r = client.get("/api/settings", headers=bob)
+    assert r.status_code == 200
+    body = r.json()
+    assert "compress_threshold" in body
+    assert "default_compress_threshold" in body
+
+
+def test_put_compress_threshold_admin_ok(client, admin, bob):
+    r = client.put("/api/settings/compress_threshold",
+                   json={"compress_threshold": 0.7}, headers=admin)
+    assert r.status_code == 200
+    got = client.get("/api/settings", headers=bob).json()
+    assert got["compress_threshold"] == 0.7
+
+
+def test_put_compress_threshold_out_of_range_400(client, admin):
+    r = client.put("/api/settings/compress_threshold",
+                   json={"compress_threshold": 0.99}, headers=admin)
+    assert r.status_code == 400
+
+
+def test_put_compress_threshold_non_admin_forbidden(client, bob):
+    r = client.put("/api/settings/compress_threshold",
+                   json={"compress_threshold": 0.6}, headers=bob)
+    assert r.status_code in (401, 403)

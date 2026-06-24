@@ -6,7 +6,9 @@ from fastapi import APIRouter, Depends, HTTPException, Request
 from pydantic import BaseModel
 
 from ..auth import require_admin, require_user
-from ..config import effective_max_upload_bytes, get_config
+from ..config import (effective_max_upload_bytes, effective_compress_threshold,
+                      get_config, COMPRESS_THRESHOLD_MIN, COMPRESS_THRESHOLD_MAX,
+                      DEFAULT_COMPRESS_THRESHOLD)
 
 router = APIRouter()
 
@@ -18,6 +20,10 @@ class MaxUploadBytesBody(BaseModel):
     max_upload_bytes: int
 
 
+class CompressThresholdBody(BaseModel):
+    compress_threshold: float
+
+
 @router.get("")
 async def get_settings(request: Request, _user=Depends(require_user)):
     db = request.app.state.db
@@ -26,6 +32,10 @@ async def get_settings(request: Request, _user=Depends(require_user)):
         "default_max_upload_bytes": get_config().max_upload_bytes,
         "min_bytes": MIN_UPLOAD_BYTES,
         "max_bytes": MAX_UPLOAD_CEILING,
+        "compress_threshold": await effective_compress_threshold(db),
+        "default_compress_threshold": DEFAULT_COMPRESS_THRESHOLD,
+        "compress_threshold_min": COMPRESS_THRESHOLD_MIN,
+        "compress_threshold_max": COMPRESS_THRESHOLD_MAX,
     }
 
 
@@ -37,4 +47,15 @@ async def set_max_upload_bytes(body: MaxUploadBytesBody, request: Request,
         raise HTTPException(400, f"max_upload_bytes must be between {MIN_UPLOAD_BYTES} "
                                  f"and {MAX_UPLOAD_CEILING} bytes")
     await request.app.state.db.set_setting("max_upload_bytes", str(value), admin["id"])
+    return {"ok": True}
+
+
+@router.put("/compress_threshold")
+async def set_compress_threshold(body: CompressThresholdBody, request: Request,
+                                 admin=Depends(require_admin)):
+    value = body.compress_threshold
+    if value < COMPRESS_THRESHOLD_MIN or value > COMPRESS_THRESHOLD_MAX:
+        raise HTTPException(400, f"compress_threshold must be between "
+                                 f"{COMPRESS_THRESHOLD_MIN} and {COMPRESS_THRESHOLD_MAX}")
+    await request.app.state.db.set_setting("compress_threshold", str(value), admin["id"])
     return {"ok": True}
