@@ -92,3 +92,42 @@ async def test_summarize_returns_none_on_error():
             yield  # pragma: no cover
     out = await C.summarize(Boom(), "m", [Message(role="user", content="hi")])
     assert out is None
+
+
+# -- 凭据脱敏接入（入口 serialize_turns + 出口 summarize）--------------------
+
+from typing import AsyncIterator as _AI
+
+
+def test_serialize_turns_redacts_credentials():
+    turns = [
+        Message(role="user", content="我的 key 是 sk-test-DO-NOT-COMMIT-9f8a7b6c5d4e3f2a1b0c"),
+        Message(role="user", content="连接串 postgres://admin:Pa55w0rd!2026@db.internal:5432/x"),
+        Message(role="user", content="还有 AKIA1234567890SOPHNET"),
+    ]
+    s = C.serialize_turns(turns)
+    assert "sk-test-DO-NOT-COMMIT-9f8a7b6c5d4e3f2a1b0c" not in s
+    assert "Pa55w0rd!2026" not in s
+    assert "AKIA1234567890SOPHNET" not in s
+    assert "[REDACTED]" in s
+
+
+class _LeakyProvider:
+    """模拟 LLM 在摘要里回吐了凭据。"""
+    async def chat(self, *, model, system, messages, tools=None,
+                   temperature=None, max_tokens=None, thinking=None) -> _AI:
+        leaked = ("## 关键上下文\nAPI key 是 sk-test-DO-NOT-COMMIT-9f8a7b6c5d4e3f2a1b0c，"
+                  "连接串 postgres://admin:Pa55w0rd!2026@db.internal:5432/x，"
+                  "还有 AKIA1234567890SOPHNET")
+        turn = AssistantTurn(content=leaked, input_tokens=1, output_tokens=1)
+        yield StreamEvent("turn_done", turn=turn)
+
+
+@pytest.mark.asyncio
+async def test_summarize_redacts_leaked_credentials_in_output():
+    out = await C.summarize(_LeakyProvider(), "m", [Message(role="user", content="hi")])
+    assert out is not None
+    assert "sk-test-DO-NOT-COMMIT-9f8a7b6c5d4e3f2a1b0c" not in out
+    assert "Pa55w0rd!2026" not in out
+    assert "AKIA1234567890SOPHNET" not in out
+    assert "[REDACTED]" in out
