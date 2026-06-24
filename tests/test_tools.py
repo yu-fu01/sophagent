@@ -80,6 +80,15 @@ def test_truncate(ctx):
     assert len(out) < 35_000 and "truncated" in out
 
 
+def test_common_cron_descriptions():
+    from sophclaw.cron.schedule import parse_schedule
+
+    assert parse_schedule("15 * * * *")["display"] == "每小时第 15 分钟"
+    assert parse_schedule("0 * * * *")["display"] == "每小时整点"
+    assert parse_schedule("0 9 * * *")["display"] == "每天 09:00"
+    assert parse_schedule("0 9 * * 1")["display"] == "每周一 09:00"
+
+
 async def test_web_fetch_ssrf_blocked(ctx):
     out = await registry.dispatch("web_fetch", {"url": "http://127.0.0.1:8000/"}, ctx)
     assert "non-public" in out

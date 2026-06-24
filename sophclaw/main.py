@@ -63,7 +63,16 @@ async def lifespan(app: FastAPI):
     await registry.refresh()
     if not registry.names():
         log.warning("no model providers configured; set SOPHCLAW_PROVIDERS or providers.yaml")
+
+    # Start cron ticker
+    from .cron.ticker import CronTicker
+    ticker = CronTicker(db, app.state)
+    await ticker.start()
+    app.state.cron_ticker = ticker
+
     yield
+
+    await ticker.stop()
     await db.close()
 
 

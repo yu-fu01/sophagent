@@ -4,6 +4,7 @@ from . import (
     agent_routes,
     auth_routes,
     commands_routes,
+    cron_routes,
     file_routes,
     group_routes,
     membership_routes,
@@ -28,4 +29,5 @@ def mount_routes(app: FastAPI) -> None:
     app.include_router(provider_routes.router, prefix="/api/providers", tags=["providers"])
     app.include_router(settings_routes.router, prefix="/api/settings", tags=["settings"])
     app.include_router(commands_routes.router, prefix="/api/commands", tags=["commands"])
+    app.include_router(cron_routes.router, prefix="/api/cron/jobs", tags=["cron"])
     app.include_router(openai_compat.router, prefix="/v1", tags=["openai-compat"])

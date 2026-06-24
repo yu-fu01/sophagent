@@ -38,6 +38,7 @@ class ToolContext:
     db: Any = None  # Database (set when running inside the server)
     skill_store: Any = None  # SkillStore
     services: dict[str, Any] = field(default_factory=dict)
+    session_id: Optional[str] = None  # 当前会话 id（定时任务结果可绑定到此处）
 
 
 _TOOLS: dict[str, ToolSpec] = {}

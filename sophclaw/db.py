@@ -101,6 +101,29 @@ CREATE TABLE IF NOT EXISTS settings (
   updated_at TEXT,
   updated_by INTEGER
 );
+CREATE TABLE IF NOT EXISTS cron_jobs (
+  id TEXT PRIMARY KEY,
+  user_id INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+  agent_id INTEGER NOT NULL REFERENCES agents(id),
+  name TEXT NOT NULL DEFAULT '',
+  prompt TEXT NOT NULL DEFAULT '',
+  schedule_json TEXT NOT NULL,
+  schedule_display TEXT NOT NULL DEFAULT '',
+  repeat_times INTEGER,
+  repeat_completed INTEGER NOT NULL DEFAULT 0,
+  enabled INTEGER NOT NULL DEFAULT 1,
+  state TEXT NOT NULL DEFAULT 'scheduled',
+  last_run_at TEXT,
+  next_run_at TEXT,
+  last_status TEXT,
+  last_error TEXT,
+  output TEXT,
+  session_id TEXT REFERENCES sessions(id) ON DELETE SET NULL,
+  created_at TEXT NOT NULL,
+  updated_at TEXT NOT NULL
+);
+CREATE INDEX IF NOT EXISTS idx_cron_jobs_next_run ON cron_jobs(next_run_at);
+CREATE INDEX IF NOT EXISTS idx_cron_jobs_user ON cron_jobs(user_id);
 """
 
 
@@ -162,6 +185,12 @@ class Database:
         for col in ("override_provider", "override_model", "thinking_mode"):
             if session_cols and col not in session_cols:
                 await self._exec(f"ALTER TABLE sessions ADD COLUMN {col} TEXT")
+        # Migrate cron_jobs: add session_id column
+        cron_cols = await self._columns("cron_jobs")
+        if cron_cols and "session_id" not in cron_cols:
+            await self.conn.execute("PRAGMA foreign_keys=OFF")
+            await self._exec("ALTER TABLE cron_jobs ADD COLUMN session_id TEXT")
+            await self.conn.execute("PRAGMA foreign_keys=ON")
 
     async def close(self) -> None:
         if self.conn:

@@ -27,6 +27,7 @@ async def build_runner(
     override_provider: Optional[str] = None,
     override_model: Optional[str] = None,
     thinking_mode: Optional[str] = None,
+    session_id: Optional[str] = None,
 ) -> AgentRunner:
     cfg = get_config()
     memories = [r["content"] for r in await db.memory_list(user_id)] if db else []
@@ -38,6 +39,7 @@ async def build_runner(
         db=db,
         skill_store=skill_store,
         services={"memories": memories},
+        session_id=session_id,
     )
     eff_provider = agent.provider
     if override_provider:

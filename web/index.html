@@ -263,6 +263,8 @@ async function boot() {
   await loadSessions();
   // 预加载命令列表供前端浮层使用
   _ensureCommands();
+  // 启动 cron 轮询：后台定时任务完成后自动刷新当前会话
+  startCronPoller();
 }
 
 // ---- sessions -------------------------------------------------------------
@@ -309,33 +311,91 @@ async function openSession(sid) {
   $("ub-tok").textContent = "↑0 ↓0";
   $("ub-ctx").textContent = "ctx 0/0";
   $("ub-cache").textContent = "cache —";
-  const msgs = $("msgs"); msgs.innerHTML = "";
-  for (const m of detail.messages) {
-    if (m.role === "user" && !m.content.startsWith("[Earlier conversation summary]")) {
-      addBubble("user", m.content, m.id);
-      lastUserMid = m.id; lastUserText = m.content;
-    }
-    else if (m.role === "assistant") {
-      const tcs = m.tool_calls || [];
-      if (m.reasoning || tcs.length) {            // history: collapsed worklog
-        const wl = ensureWorklog(); delete wl.dataset.live;
-        if (m.reasoning) {
-          const body = worklogThinkingCard(wl).querySelector(".think-body");
-          body.dataset.raw = m.reasoning; body.innerHTML = mdToHtml(m.reasoning); renderMathInElement(body);
-        }
-        for (const tc of tcs) appendToolRow(wl, tc.name, JSON.stringify(tc.arguments, null, 2), null, true);
-        wl.open = false; syncWorklogSummary(wl);
-      }
-      if (m.content) addBubble("assistant", m.content);
-    }
+  renderMessageList(detail);
+  await loadSessions();
+  $("msgs").scrollTop = $("msgs").scrollHeight;
+}
+
+// ---- 消息渲染（openSession 与 cron 轮询刷新共用）--------------------------
+let lastRenderedMsgCount = 0;   // 当前 session 已渲染的消息条数（用于检测后台新增）
+function renderMessageList(detail) {
+  const msgs = $("msgs");
+  msgs.innerHTML = "";
+  lastUserMid = null; lastUserText = "";
+  for (const m of detail.messages) renderMessage(m);
+  refreshReeditBtn();
+  lastRenderedMsgCount = detail.messages.length;
+}
+function renderMessage(m) {
+  if (m.role === "user" && !m.content.startsWith("[Earlier conversation summary]")) {
+    addBubble("user", m.content, m.id);
+    lastUserMid = m.id; lastUserText = m.content;
   }
-  // 最新用户气泡的操作行追加「重新编辑」（与「恢复」并排）
+  else if (m.role === "assistant") {
+    const tcs = m.tool_calls || [];
+    if (m.reasoning || tcs.length) {            // history: collapsed worklog
+      const wl = ensureWorklog(); delete wl.dataset.live;
+      if (m.reasoning) {
+        const body = worklogThinkingCard(wl).querySelector(".think-body");
+        body.dataset.raw = m.reasoning; body.innerHTML = mdToHtml(m.reasoning); renderMathInElement(body);
+      }
+      for (const tc of tcs) appendToolRow(wl, tc.name, JSON.stringify(tc.arguments, null, 2), null, true);
+      wl.open = false; syncWorklogSummary(wl);
+    }
+    if (m.content) addBubble("assistant", m.content);
+  }
+}
+function refreshReeditBtn() {
+  // 「重新编辑」只挂在最新用户气泡上；重渲染后先清掉旧的再挂到最新的
+  document.querySelectorAll(".reedit-btn").forEach(b => b.remove());
   if (lastUserMid) {
     const ar = document.querySelector(`.msg-user-actions[data-mid="${lastUserMid}"]`);
     if (ar) ar.appendChild(makeReeditBtn());
   }
-  await loadSessions();
-  msgs.scrollTop = msgs.scrollHeight;
+}
+
+// ---- cron 轮询：后台定时任务完成后，自动刷新当前会话 ----------------------
+// 定时任务执行后会把结果 append 到绑定的 session；这里轮询该 session 绑定的
+// 任务的 last_run_at，变化且确实有新消息时才静默重渲染，无需手动刷新页面。
+let _cronPollTimer = null;
+let _cronLastRun = {};          // {jobId: last_run_at} —— 仅记录，首次见到不触发
+
+function startCronPoller(interval = 8000) {
+  if (_cronPollTimer) return;
+  _cronPollTimer = setInterval(cronPoll, interval);
+}
+function stopCronPoller() {
+  if (_cronPollTimer) { clearInterval(_cronPollTimer); _cronPollTimer = null; }
+}
+
+async function cronPoll() {
+  if (streaming || editing || !currentSid) return;
+  let jobs = [];
+  try {
+    const data = await apiJson("/api/cron?include_disabled=true");
+    jobs = (data.jobs || []).filter(j => j.session_id === currentSid);
+  } catch (e) { return; }
+  if (!jobs.length) return;
+
+  // 检测绑定的任务是否有新的 last_run_at
+  let changed = false;
+  for (const j of jobs) {
+    const key = j.last_run_at || "";
+    if (_cronLastRun[j.id] !== undefined && _cronLastRun[j.id] !== key) changed = true;
+    _cronLastRun[j.id] = key;
+  }
+  if (!changed) return;
+
+  // 任务刚跑完：仅当 session 真的多了消息才重渲染（避免空响应/重复刷新）
+  try {
+    const detail = await apiJson("/api/sessions/" + currentSid);
+    if (detail.messages.length === lastRenderedMsgCount) return;
+    const msgs = $("msgs");
+    const nearBottom = msgs.scrollHeight - msgs.scrollTop - msgs.clientHeight < 120;
+    renderMessageList(detail);
+    if (nearBottom) msgs.scrollTop = msgs.scrollHeight;
+    await loadSessions();
+  } catch (e) { /* ignore */ }
 }
 
 // ---- markdown 渲染 + LaTeX 数学见 markdown.js（escapeHtml/mdToHtml/renderMathInElement）----
@@ -348,7 +408,7 @@ function makeRestoreBtn(mid) {
 }
 function makeReeditBtn() {
   const b = document.createElement("button");
-  b.className = "ghost"; b.textContent = "✎ 重新编辑";
+  b.className = "ghost reedit-btn"; b.textContent = "✎ 重新编辑";
   b.onclick = startReedit;
   return b;
 }
@@ -487,6 +547,8 @@ async function sendMsg(consumeQueued = false) {
 
   // ── 斜杠命令：不走 SSE，直接发 API 拿 JSON ──────────
   if (isSlashCmd) {
+    // 重新编辑场景已在上方清空输入框；此处兜底清空，避免发送后残留
+    if (!editing) $("input").value = "";
     try {
       const resp = await api(`/api/sessions/${currentSid}/chat`, {method: "POST", body: {content}});
       const result = await expectJson(resp);
@@ -660,6 +722,11 @@ let _cmdList = [];           // 命令列表缓存
 let _cmdFiltered = [];       // 当前过滤结果
 let _cmdSel = -1;            // 当前选中索引
 let _cmdCache = null;        // 命令列表 promise 缓存
+// 二级建议（subcommand / suggestion）状态
+let _suggestions = [];       // 当前建议列表
+let _suggestionCmd = null;   // 哪个命令的建议
+let _suggestionLevel = 0;    // 0=none, 1=command palette, 2=suggestion palette
+let _suggestionSource = [];  // 未过滤的二级建议
 
 async function _ensureCommands() {
   if (_cmdCache) return _cmdCache;
@@ -693,6 +760,10 @@ function showCmdPalette(prefix) {
 function hideCmdPalette() {
   $("cmd-palette").style.display = "none";
   _cmdFiltered = [];
+  _suggestions = [];
+  _suggestionSource = [];
+  _suggestionCmd = null;
+  _suggestionLevel = 0;
   _cmdSel = -1;
 }
 
@@ -701,6 +772,10 @@ function cmdPaletteVisible() {
 }
 
 function _acceptCmd(idx) {
+  if (_suggestionLevel === 2) {
+    _acceptSuggestion(idx);
+    return;
+  }
   if (idx < 0 || idx >= _cmdFiltered.length) return;
   const cmd = _cmdFiltered[idx];
   // 替换输入框内容为 /cmd_name + space
@@ -713,16 +788,76 @@ function _acceptCmd(idx) {
   $("input").value = newBefore + after;
   $("input").focus();
   hideCmdPalette();
+  // 如果该命令有建议，触发 input 事件显示二级建议
+  $("input").dispatchEvent(new Event("input"));
+}
+
+function _acceptSuggestion(idx) {
+  if (idx < 0 || idx >= _suggestions.length) return;
+  const sug = _suggestions[idx];
+  const val = $("input").value;
+  const cursor = $("input").selectionStart || val.length;
+  const before = val.slice(0, cursor);
+  const after = val.slice(cursor);
+  // 把二级建议插入为第一个参数："/cmd " 或 "/cmd par" -> "/cmd label "
+  const newBefore = before.replace(/^(\/\w+\s+)\S*$/, "$1" + sug.label + " ");
+  $("input").value = newBefore + after;
+  $("input").focus();
+  hideCmdPalette();
+}
+
+async function fetchSuggestions(cmdName) {
+  try {
+    const resp = await api(`/api/commands/suggestions?cmd=${encodeURIComponent(cmdName)}&session_id=${currentSid || ''}`);
+    const data = await resp.json();
+    return data.suggestions || [];
+  } catch (e) {
+    return [];
+  }
+}
+
+function _filterSuggestions(suggestions, query) {
+  const lower = (query || "").toLowerCase();
+  if (!lower) return suggestions;
+  return suggestions.filter(s => (s.label || "").toLowerCase().startsWith(lower));
+}
+
+function showSuggestions(cmdName, suggestions, query = "") {
+  const p = $("cmd-palette"), items = $("cmd-palette-items");
+  _suggestionSource = suggestions;
+  const visible = _filterSuggestions(suggestions, query);
+  if (!visible.length) { p.style.display = "none"; return; }
+
+  _suggestions = visible;
+  _suggestionCmd = cmdName;
+  _suggestionLevel = 2;
+  _cmdSel = 0;
+
+  items.innerHTML = visible.map((s, i) =>
+    `<div class="citem${i === 0 ? " sel" : ""}" data-idx="${i}">` +
+      `<span class="cn">${s.label}</span>` +
+      `<span class="cd">${s.description}</span>` +
+      (s.args_hint ? `<span class="ch">${s.args_hint}</span>` : '') +
+    `</div>`
+  ).join("");
+
+  items.querySelectorAll(".citem").forEach(el => {
+    el.onclick = () => _acceptSuggestion(+el.dataset.idx);
+    el.onmouseenter = () => { _cmdSel = +el.dataset.idx; _highlightSel(); };
+  });
+  p.style.display = "block";
 }
 
 function _selectNext() {
-  if (!_cmdFiltered.length) return;
-  _cmdSel = Math.min(_cmdSel + 1, _cmdFiltered.length - 1);
+  const len = _suggestionLevel === 2 ? _suggestions.length : _cmdFiltered.length;
+  if (!len) return;
+  _cmdSel = Math.min(_cmdSel + 1, len - 1);
   _highlightSel();
 }
 
 function _selectPrev() {
-  if (!_cmdFiltered.length) return;
+  const len = _suggestionLevel === 2 ? _suggestions.length : _cmdFiltered.length;
+  if (!len) return;
   _cmdSel = Math.max(_cmdSel - 1, 0);
   _highlightSel();
 }
@@ -734,17 +869,59 @@ function _highlightSel() {
   if (selEl) selEl.scrollIntoView({ block: "nearest" });
 }
 
-// ---- 输入事件：命令检测 + 命令面板 -------------------------------------------
-$("input").addEventListener("input", () => {
+// ---- 输入事件：命令检测 + 命令面板 + 二级建议 -------------------------------------------
+// 注意：下面有一段完全替换 textarea 的代码也会绑 input 事件，两处都需要更新
+
+// 第一个 input 监听器（页面初始 textarea）
+$("input").addEventListener("input", onInputChange);
+
+// 新增：共享的 input 处理函数
+function onInputChange() {
   const val = $("input").value;
   const cursor = $("input").selectionStart || val.length;
   const beforeCursor = val.slice(0, cursor);
-  // 行首为 / 且当前 word 只包含字母（无空格）→ 显示命令补全
+
+  // Pattern 1: "/cmdname " or "/cmdname prefix" → show/filter second-level suggestions.
+  const cmdArgMatch = beforeCursor.match(/^\/(\w+)\s+(\S*)$/);
+  if (cmdArgMatch && !streaming) {
+    const cmdName = cmdArgMatch[1];
+    const query = cmdArgMatch[2] || "";
+    _ensureCommands().then(() => {
+      // 再次检查输入状态
+      const v = $("input").value;
+      const cur = $("input").selectionStart || v.length;
+      const bc = v.slice(0, cur);
+      const csm = bc.match(/^\/(\w+)\s+(\S*)$/);
+      if (!csm || csm[1] !== cmdName) { hideCmdPalette(); return; }
+      const latestQuery = csm[2] || "";
+      const cmd = _cmdList.find(c => c.name === cmdName);
+      if (cmd && cmd.has_suggestions) {
+        if (cmd.suggestions) {
+          // Static suggestions (already loaded from command list)
+          showSuggestions(cmdName, cmd.suggestions, latestQuery);
+        } else {
+          // Dynamic suggestions → fetch from API
+          fetchSuggestions(cmdName).then(sugs => {
+            // 再次确认输入状态没变
+            const v2 = $("input").value;
+            const cur2 = $("input").selectionStart || v2.length;
+            const csm2 = v2.slice(0, cur2).match(/^\/(\w+)\s+(\S*)$/);
+            if (csm2 && csm2[1] === cmdName) {
+              showSuggestions(cmdName, sugs, csm2[2] || "");
+            }
+          });
+        }
+      } else {
+        hideCmdPalette();
+      }
+    });
+    return;
+  }
+
+  // Pattern 2: "/abc" (no space, partial match) → show command palette
   const m = beforeCursor.match(/^\/(\w*)$/);
   if (m && !streaming) {
-    // 异步加载命令列表；加载完成后尝试弹出
     _ensureCommands().then(() => {
-      // 再次检查输入状态，避免异步期间用户已清空输入
       const v = $("input").value;
       const cur = $("input").selectionStart || v.length;
       const bc = v.slice(0, cur);
@@ -754,7 +931,7 @@ $("input").addEventListener("input", () => {
   } else {
     hideCmdPalette();
   }
-});
+}
 
 // 全局点击关闭命令面板
 document.addEventListener("mousedown", e => {
@@ -777,24 +954,8 @@ newInput.placeholder = oldInput.placeholder;
 newInput.value = "";
 // 把旧的 data-* 属性也带过去
 oldInput.parentNode.replaceChild(newInput, oldInput);
-// 3) 新 textarea 上绑 input 事件（命令浮层检测）
-newInput.addEventListener("input", () => {
-  const val = $("input").value;
-  const cursor = $("input").selectionStart || val.length;
-  const beforeCursor = val.slice(0, cursor);
-  const m = beforeCursor.match(/^\/(\w*)$/);
-  if (m && !streaming) {
-    _ensureCommands().then(() => {
-      const v = $("input").value;
-      const cur = $("input").selectionStart || v.length;
-      const bc = v.slice(0, cur);
-      const mm = bc.match(/^\/(\w*)$/);
-      if (mm) showCmdPalette(mm[1]); else hideCmdPalette();
-    });
-  } else {
-    hideCmdPalette();
-  }
-});
+// 3) 新 textarea 上绑 input 事件（命令浮层检测 + 二级建议）
+newInput.addEventListener("input", onInputChange);
 // 4) 新 textarea 上绑 keydown
 $("input")._keydownHandler = e => {
   if (cmdPaletteVisible()) {

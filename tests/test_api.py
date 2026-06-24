@@ -2,10 +2,11 @@
 
 import asyncio
 import threading
+import time
 
 from sophclaw.models import AssistantTurn, StreamEvent, ToolCall
 
-from conftest import sse_events  # noqa: F401  (shared harness helper)
+from conftest import make_user, sse_events  # noqa: F401  (shared harness helper)
 
 SKILL_MD = """---
 name: greet
@@ -263,6 +264,98 @@ def test_retry_replaces_last_assistant_without_duplicating_user(client, bob, age
         [("user", "question")],
         [("user", "question")],
     ]
+
+
+def test_cron_slash_create_and_set_parse_quoted_arguments(client, bob, agent_id):
+    sid = client.post("/api/sessions", json={"agent_id": agent_id}, headers=bob).json()["id"]
+    resp = client.post(
+        f"/api/sessions/{sid}/chat",
+        json={
+            "content": (
+                f"/cron create {agent_id} 'every 5m' '生成 每日报告' "
+                "--name '每日 报告' --repeat 3"
+            ),
+        },
+        headers=bob,
+    )
+    assert resp.status_code == 200
+    assert "Cron job created" in resp.json()["content"]
+
+    jobs = client.get("/api/cron/jobs?include_disabled=true", headers=bob).json()["jobs"]
+    assert len(jobs) == 1
+    job = jobs[0]
+    assert job["name"] == "每日 报告"
+    assert job["prompt"] == "生成 每日报告"
+    assert job["schedule"] == {"kind": "interval", "minutes": 5, "display": "every 5m"}
+    assert job["repeat"] == {"times": 3, "completed": 0}
+    assert job["session_id"] == sid
+
+    resp = client.post(
+        f"/api/sessions/{sid}/chat",
+        json={"content": f"/cron set {job['id']} schedule 'every 10m'"},
+        headers=bob,
+    )
+    assert resp.status_code == 200
+    assert "updated" in resp.json()["content"]
+
+    updated = client.get(f"/api/cron/jobs/{job['id']}", headers=bob).json()["job"]
+    assert updated["schedule"] == {"kind": "interval", "minutes": 10, "display": "every 10m"}
+
+
+def test_slash_command_suggestions_and_model_listing(client, bob, agent_id):
+    from sophclaw.providers.registry import get_registry
+
+    get_registry()._models_cache["test"] = (time.monotonic(), ["test-model", "alt-model"])
+    sid = client.post("/api/sessions", json={"agent_id": agent_id}, headers=bob).json()["id"]
+
+    commands = client.get("/api/commands", headers=bob).json()
+    cron = next(c for c in commands if c["name"] == "cron")
+    assert cron["has_suggestions"] is True
+    assert [s["label"] for s in cron["suggestions"]] == [
+        "list", "create", "pause", "resume", "delete", "trigger", "set",
+    ]
+    model = next(c for c in commands if c["name"] == "model")
+    assert model["has_suggestions"] is True
+
+    suggestions = client.get(
+        f"/api/commands/suggestions?cmd=model&session_id={sid}", headers=bob,
+    ).json()["suggestions"]
+    assert [s["label"] for s in suggestions] == ["test-model", "alt-model"]
+
+    resp = client.post(f"/api/sessions/{sid}/chat", json={"content": "/model"}, headers=bob)
+    assert resp.status_code == 200
+    content = resp.json()["content"]
+    assert "可用模型" in content
+    assert "`test-model`" in content and "`alt-model`" in content
+
+    resp = client.post(f"/api/sessions/{sid}/chat", json={"content": "/model alt-model"}, headers=bob)
+    assert resp.status_code == 200
+    assert "alt-model" in resp.json()["content"]
+    assert client.get(f"/api/sessions/{sid}", headers=bob).json()["override_model"] == "alt-model"
+
+
+def test_cron_api_rejects_inaccessible_session_and_agent(client, admin, bob, agent_id):
+    carol = make_user(client, admin, "carol", "carolpw1")
+    carol_agent_id = client.post("/api/agents", json={
+        "name": "carol-helper", "system_prompt": "p", "provider": "test", "model": "m", "tools": [],
+    }, headers=carol).json()["id"]
+    carol_sid = client.post("/api/sessions", json={"agent_id": carol_agent_id}, headers=carol).json()["id"]
+
+    resp = client.post("/api/cron/jobs", headers=bob, json={
+        "agent_id": agent_id,
+        "prompt": "hello",
+        "schedule": "30m",
+        "session_id": carol_sid,
+    })
+    assert resp.status_code == 404
+
+    job = client.post("/api/cron/jobs", headers=bob, json={
+        "agent_id": agent_id,
+        "prompt": "hello",
+        "schedule": "30m",
+    }).json()["job"]
+    resp = client.patch(f"/api/cron/jobs/{job['id']}", headers=bob, json={"agent_id": carol_agent_id})
+    assert resp.status_code == 403
 
 
 def test_skill_self_evolution_via_chat(client, admin, bob, agent_id):

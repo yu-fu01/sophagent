@@ -20,6 +20,14 @@ log = logging.getLogger(__name__)
 # ---------------------------------------------------------------------------
 
 @dataclass
+class Suggestion:
+    """A single suggestion item shown in the second-level palette."""
+    label: str                       # what gets inserted (e.g. "claude-sonnet-4-6", "list")
+    description: str                 # brief explanation
+    args_hint: str = ""              # optional: argument hint after the label
+
+
+@dataclass
 class CommandDef:
     """Definition of a single slash command."""
 
@@ -29,6 +37,11 @@ class CommandDef:
     aliases: tuple[str, ...] = ()      # alternative names
     args_hint: str = ""                # argument placeholder: "<model>", "[text]"
     handler: Optional[Callable[..., Awaitable[dict[str, Any]]]] = None  # async handler
+    # NEW: static subcommand suggestions (for /cron, etc.)
+    subcommands: tuple[Suggestion, ...] = ()
+    # NEW: dynamic suggestion resolver (for /model, etc.)
+    #   Signature: async (session: dict | None, ctx: dict) -> list[Suggestion]
+    suggestion_resolver: Optional[Callable[..., Awaitable[list[Suggestion]]]] = None
 
 
 # ---------------------------------------------------------------------------
@@ -62,13 +75,21 @@ def get_commands() -> list[dict[str, Any]]:
         if cmd.name in seen:
             continue
         seen.add(cmd.name)
-        result.append({
+        entry: dict[str, Any] = {
             "name": cmd.name,
             "description": cmd.description,
             "category": cmd.category,
             "args_hint": cmd.args_hint,
             "aliases": list(cmd.aliases),
-        })
+            "has_suggestions": bool(cmd.subcommands) or cmd.suggestion_resolver is not None,
+        }
+        # Include static suggestions inline
+        if cmd.subcommands:
+            entry["suggestions"] = [
+                {"label": s.label, "description": s.description, "args_hint": s.args_hint}
+                for s in cmd.subcommands
+            ]
+        result.append(entry)
     return result
 
 
