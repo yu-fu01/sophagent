@@ -42,6 +42,14 @@ class Config:
     max_skill_file_bytes: int = 256 * 1024
     memory_max_items: int = 50
     memory_max_chars: int = 500
+    # WebSocket DNS-rebinding defence: when non-empty, the gateway only accepts
+    # handshakes whose Host header matches one of these (host or host:port).
+    # Empty => accept any host (development / tests).
+    allowed_hosts: tuple[str, ...] = ()
+    # Detach→reap grace window (seconds) for a WebSocket that disconnects
+    # mid-turn: the turn keeps running; if no client reconnects in this window
+    # the session state is reaped (DB history already persisted).
+    ws_grace_seconds: float = 60.0
 
     @property
     def db_path(self) -> Path:
@@ -128,6 +136,11 @@ def load_config() -> Config:
         max_concurrent_turns=int(os.environ.get("SOPHCLAW_MAX_CONCURRENT_TURNS", "32")),
         max_upload_bytes=int(os.environ.get("SOPHCLAW_MAX_UPLOAD_BYTES", str(10 * 1024 * 1024))),
         delegate_concurrency=int(os.environ.get("SOPHCLAW_DELEGATE_CONCURRENCY", "4")),
+        allowed_hosts=tuple(
+            h for h in
+            (os.environ.get("SOPHCLAW_ALLOWED_HOSTS") or "").split(",") if h
+        ),
+        ws_grace_seconds=float(os.environ.get("SOPHCLAW_WS_GRACE_SECONDS", "60")),
     )
     cfg.skills_dir.mkdir(parents=True, exist_ok=True)
     cfg.workspaces_dir.mkdir(parents=True, exist_ok=True)

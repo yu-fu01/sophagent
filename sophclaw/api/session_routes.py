@@ -1,17 +1,15 @@
 import asyncio
 import json
-import logging
 import uuid
 
 from fastapi import APIRouter, Depends, HTTPException, Request
 from fastapi.responses import JSONResponse, StreamingResponse
 
-from ..agent.runtime import build_runner
+from ..agent.turn import pre_submit, run_turns
 from ..auth import require_user
-from ..models import AgentDef, ChatRequest, Message, SessionCreate, SessionOverridePatch, TruncateRequest
+from ..models import ChatRequest, SessionCreate, SessionOverridePatch, TruncateRequest
 from ..perms import can_access_group, can_manage_group
 
-log = logging.getLogger(__name__)
 router = APIRouter()
 
 
@@ -115,128 +113,49 @@ async def chat(session_id: str, req: ChatRequest, request: Request, user=Depends
     if session is None:
         raise HTTPException(404, "session not found")
 
-    # ── Slash command dispatch ──────────────────────────────────────────
-    if req.content and req.content.startswith("/"):
-        from ..agent.commands import dispatch_command
-        result = await dispatch_command(
-            req.content, db, session, user, manager, skill_store=state.skill_store,
-        )
-        if result["handled"]:
-            # 清空队列的命令：undo / retry / clear
-            cmd_name = req.content.lstrip("/").split(maxsplit=1)[0].lower()
-            if cmd_name in ("undo", "retry", "clear", "new"):
-                manager.clear_queue(session_id)
-            # retry_stream: truncate 已完成，直接用用户原文发起流式回复
-            if result.get("action") == "retry_stream":
-                return await _start_chat_turn(session_id, None, user, request)
-            # 持久化用户命令和 assistant 回复，这样 openSession 能看到它们
-            await db.append_messages(session_id, [
-                Message(role="user", content=req.content),
-                Message(role="assistant", content=result.get("content", "")),
-            ])
-            await db.touch_session(session_id)
-            return JSONResponse(result)
-
-    if manager.is_busy(session_id):
-        # ── 模型正在回复，消息入队（最多 3 条） ──────────────────────
-        if not manager.try_put(session_id, req.content):
-            raise HTTPException(429, "消息队列已满（最多 3 条），请等待当前回复完成后再试")
-        await db.touch_session(session_id)
-        return JSONResponse({"queued": True, "position": manager.pending_count(session_id)})
-
-    return await _start_chat_turn(session_id, req.content, user, request)
+    kind, payload = await pre_submit(
+        session_id=session_id, content=req.content, db=db, manager=manager,
+        skill_store=state.skill_store, user=user,
+    )
+    if kind == "slash":
+        return JSONResponse(payload)
+    if kind == "retry":
+        return await _start_sse_turn(session_id, None, user, request)
+    if kind == "queued":
+        return JSONResponse({"queued": True, "position": payload})
+    if kind == "queue_full":
+        raise HTTPException(429, "消息队列已满（最多 3 条），请等待当前回复完成后再试")
+    # kind == "start"
+    return await _start_sse_turn(session_id, payload, user, request)
 
 
-async def _start_chat_turn(
+async def _start_sse_turn(
     session_id: str,
     user_input: str | None,
     user: dict,
     request: Request,
 ) -> StreamingResponse:
-    """Start one chat turn, streaming SSE. After finishing, auto-drain queued messages."""
+    """Start one chat turn (and any queued follow-ups), streaming SSE.
+
+    Pumps the shared :func:`run_turns` event stream into an :class:`asyncio.Queue`
+    that the ``StreamingResponse`` drains. The turn core is identical to the
+    WebSocket ``prompt.submit`` path (see :mod:`sophclaw.gateway`)."""
     state = request.app.state
     db, manager = state.db, state.manager
-
     queue: asyncio.Queue = asyncio.Queue()
 
-    async def _run_one_turn(input_text: str | None) -> bool:
-        """Run one turn. Returns True if more queued messages follow.
-        When True, the next message is already drained: use _chain to
-        store it as the next iteration's input_text."""
-        session = await db.get_session(session_id, user["id"])
-        if session is None:
-            await queue.put({"type": "error", "message": "session was deleted"})
-            return False
-
+    async def _worker():
         try:
-            async with manager.semaphore:
-                history = await db.load_messages(session_id)
-
-                async def persist(msgs):
-                    await db.append_messages(session_id, msgs)
-
-                agent_row = await db.get_agent(session["agent_id"])
-                if agent_row is None:
-                    await queue.put({"type": "error", "message": "agent definition was deleted"})
-                    return False
-                agent = AgentDef.from_row(agent_row)
-
-                runner = await build_runner(
-                    db=db, skill_store=state.skill_store, agent=agent,
-                    user_id=user["id"], history=history, on_persist=persist,
-                    override_provider=session["override_provider"],
-                    override_model=session["override_model"],
-                    thinking_mode=session["thinking_mode"],
-                )
-                try:
-                    async for ev in runner.run(input_text):
-                        await queue.put(ev)
-                except asyncio.CancelledError:
-                    await queue.put({"type": "error", "message": "stopped by user"})
-                    raise
-                finally:
-                    if runner.compressed:
-                        await db.compact_session(session_id, runner.history)
-                    title = None if session["title"] or input_text is None else input_text[:60]
-                    await db.touch_session(session_id, title)
-        except asyncio.CancelledError:
-            return False
-        except Exception as e:
-            log.exception("chat worker failed")
-            await queue.put({"type": "error", "message": str(e)})
-        finally:
-            pass
-
-        # 检查下一条排队消息（不取走，只报告存在）
-        next_msg = manager.drain_queue(session_id)
-        if next_msg is not None:
-            # 取到了，作为 _chain 循环的下一个 input_text
-            # 通过闭包变量传回，避免二次 drain
-            _chain._next_input = next_msg
-            await queue.put({"type": "queued_next", "content": next_msg})
-            return True
-        else:
-            _chain._next_input = None
-            return False
-
-    async def _chain(initial_input: str | None):
-        """Chain multiple turns in one SSE stream."""
-        _chain._next_input = None
-        input_text = initial_input
-        try:
-            async with manager.lock_for(session_id):
-                while True:
-                    has_more = await _run_one_turn(input_text)
-                    if not has_more:
-                        break
-                    # _run_one_turn 已经把下一条消息 drain 到 _chain._next_input 了
-                    input_text = _chain._next_input
-                    if input_text is None:
-                        break
+            async for ev in run_turns(
+                session_id=session_id, user_input=user_input,
+                db=db, manager=manager, skill_store=state.skill_store,
+                user_id=user["id"],
+            ):
+                await queue.put(ev)
         finally:
             queue.put_nowait(None)
 
-    task = asyncio.create_task(_chain(user_input))
+    task = asyncio.create_task(_worker())
     manager.register_task(session_id, task)
 
     async def sse():

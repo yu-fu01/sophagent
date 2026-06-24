@@ -229,13 +229,7 @@ async function api(path, opts = {}) {
   return resp;
 }
 const apiJson = async (path, opts) => (await api(path, opts)).json();
-async function expectJson(resp) {
-  const contentType = resp.headers.get("content-type") || "";
-  if (!contentType.includes("application/json")) {
-    throw new Error(`Unexpected response type: ${contentType || "unknown"}`);
-  }
-  return resp.json();
-}
+
 
 // ---- auth -----------------------------------------------------------------
 async function doLogin() {
@@ -251,6 +245,7 @@ $("li-pass").addEventListener("keydown", e => { if (e.key === "Enter") doLogin()
 
 function logout() {
   token = ""; localStorage.removeItem("token"); me = null;
+  wsWantOpen = false; if (ws) { ws.close(); ws = null; }
   $("app").classList.add("hidden"); $("login").classList.remove("hidden");
 }
 
@@ -263,6 +258,7 @@ async function boot() {
   await loadSessions();
   // 预加载命令列表供前端浮层使用
   _ensureCommands();
+  gatewayConnect();
 }
 
 // ---- sessions -------------------------------------------------------------
@@ -334,6 +330,7 @@ async function openSession(sid) {
     const ar = document.querySelector(`.msg-user-actions[data-mid="${lastUserMid}"]`);
     if (ar) ar.appendChild(makeReeditBtn());
   }
+  await resumeSession();
   await loadSessions();
   msgs.scrollTop = msgs.scrollHeight;
 }
@@ -446,14 +443,182 @@ function closeWorklog(wl) {
   delete wl.dataset.live; wl.open = false; syncWorklogSummary(wl);
 }
 
-// ---- chat streaming ---------------------------------------------------------
+// ---- gateway (WebSocket, JSON-RPC) -----------------------------------------
+// Replaces the old SSE chat path: one bidirectional ws carries prompt.submit /
+// session.interrupt / session.resume plus the streamed event flow. Disconnecting
+// mid-turn detaches server-side (turn keeps running); reconnecting + resume
+// replays the missed events of the in-flight turn.
+let ws = null, wsWantOpen = false, wsBackoff = 0;
+let reqSeq = 1, pending = {};        // request id -> {resolve, reject}
+let resuming = false, resumeBuf = []; // buffer events until the resume ack lands
+let turn = null;                     // active in-flight turn state, or null
+
+function wsUrl() {
+  const proto = location.protocol === "https:" ? "wss:" : "ws:";
+  return `${proto}//${location.host}/ws?token=${encodeURIComponent(token)}`;
+}
+function gatewayConnect() {
+  if (!token || (ws && ws.readyState <= 1)) return;
+  wsWantOpen = true;
+  try { ws = new WebSocket(wsUrl()); } catch (e) { scheduleReconnect(); return; }
+  ws.onclose = () => {
+    ws = null;
+    if (turn) { /* leave turn state; a reconnect+resume will rebuild it */ }
+    if (wsWantOpen) scheduleReconnect();
+  };
+  ws.onmessage = onWsFrame;
+}
+function scheduleReconnect() {
+  wsBackoff = Math.min((wsBackoff || 1) * 2, 15000);
+  setTimeout(gatewayConnect, wsBackoff);
+}
+function wsSend(method, params) {
+  return new Promise((resolve, reject) => {
+    if (!ws || ws.readyState !== 1) { reject(new Error("disconnected")); return; }
+    const id = reqSeq++;
+    pending[id] = {resolve, reject};
+    ws.send(JSON.stringify({jsonrpc: "2.0", id, method, params}));
+  });
+}
+function onWsFrame(e) {
+  let fr; try { fr = JSON.parse(e.data); } catch (err) { return; }
+  if (fr.id != null && pending[fr.id]) {
+    const p = pending[fr.id]; delete pending[fr.id];
+    if (fr.error) p.reject(Object.assign(new Error(fr.error.message || "rpc error"), {rpc: fr.error}));
+    else p.resolve(fr.result);
+    return;
+  }
+  if (fr.method !== "event") return;
+  const ev = fr.params || {};
+  if (ev.type === "gateway.ready") {
+    wsBackoff = 0;
+    if (currentSid) resumeSession();
+    return;
+  }
+  // route by session: ignore events for sessions not currently on screen
+  // (background turns keep running server-side; switching back resumes them).
+  if (ev.session_id !== currentSid) return;
+  if (resuming) { resumeBuf.push(ev); return; }
+  handleEvent(ev);
+}
+
+// resume the current session over ws: bind transport + replay in-flight events
+async function resumeSession() {
+  if (!currentSid || !ws || ws.readyState !== 1) return;
+  resuming = true; resumeBuf = [];
+  try {
+    const res = await wsSend("session.resume", {session_id: currentSid});
+    if (res && res.running) {
+      startStreamingUI();
+      turn = freshTurn(null, {shown: true});   // history already rendered; deltas rebuild the bubble
+    } else {
+      if (!streaming) stopStreamingUI();
+    }
+  } catch (e) { /* auth/transport hiccup; next reconnect retries */ }
+  finally {
+    resuming = false;
+    const buf = resumeBuf; resumeBuf = [];
+    for (const ev of buf) handleEvent(ev);
+  }
+}
+
+// one in-flight turn's rendering state
+function freshTurn(content, opts = {}) {
+  return { content, bubble: null, wl: null, userBubbleShown: !!opts.shown, errored: false };
+}
+
+function handleEvent(ev) {
+  const type = ev.type, p = ev.payload || {};
+  if (!turn) return;
+  const t = turn;
+  if (type === "reasoning.delta") {
+    if (t.bubble) return;                       // answer started: lock out late reasoning
+    if (!t.userBubbleShown) { t.userBubbleShown = true; addBubble("user", t.content); }
+    if (!t.wl) t.wl = ensureWorklog();
+    const body = worklogThinkingCard(t.wl).querySelector(".think-body");
+    body.dataset.raw += p.text;
+    body.innerHTML = mdToHtml(body.dataset.raw); renderMathInElement(body);
+    syncWorklogSummary(t.wl);
+  } else if (type === "message.delta") {
+    if (!t.userBubbleShown) { t.userBubbleShown = true; addBubble("user", t.content); }
+    if (!t.bubble) { if (t.wl) { closeWorklog(t.wl); t.wl = null; } t.bubble = addBubble("assistant", ""); }
+    t.bubble.dataset.raw += p.text;
+    t.bubble.innerHTML = mdToHtml(t.bubble.dataset.raw); renderMathInElement(t.bubble);
+  } else if (type === "tool.call") {
+    if (!t.userBubbleShown) { t.userBubbleShown = true; addBubble("user", t.content); }
+    t.bubble = null;
+    if (!t.wl) t.wl = ensureWorklog();
+    appendToolRow(t.wl, p.name, JSON.stringify(p.arguments, null, 2), p.id, false);
+    syncWorklogSummary(t.wl);
+  } else if (type === "tool.result") {
+    const rows = $("msgs").querySelectorAll("details.tool-card-row");
+    const row = [...rows].find(r => r.dataset.id === p.id) || rows[rows.length - 1];
+    setToolResult(row, p.preview); setToolDone(row, false);
+    syncWorklogSummary(row ? row.closest(".worklog") : t.wl);
+  } else if (type === "error") {
+    if (p.message === "stopped by user") {        // hard stop: clean, not an error
+      if (t.wl) { closeWorklog(t.wl); t.wl = null; }
+      t.bubble = null;
+    } else {
+      if (t.wl) { closeWorklog(t.wl); t.wl = null; }
+      addBubble("err", p.message); t.bubble = null; t.errored = true;
+    }
+  } else if (type === "turn.usage") {
+    if (t.wl) { closeWorklog(t.wl); t.wl = null; }
+    const meta = document.createElement("div");
+    meta.className = "turnmeta";
+    meta.textContent = `本轮 ↑${p.input_tokens} ↓${p.output_tokens}` +
+      (p.cache_hit != null ? ` · 缓存 ${p.cache_hit}%` : "");
+    $("msgs").appendChild(meta);
+    t.bubble = null;
+  } else if (type === "message.complete") {
+    const u = p.usage || {};
+    $("ub-tok").textContent = `↑${u.input_tokens||0} ↓${u.output_tokens||0}`;
+    $("ub-ctx").textContent = `ctx ${p.context_length||0}/${p.context_limit||0}`;
+    $("ub-cache").textContent = p.cache_hit != null ? `cache ${p.cache_hit}%` : "cache —";
+  } else if (type === "queued_next") {
+    // chained turn: server already drained the next queued message
+    t.content = p.content ?? queuedMessages[0]?.content ?? t.content;
+    queuedMessages.shift();
+    renderQueueStatus();
+    t.userBubbleShown = false;                    // next turn defers its user bubble
+    if (t.wl) { closeWorklog(t.wl); t.wl = null; }
+    t.bubble = null;
+  } else if (type === "turn.settled") {
+    finalizeTurn();
+  }
+  $("msgs").scrollTop = $("msgs").scrollHeight;
+}
+
+function finalizeTurn() {
+  if (!turn) return;
+  const errored = turn.errored;
+  closeWorklog(turn.wl);
+  turn = null;
+  stopStreamingUI();
+  if (errored) loadSessions();
+  else if (queuedMessages.length) sendMsg(true);
+  else openSession(currentSid);
+}
+
+function startStreamingUI() {
+  streaming = true;
+  document.body.classList.add("streaming");
+  $("send").classList.add("hidden"); $("stop").classList.remove("hidden");
+}
+function stopStreamingUI() {
+  streaming = false;
+  document.body.classList.remove("streaming");
+  $("send").classList.remove("hidden"); $("stop").classList.add("hidden");
+}
+
+// ---- chat (over WebSocket) --------------------------------------------------
 async function sendMsg(consumeQueued = false) {
   // 排队消息消费由调用方显式指定；队列非空时仍允许输入框继续追加新消息。
   let content;
   if (consumeQueued) {
     if (!queuedMessages.length) return;
     content = queuedMessages[0].content;
-    // 如果队列只剩这最后一条，消费后 SSE 走完 finally 时会自动移除
   } else {
     const text = $("input").value.trim();
     if ((!text && !attached.length) || !currentSid) return;
@@ -462,175 +627,79 @@ async function sendMsg(consumeQueued = false) {
   }
   attached = []; renderChips();
 
-  // 检查是否为斜杠命令
-  const isRetryCmd = /^\/retry(?:\s|$)/.test(content);
-  const isSlashCmd = content.startsWith("/") && !isRetryCmd;
-
-  // 重新编辑：发送时才删除原用户消息及其回答，再以编辑后文本作为新轮发送
+  // 重新编辑：发送时才截断原用户消息及其回答，再以编辑后文本作为新轮发送
   if (editing) {
-    $("input").value = ""; streaming = true;
-    document.body.classList.add("streaming");
-    $("send").classList.add("hidden"); $("stop").classList.remove("hidden");
+    startStreamingUI();
     try {
       await api(`/api/sessions/${currentSid}/truncate`, {method: "POST", body: {message_id: editing.mid}});
     } catch (e) {
-      document.body.classList.remove("streaming");
-      streaming = false;
-      $("send").classList.remove("hidden"); $("stop").classList.add("hidden");
-      alert("重新编辑失败: " + e.message);
-      return;
+      stopStreamingUI(); alert("重新编辑失败: " + e.message); return;
     }
     editing = null;
     await openSession(currentSid);
-    document.body.classList.add("streaming");
+    startStreamingUI();
   }
 
-  // ── 斜杠命令：不走 SSE，直接发 API 拿 JSON ──────────
-  if (isSlashCmd) {
+  // ── 正在 streaming：尝试排队，不显示气泡 ──────────────────────────────
+  if (streaming) {
+    if (consumeQueued) return;       // 自己已在队列中
     try {
-      const resp = await api(`/api/sessions/${currentSid}/chat`, {method: "POST", body: {content}});
-      const result = await expectJson(resp);
+      const res = await wsSend("prompt.submit", {session_id: currentSid, content});
+      if (res.kind === "queued") {
+        $("input").value = "";
+        queuedMessages.push({ content });
+        renderQueueStatus();
+      } else if (res.kind === "start" || res.kind === "retry") {
+        // 上一轮刚好结束的竞态：服务端已直接开轮，前端补上 UI 与 turn
+        startStreamingUI();
+        turn = freshTurn(content, {shown: true}); addBubble("user", content);
+      } else if (res.kind === "slash") {
+        await openSession(currentSid);
+      }
+    } catch (e) { addBubble("err", e.message); }
+    return;
+  }
+
+  // ── 正常发送 ────────────────────────────────────────────────────────────
+  $("input").value = "";
+  startStreamingUI();
+  // 排队消息消费：用户气泡延迟到模型真正开始回复时再显示；普通/重新编辑立即显示
+  const userBubbleShown = !consumeQueued;
+  if (userBubbleShown) addBubble("user", content);
+  turn = freshTurn(content, {shown: userBubbleShown});
+
+  try {
+    const res = await wsSend("prompt.submit", {session_id: currentSid, content});
+    if (res.kind === "slash") {
+      // 斜杠命令：服务端已处理并落库，没有流式 turn
+      turn = null; stopStreamingUI();
+      const result = res.result || {};
       if (result.handled) {
         await openSession(currentSid);
-        if (result.action === "reload") {
-          await loadSessions();
-        }
+        if (result.action === "reload") await loadSessions();
       } else {
         addBubble("user", content);
         addBubble("assistant", result.content || "");
       }
-    } catch (e) {
-      addBubble("err", e.message);
+    } else if (res.kind === "queued") {
+      // 忙时被入队（与上面排队分支一致的展示）
+      turn = null; stopStreamingUI();
+      queuedMessages.push({ content });
+      renderQueueStatus();
     }
-    return;
-  }
-
-  // ── 如果正在 streaming，尝试排队: 不显示气泡，仅入队 ──────
-  if (streaming) {
-    // 排队消息本身不再排队（已在队列中），跳过
-    if (consumeQueued) return;
-    try {
-      const resp = await api(`/api/sessions/${currentSid}/chat`, {method: "POST", body: {content}});
-      const result = await expectJson(resp);
-      if (result.queued) {
-        $("input").value = "";
-        queuedMessages.push({ content });
-        renderQueueStatus();
-      } else {
-        // 可能刚好上一轮结束了，退化为正常发送
-        streaming = false;
-        document.body.classList.remove("streaming");
-        $("send").classList.remove("hidden"); $("stop").classList.add("hidden");
-        await sendMsg();
-      }
-    } catch (e) {
-      addBubble("err", e.message);
-    }
-    return;
-  }
-
-  $("input").value = ""; streaming = true;
-  document.body.classList.add("streaming");
-  $("send").classList.add("hidden"); $("stop").classList.remove("hidden");
-
-  // 排队消息消费：先不显示用户气泡，等到模型实际开始回复（text_delta/reasoning_delta）时再显示
-  // 非排队消息（普通消息 / 重新编辑）则立即显示；排队消费延迟到模型真正开始。
-  let userBubbleShown = !consumeQueued || isRetryCmd;
-  if (userBubbleShown) { addBubble("user", content); }
-  let bubble = null, wl = null, errored = false;
-  const msgs = $("msgs");
-  try {
-    const resp = await api(`/api/sessions/${currentSid}/chat`, {method: "POST", body: {content}});
-
-    const reader = resp.body.getReader(), dec = new TextDecoder();
-    let buf = "";
-    while (true) {
-      const {done, value} = await reader.read();
-      if (done) break;
-      buf += dec.decode(value, {stream: true});
-      let idx;
-      while ((idx = buf.indexOf("\n\n")) >= 0) {
-        const line = buf.slice(0, idx).trim(); buf = buf.slice(idx + 2);
-        if (!line.startsWith("data: ")) continue;
-        const ev = JSON.parse(line.slice(6));
-        if (ev.type === "reasoning_delta") {
-          if (bubble) continue;                  // answer started: lock out late reasoning
-          // 模型开始思考时，才显示排队的用户消息（如果有）
-          if (!userBubbleShown) { userBubbleShown = true; addBubble("user", content); }
-          if (!wl) wl = ensureWorklog();
-          const body = worklogThinkingCard(wl).querySelector(".think-body");
-          body.dataset.raw += ev.text;
-          body.innerHTML = mdToHtml(body.dataset.raw);
-          renderMathInElement(body);
-          syncWorklogSummary(wl);
-        } else if (ev.type === "text_delta") {
-          // 模型开始输出正文时，才显示排队的用户消息（如果没有思考阶段）
-          if (!userBubbleShown) { userBubbleShown = true; addBubble("user", content); }
-          if (!bubble) { if (wl) { closeWorklog(wl); wl = null; } bubble = addBubble("assistant", ""); }
-          bubble.dataset.raw += ev.text;
-          bubble.innerHTML = mdToHtml(bubble.dataset.raw);
-          renderMathInElement(bubble);
-        } else if (ev.type === "tool_call") {
-          // 模型调用工具前，确保用户消息已显示
-          if (!userBubbleShown) { userBubbleShown = true; addBubble("user", content); }
-          bubble = null;                          // 正文后再来工具 -> 新开活动组
-          if (!wl) wl = ensureWorklog();
-          appendToolRow(wl, ev.name, JSON.stringify(ev.arguments, null, 2), ev.id, false);
-          syncWorklogSummary(wl);
-        } else if (ev.type === "tool_result") {
-          const rows = msgs.querySelectorAll("details.tool-card-row");
-          const row = [...rows].find(r => r.dataset.id === ev.id) || rows[rows.length - 1];
-          setToolResult(row, ev.preview); setToolDone(row, false);
-          syncWorklogSummary(row ? row.closest(".worklog") : wl);
-        } else if (ev.type === "error") {
-          if (ev.message === "stopped by user") {  // 强行停止：不视为错误，finally 重渲染为干净状态
-            if (wl) { closeWorklog(wl); wl = null; }
-            bubble = null;
-          } else {
-            if (wl) { closeWorklog(wl); wl = null; }
-            addBubble("err", ev.message); bubble = null; errored = true;
-          }
-        } else if (ev.type === "turn_usage") {
-          if (wl) { closeWorklog(wl); wl = null; }   // 本轮结束，折叠活动组
-          const meta = document.createElement("div");
-          meta.className = "turnmeta";
-          meta.textContent = `本轮 ↑${ev.input_tokens} ↓${ev.output_tokens}` +
-            (ev.cache_hit != null ? ` · 缓存 ${ev.cache_hit}%` : "");
-          msgs.appendChild(meta);
-          bubble = null;                              // 下一轮重新计
-        } else if (ev.type === "done") {
-          const u = ev.usage || {};
-          $("ub-tok").textContent = `↑${u.input_tokens||0} ↓${u.output_tokens||0}`;
-          $("ub-ctx").textContent = `ctx ${ev.context_length||0}/${ev.context_limit||0}`;
-          $("ub-cache").textContent = ev.cache_hit != null ? `cache ${ev.cache_hit}%` : "cache —";
-        } else if (ev.type === "queued_next") {
-          // 排队消息已被后端消费。前端弹出第一条，并继续消费该 SSE 流
-          content = ev.content ?? queuedMessages[0]?.content ?? content;
-          queuedMessages.shift();
-          renderQueueStatus();
-          // 当前 SSE 流还会继续，下一轮内容会在同一个流中推送过来
-          // 下一轮的用户气泡在收到 reasoning_delta/text_delta 时显示
-          userBubbleShown = false;  // 新的一轮，用户气泡需要重新延迟显示
-        }
-        msgs.scrollTop = msgs.scrollHeight;
-      }
-    }
+    // kind === "start" | "retry": 流式 turn 已起，事件陆续到达，于 turn.settled 收尾
   } catch (e) {
-    addBubble("err", e.message); errored = true;
-  } finally {
-    closeWorklog(wl);
-    streaming = false;
-    document.body.classList.remove("streaming");
-    $("send").classList.remove("hidden"); $("stop").classList.add("hidden");
-    if (errored) loadSessions();
-    else if (queuedMessages.length) {
-      // 还有排队消息，继续发送下一轮
-      sendMsg(true);
-    }
-    else {
-      await openSession(currentSid);
-    }
+    addBubble("err", e.message);
+    turn = null; stopStreamingUI();
+    if (!queuedMessages.length) await openSession(currentSid);
   }
+}
+
+// Stop 按钮：中断当前 turn（服务端 cancel task，会回推 error "stopped by user" + turn.settled）
+async function stopTurn() {
+  if (!currentSid || !streaming) return;
+  try { await wsSend("session.interrupt", {session_id: currentSid}); }
+  catch (e) { /* disconnected; resume-on-reconnect handles it */ }
 }
 // ---- 排队消息状态显示 ------------------------------------------------
 function renderQueueStatus() {

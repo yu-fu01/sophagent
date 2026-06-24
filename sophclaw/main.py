@@ -8,7 +8,7 @@ import secrets
 from contextlib import asynccontextmanager
 from pathlib import Path
 
-from fastapi import FastAPI
+from fastapi import FastAPI, WebSocket
 from fastapi.responses import FileResponse, JSONResponse
 from fastapi.staticfiles import StaticFiles
 
@@ -58,6 +58,8 @@ async def lifespan(app: FastAPI):
         log.info("seeded %d built-in skills into %s", seeded, cfg.skills_dir)
     app.state.skill_store = SkillStore(cfg.skills_dir)
     app.state.manager = SessionManager(cfg.max_concurrent_turns)
+    from .gateway.ws import build_registry
+    app.state.gateway_registry = build_registry()
     from .providers.registry import init_registry
     registry = init_registry(db, cfg)
     await registry.refresh()
@@ -70,6 +72,12 @@ async def lifespan(app: FastAPI):
 def create_app() -> FastAPI:
     app = FastAPI(title="sophclaw-agent", version=__version__, lifespan=lifespan)
     mount_routes(app)
+
+    from .gateway.ws import handle_ws
+
+    @app.websocket("/ws")
+    async def _ws(ws: WebSocket):
+        await handle_ws(ws)
 
     @app.get("/healthz")
     async def healthz():
