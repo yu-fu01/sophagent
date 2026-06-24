@@ -141,5 +141,40 @@ async def test_compression_triggers_summary(ctx, fake_provider):
     runner = AgentRunner(ctx.agent, ctx, history=history)
     events = await collect(runner, "continue")
     assert events[-1]["type"] == "done"
-    assert any("[Earlier conversation summary]" in m.content for m in runner.history)
+    assert any(is_summary_message(m) for m in runner.history)
     assert history_tokens("", runner.history) < 1000
+
+
+from sophclaw.agent.compaction import (
+    SUMMARY_PREFIX,
+    is_summary_message,
+    make_summary_message,
+)
+from sophclaw.config import DEFAULT_COMPRESS_THRESHOLD
+
+
+def test_agentrunner_default_threshold(ctx, fake_provider):
+    fake_provider([])  # registers a "test" provider so AgentRunner can resolve it
+    r = AgentRunner(ctx.agent, ctx, history=[])
+    assert r.compress_threshold == DEFAULT_COMPRESS_THRESHOLD
+
+
+@pytest.mark.asyncio
+async def test_iterative_compaction_reuses_previous_summary(ctx, fake_provider):
+    # 历史里已有一份摘要 + 大量后续消息；触发压缩时应做「迭代更新」而非从头重摘
+    big = "字" * 1500
+    history = [make_summary_message("上一份摘要")] + [
+        Message(role="user", content=big) for _ in range(6)
+    ]
+    # fake_provider 脚本：唯一一次 chat 是「摘要调用」，返回新摘要文本
+    provider = fake_provider([
+        AssistantTurn(content="合并后的新摘要", input_tokens=1, output_tokens=1),
+    ])
+    runner = AgentRunner(ctx.agent, ctx, history=history, compress_threshold=0.5)
+    assert runner.context_limit == 1000  # 来自 fake_provider fixture
+    await runner._compress_if_needed(system="sys")
+    # 摘要调用的 user prompt 里应引用上一份摘要（迭代更新路径）
+    assert any("上一份摘要" in m.content for call in provider.calls for m in call)
+    # 压缩后历史以一条带前缀的摘要消息开头
+    assert runner.history[0].content.startswith(SUMMARY_PREFIX)
+    assert runner.compressed is True
