@@ -163,6 +163,7 @@ td .row-actions{display:flex;gap:6px}
       <button id="tab-agents" onclick="showTab('agents')">Agents</button>
       <button id="tab-groups" onclick="showTab('groups')">Groups</button>
       <button id="tab-admin" class="hidden" onclick="showTab('admin')">Admin</button>
+      <button onclick="showTab('im')" id="tab-im" class="hidden">IM 绑定</button>
     </div>
     <div id="chat">
       <div id="chatmain">
@@ -204,6 +205,14 @@ td .row-actions{display:flex;gap:6px}
     <div id="agents" class="hidden"></div>
     <div id="groups" class="hidden"></div>
     <div id="admin" class="hidden"></div>
+    <div id="im" class="hidden" style="padding:16px;overflow-y:auto">
+      <h3>Telegram 绑定</h3>
+      <p style="color:var(--dim);font-size:13px">选一个 agent 生成配对码，在 Telegram bot 发 <code>/pair &lt;码&gt;</code> 绑定。</p>
+      <label>Agent</label>
+      <select id="im-agent"></select>
+      <button onclick="genPairCode()">生成配对码</button>
+      <div id="im-result" style="margin-top:12px"></div>
+    </div>
   </div>
 </div>
 
@@ -253,11 +262,23 @@ function logout() {
   $("app").classList.add("hidden"); $("login").classList.remove("hidden");
 }
 
+async function showImPanel() {
+  const sel = $("im-agent");
+  const agents = await apiJson("/api/agents");
+  sel.innerHTML = agents.map(a => `<option value="${a.id}">${a.name}</option>`).join("");
+}
+async function genPairCode() {
+  const aid = $("im-agent").value;
+  const r = await apiJson("/api/im/pair-code", {method: "POST", body: {agent_id: +aid}});
+  $("im-result").innerHTML = `配对码：<b style="font-size:18px">${r.code}</b><br>在 Telegram bot 发：<code>/pair ${r.code}</code>（${r.expires_in}s 内有效）`;
+}
+
 async function boot() {
   try { me = await apiJson("/api/auth/me"); } catch (e) { return; }
   $("login").classList.add("hidden"); $("app").classList.remove("hidden");
   $("whoami").textContent = `${me.username}${me.is_admin ? " (admin)" : ""}`;
   $("tab-admin").classList.toggle("hidden", !me.is_admin);
+  $("tab-im").classList.toggle("hidden", !me);
   agents = await apiJson("/api/agents");
   await loadSessions();
   // 预加载命令列表供前端浮层使用
@@ -1032,13 +1053,14 @@ function updateAttachHint() {
 
 // ---- tabs -------------------------------------------------------------------
 function showTab(name) {
-  for (const n of ["chat", "agents", "groups", "admin"]) {
+  for (const n of ["chat", "agents", "groups", "admin", "im"]) {
     $(n).classList.toggle("hidden", n !== name);
     $("tab-" + n).classList.toggle("on", n === name);
   }
   if (name === "admin") renderAdmin();
   if (name === "agents") renderAgents();
   if (name === "groups") renderGroups();
+  if (name === "im") showImPanel();
 }
 
 // ---- admin ------------------------------------------------------------------
