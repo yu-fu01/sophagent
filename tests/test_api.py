@@ -238,16 +238,20 @@ def test_retry_replaces_last_assistant_without_duplicating_user(client, bob, age
         AssistantTurn(content="new answer", stop_reason="stop"),
     ]
     sid = client.post("/api/sessions", json={"agent_id": agent_id}, headers=bob).json()["id"]
-    client.post(f"/api/sessions/{sid}/chat", json={"content": "question"}, headers=bob)
-
-    resp = client.post(f"/api/sessions/{sid}/chat", json={"content": "/retry"}, headers=bob)
-    events = sse_events(resp)
-    assert any(e["type"] == "text_delta" and e["text"] == "new answer" for e in events)
-
+    with client.websocket_connect(f"/ws?token={ws_token(bob)}") as ws:
+        ws_recv_frame(ws)
+        ws_send(ws, "session.resume", 1, session_id=sid); ws_response(ws, 1)
+        ws_send(ws, "prompt.submit", 2, session_id=sid, content="question")
+        ws_response(ws, 2)
+        ws_events_until(ws, "turn.settled")
+        # /retry → 服务端截断后开轮（ack kind=retry）
+        ws_send(ws, "prompt.submit", 3, session_id=sid, content="/retry")
+        assert ws_response(ws, 3)["result"]["kind"] == "retry"
+        events = ws_events_until(ws, "turn.settled")
+    assert any(e["type"] == "message.delta" and e["payload"]["text"] == "new answer" for e in events)
     detail = client.get(f"/api/sessions/{sid}", headers=bob).json()
     assert [(m["role"], m["content"]) for m in detail["messages"]] == [
-        ("user", "question"),
-        ("assistant", "new answer"),
+        ("user", "question"), ("assistant", "new answer"),
     ]
     assert provider_messages == [
         [("user", "question")],
