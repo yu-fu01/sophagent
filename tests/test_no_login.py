@@ -29,6 +29,25 @@ def test_no_login_honours_explicit_token(client, bob):
     assert r.json()["username"] == "bob"
 
 
+def test_no_login_endpoint_404_when_disabled(client):
+    # The bootstrap endpoint is invisible unless no-login is on.
+    assert get_config().no_login is False
+    assert client.get("/api/auth/no-login").status_code == 404
+
+
+def test_no_login_endpoint_mints_working_admin_token(client):
+    # With the switch on, the token-less frontend can fetch a real admin JWT.
+    get_config().no_login = True
+    r = client.get("/api/auth/no-login")
+    assert r.status_code == 200, r.text
+    body = r.json()
+    assert body["username"] == "admin" and body["role"] == "admin"
+    assert body["token"]
+    # the minted token actually authenticates a normal request
+    me = client.get("/api/auth/me", headers={"Authorization": f"Bearer {body['token']}"})
+    assert me.status_code == 200 and me.json()["username"] == "admin"
+
+
 def test_no_login_env_parsing(tmp_path, monkeypatch):
     from sophagent import config as config_mod
 
