@@ -37,3 +37,52 @@ def test_cannot_modify_builtin(client, admin):
 
 def test_models_unknown_provider_404(client, admin):
     assert client.get("/api/providers/nope/models", headers=admin).status_code == 404
+
+
+def test_provider_default_model_parsed_from_yaml(tmp_path, monkeypatch):
+    """`model:` in providers.yaml becomes ProviderConfig.default_model."""
+    from sophagent import config as config_mod
+
+    data = tmp_path / "data"
+    data.mkdir()
+    (data / "providers.yaml").write_text(
+        "providers:\n  p1:\n    api_mode: openai\n    model: DeepSeek-V4-Flash\n",
+        encoding="utf-8")
+    monkeypatch.setenv("SOPHAGENT_DATA_DIR", str(data))
+    config_mod.reset_config()
+    try:
+        assert config_mod.get_config().providers["p1"].default_model == "DeepSeek-V4-Flash"
+    finally:
+        config_mod.reset_config()
+
+
+def test_models_endpoint_exposes_configured_default(client, admin, monkeypatch):
+    """The models endpoint surfaces the provider's configured default model so
+    the new-agent form can preselect it instead of the first listed model."""
+    from sophagent.providers.registry import get_registry
+
+    reg = get_registry()
+    reg.resolve("test").default_model = "DeepSeek-V4-Flash"
+
+    async def fake_list(name, ttl=300.0):
+        return ["m-a", "DeepSeek-V4-Flash", "m-b"]
+
+    monkeypatch.setattr(reg, "list_models", fake_list)
+    body = client.get("/api/providers/test/models", headers=admin).json()
+    assert body["models"] == ["m-a", "DeepSeek-V4-Flash", "m-b"]
+    assert body["default"] == "DeepSeek-V4-Flash"
+
+
+def test_models_endpoint_default_falls_back_to_first(client, admin, monkeypatch):
+    """With no configured default, the endpoint falls back to the first model."""
+    from sophagent.providers.registry import get_registry
+
+    reg = get_registry()
+    reg.resolve("test").default_model = ""
+
+    async def fake_list(name, ttl=300.0):
+        return ["first-model", "second-model"]
+
+    monkeypatch.setattr(reg, "list_models", fake_list)
+    body = client.get("/api/providers/test/models", headers=admin).json()
+    assert body["default"] == "first-model"

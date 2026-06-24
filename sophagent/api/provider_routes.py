@@ -60,7 +60,12 @@ async def list_models(name: str, request: Request, _admin=Depends(require_admin)
     reg = get_registry()
     if name not in reg.names():
         raise HTTPException(404, "unknown provider")
+    configured = reg.resolve(name).default_model
     try:
-        return {"models": await reg.list_models(name)}
+        models = await reg.list_models(name)
+        # Default model for the new-agent form: the provider's configured
+        # `model:` wins; otherwise fall back to the first listed model.
+        default = configured or (models[0] if models else "")
+        return {"models": models, "default": default}
     except Exception as e:
-        return {"models": [], "error": str(e)}
+        return {"models": [], "default": configured, "error": str(e)}

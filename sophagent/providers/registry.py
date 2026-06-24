@@ -25,6 +25,7 @@ class ResolvedProvider:
     base_url: str | None
     context_limit: int
     source: str
+    default_model: str = ""
 
     def fingerprint(self) -> str:
         raw = f"{self.api_mode}|{self.base_url}|{self.api_key}|{self.context_limit}"
@@ -44,7 +45,7 @@ class ProviderRegistry:
         merged: dict[str, ResolvedProvider] = {}
         for name, c in self.builtin.items():
             merged[name] = ResolvedProvider(name, c.api_mode, c.api_key, c.base_url,
-                                            c.context_limit, "builtin")
+                                            c.context_limit, "builtin", c.default_model)
         for row in await self.db.list_providers():
             try:
                 key = decrypt(row["api_key_enc"], self.secret) if row["api_key_enc"] else ""

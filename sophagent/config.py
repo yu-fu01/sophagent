@@ -26,6 +26,7 @@ class ProviderConfig:
     base_url: str | None = None
     context_limit: int = 100_000  # tokens (estimated)
     source: str = "builtin"  # builtin (yaml) | db
+    default_model: str = ""  # preferred model; pre-selected in the new-agent form
 
 
 @dataclass
@@ -122,6 +123,7 @@ def _load_providers(data_dir: Path) -> dict[str, ProviderConfig]:
             api_key=api_key,
             base_url=spec.get("base_url") or None,
             context_limit=int(spec.get("context_limit", 100_000)),
+            default_model=str(spec.get("model") or ""),
         )
     return providers
 
