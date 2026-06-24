@@ -128,10 +128,6 @@ def uid(client, admin, username) -> int:
     return next(u["id"] for u in client.get("/api/users", headers=admin).json() if u["username"] == username)
 
 
-def sse_events(resp) -> list[dict]:
-    return [json.loads(line[6:]) for line in resp.text.splitlines() if line.startswith("data: ")]
-
-
 # ---- WebSocket test helpers (gateway /ws, JSON-RPC) -----------------------
 
 def ws_token(auth: dict) -> str:

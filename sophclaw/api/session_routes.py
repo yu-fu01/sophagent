@@ -1,13 +1,9 @@
-import asyncio
-import json
 import uuid
 
 from fastapi import APIRouter, Depends, HTTPException, Request
-from fastapi.responses import JSONResponse, StreamingResponse
 
-from ..agent.turn import pre_submit, run_turns
 from ..auth import require_user
-from ..models import ChatRequest, SessionCreate, SessionOverridePatch, TruncateRequest
+from ..models import SessionCreate, SessionOverridePatch
 from ..perms import can_access_group, can_manage_group
 
 router = APIRouter()
@@ -77,93 +73,3 @@ async def delete_session(session_id: str, request: Request, user=Depends(require
     request.app.state.manager.clear_queue(session_id)
     await db.delete_session(session_id)
     return {"ok": True}
-
-
-@router.post("/{session_id}/stop")
-async def stop_session(session_id: str, request: Request, user=Depends(require_user)):
-    if await _owned_or_managed(request, session_id, user) is None:
-        raise HTTPException(404, "session not found")
-    manager = request.app.state.manager
-    stopped = manager.stop(session_id)
-    manager.clear_queue(session_id)
-    return {"stopped": stopped}
-
-
-@router.post("/{session_id}/truncate")
-async def truncate_session(session_id: str, req: TruncateRequest, request: Request,
-                           user=Depends(require_user)):
-    """Restore / re-edit: delete the given message and everything after it.
-    Refused while a turn is running to avoid racing the chat worker."""
-    db = request.app.state.db
-    manager = request.app.state.manager
-    if await _owned_or_managed(request, session_id, user) is None:
-        raise HTTPException(404, "session not found")
-    if manager.is_busy(session_id):
-        raise HTTPException(409, "session is running a turn")
-    deleted = await db.truncate_from(session_id, req.message_id)
-    await db.touch_session(session_id)
-    return {"ok": True, "deleted": deleted}
-
-
-@router.post("/{session_id}/chat")
-async def chat(session_id: str, req: ChatRequest, request: Request, user=Depends(require_user)):
-    state = request.app.state
-    db, manager = state.db, state.manager
-    session = await db.get_session(session_id, user["id"])
-    if session is None:
-        raise HTTPException(404, "session not found")
-
-    kind, payload = await pre_submit(
-        session_id=session_id, content=req.content, db=db, manager=manager,
-        skill_store=state.skill_store, user=user,
-    )
-    if kind == "slash":
-        return JSONResponse(payload)
-    if kind == "retry":
-        return await _start_sse_turn(session_id, None, user, request)
-    if kind == "queued":
-        return JSONResponse({"queued": True, "position": payload})
-    if kind == "queue_full":
-        raise HTTPException(429, "消息队列已满（最多 3 条），请等待当前回复完成后再试")
-    # kind == "start"
-    return await _start_sse_turn(session_id, payload, user, request)
-
-
-async def _start_sse_turn(
-    session_id: str,
-    user_input: str | None,
-    user: dict,
-    request: Request,
-) -> StreamingResponse:
-    """Start one chat turn (and any queued follow-ups), streaming SSE.
-
-    Pumps the shared :func:`run_turns` event stream into an :class:`asyncio.Queue`
-    that the ``StreamingResponse`` drains. The turn core is identical to the
-    WebSocket ``prompt.submit`` path (see :mod:`sophclaw.gateway`)."""
-    state = request.app.state
-    db, manager = state.db, state.manager
-    queue: asyncio.Queue = asyncio.Queue()
-
-    async def _worker():
-        try:
-            async for ev in run_turns(
-                session_id=session_id, user_input=user_input,
-                db=db, manager=manager, skill_store=state.skill_store,
-                user_id=user["id"],
-            ):
-                await queue.put(ev)
-        finally:
-            queue.put_nowait(None)
-
-    task = asyncio.create_task(_worker())
-    manager.register_task(session_id, task)
-
-    async def sse():
-        while True:
-            ev = await queue.get()
-            if ev is None:
-                break
-            yield f"data: {json.dumps(ev, ensure_ascii=False)}\n\n"
-
-    return StreamingResponse(sse(), media_type="text/event-stream",
-                             headers={"Cache-Control": "no-cache", "X-Accel-Buffering": "no"})
