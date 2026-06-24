@@ -5,7 +5,7 @@ import threading
 
 from sophclaw.models import AssistantTurn, StreamEvent, ToolCall
 
-from conftest import sse_events  # noqa: F401  (shared harness helper)
+from conftest import ws_token, ws_send, ws_recv_frame, ws_response, ws_events_until  # noqa: F401
 
 SKILL_MD = """---
 name: greet
@@ -60,22 +60,26 @@ def test_agent_validation(client, admin):
 
 
 def test_chat_flow_and_persistence(client, bob, agent_id):
-    session = client.post("/api/sessions", json={"agent_id": agent_id}, headers=bob).json()
-    sid = session["id"]
-    resp = client.post(f"/api/sessions/{sid}/chat", json={"content": "hello there"}, headers=bob)
-    assert resp.status_code == 200
-    events = sse_events(resp)
-    assert any(e["type"] == "text_delta" and "hello there" in e["text"] for e in events)
-    assert events[-1]["type"] == "done"
-    # history persisted
+    sid = client.post("/api/sessions", json={"agent_id": agent_id}, headers=bob).json()["id"]
+    with client.websocket_connect(f"/ws?token={ws_token(bob)}") as ws:
+        ws_recv_frame(ws)  # ready
+        ws_send(ws, "session.resume", 1, session_id=sid); ws_response(ws, 1)
+        ws_send(ws, "prompt.submit", 2, session_id=sid, content="hello there")
+        assert ws_response(ws, 2)["result"]["kind"] == "start"
+        events = ws_events_until(ws, "turn.settled")
+    assert any(e["type"] == "message.delta" and "hello there" in e["payload"]["text"] for e in events)
+    assert any(e["type"] == "message.complete" for e in events)
     detail = client.get(f"/api/sessions/{sid}", headers=bob).json()
-    roles = [m["role"] for m in detail["messages"]]
-    assert roles == ["user", "assistant"]
+    assert [m["role"] for m in detail["messages"]] == ["user", "assistant"]
     assert detail["title"] == "hello there"
-    # second turn sees prior history
-    client.post(f"/api/sessions/{sid}/chat", json={"content": "again"}, headers=bob)
-    detail = client.get(f"/api/sessions/{sid}", headers=bob).json()
-    assert len(detail["messages"]) == 4
+    # 第二轮看到历史
+    with client.websocket_connect(f"/ws?token={ws_token(bob)}") as ws:
+        ws_recv_frame(ws)
+        ws_send(ws, "session.resume", 1, session_id=sid); ws_response(ws, 1)
+        ws_send(ws, "prompt.submit", 2, session_id=sid, content="again")
+        ws_response(ws, 2)
+        ws_events_until(ws, "turn.settled")
+    assert len(client.get(f"/api/sessions/{sid}", headers=bob).json()["messages"]) == 4
 
 
 def test_queued_chat_turns_persist_in_order_without_duplicates(client, bob, agent_id):
@@ -207,25 +211,30 @@ def test_agent_tool_call_via_chat(client, bob, agent_id):
         AssistantTurn(content="done", stop_reason="stop"),
     ]
     sid = client.post("/api/sessions", json={"agent_id": agent_id}, headers=bob).json()["id"]
-    resp = client.post(f"/api/sessions/{sid}/chat", json={"content": "save a note"}, headers=bob)
-    types = [e["type"] for e in sse_events(resp)]
-    assert types == ["turn_usage", "tool_call", "tool_result", "text_delta", "turn_usage", "done"]
+    with client.websocket_connect(f"/ws?token={ws_token(bob)}") as ws:
+        ws_recv_frame(ws)
+        ws_send(ws, "session.resume", 1, session_id=sid); ws_response(ws, 1)
+        ws_send(ws, "prompt.submit", 2, session_id=sid, content="save a note")
+        ws_response(ws, 2)
+        events = ws_events_until(ws, "message.complete")
+    types = [e["type"] for e in events]
+    assert types == ["turn.usage", "tool.call", "tool.result", "message.delta", "turn.usage", "message.complete"]
 
 
 def test_reasoning_streamed_and_persisted_via_chat(client, bob, agent_id):
-    """A thinking turn surfaces reasoning_delta over SSE (kept out of the visible
-    text) and the reasoning is persisted on the assistant message."""
     client.provider.script = [
         AssistantTurn(content="the answer", reasoning="let me think", stop_reason="stop"),
     ]
     sid = client.post("/api/sessions", json={"agent_id": agent_id}, headers=bob).json()["id"]
-    resp = client.post(f"/api/sessions/{sid}/chat", json={"content": "ponder this"}, headers=bob)
-    events = sse_events(resp)
-    assert {"type": "reasoning_delta", "text": "let me think"} in events
-    # the visible text stream carries only the answer, not the thinking
-    assert any(e["type"] == "text_delta" and e["text"] == "the answer" for e in events)
-    assert not any(e["type"] == "text_delta" and "let me think" in e["text"] for e in events)
-    # reasoning persists on the stored assistant message (echo-back + history display)
+    with client.websocket_connect(f"/ws?token={ws_token(bob)}") as ws:
+        ws_recv_frame(ws)
+        ws_send(ws, "session.resume", 1, session_id=sid); ws_response(ws, 1)
+        ws_send(ws, "prompt.submit", 2, session_id=sid, content="ponder this")
+        ws_response(ws, 2)
+        events = ws_events_until(ws, "turn.settled")
+    assert any(e["type"] == "reasoning.delta" and e["payload"]["text"] == "let me think" for e in events)
+    assert any(e["type"] == "message.delta" and e["payload"]["text"] == "the answer" for e in events)
+    assert not any(e["type"] == "message.delta" and "let me think" in e["payload"]["text"] for e in events)
     detail = client.get(f"/api/sessions/{sid}", headers=bob).json()
     asst = next(m for m in detail["messages"] if m["role"] == "assistant")
     assert asst["reasoning"] == "let me think"
@@ -272,9 +281,13 @@ def test_skill_self_evolution_via_chat(client, admin, bob, agent_id):
         AssistantTurn(content="skill created", stop_reason="stop"),
     ]
     sid = client.post("/api/sessions", json={"agent_id": agent_id}, headers=bob).json()["id"]
-    resp = client.post(f"/api/sessions/{sid}/chat", json={"content": "learn to greet"}, headers=bob)
-    assert any(e["type"] == "tool_result" and '"ok": true' in e["preview"] for e in sse_events(resp))
-    # skill is now visible via the API to any user, and admin can delete it
+    with client.websocket_connect(f"/ws?token={ws_token(bob)}") as ws:
+        ws_recv_frame(ws)
+        ws_send(ws, "session.resume", 1, session_id=sid); ws_response(ws, 1)
+        ws_send(ws, "prompt.submit", 2, session_id=sid, content="learn to greet")
+        ws_response(ws, 2)
+        events = ws_events_until(ws, "turn.settled")
+    assert any(e["type"] == "tool.result" and '"ok": true' in e["payload"]["preview"] for e in events)
     names = [s["name"] for s in client.get("/api/skills", headers=bob).json()]
     assert "greet" in names
     assert "warmly" in client.get("/api/skills/greet", headers=bob).json()["content"]
@@ -308,22 +321,35 @@ def test_memory_tool_and_injection(client, bob, agent_id):
         AssistantTurn(content="noted", stop_reason="stop"),
     ]
     sid = client.post("/api/sessions", json={"agent_id": agent_id}, headers=bob).json()["id"]
-    client.post(f"/api/sessions/{sid}/chat", json={"content": "remember I like tea"}, headers=bob)
-    # memory should be injected into the next turn's run (frozen snapshot)
+    with client.websocket_connect(f"/ws?token={ws_token(bob)}") as ws:
+        ws_recv_frame(ws)
+        ws_send(ws, "session.resume", 1, session_id=sid); ws_response(ws, 1)
+        ws_send(ws, "prompt.submit", 2, session_id=sid, content="remember I like tea")
+        ws_response(ws, 2)
+        ws_events_until(ws, "turn.settled")
     sid2 = client.post("/api/sessions", json={"agent_id": agent_id}, headers=bob).json()["id"]
-    resp = client.post(f"/api/sessions/{sid2}/chat", json={"content": "what do I like?"}, headers=bob)
-    assert sse_events(resp)[-1]["type"] == "done"
+    with client.websocket_connect(f"/ws?token={ws_token(bob)}") as ws:
+        ws_recv_frame(ws)
+        ws_send(ws, "session.resume", 1, session_id=sid2); ws_response(ws, 1)
+        ws_send(ws, "prompt.submit", 2, session_id=sid2, content="what do I like?")
+        ws_response(ws, 2)
+        events = ws_events_until(ws, "turn.settled")
+    assert any(e["type"] == "message.complete" for e in events)
 
 
 def test_get_session_returns_message_ids(client, bob, agent_id):
-    """get_session exposes each message's DB id (needed for restore/re-edit)."""
     sid = client.post("/api/sessions", json={"agent_id": agent_id}, headers=bob).json()["id"]
-    client.post(f"/api/sessions/{sid}/chat", json={"content": "first"}, headers=bob)
-    client.post(f"/api/sessions/{sid}/chat", json={"content": "second"}, headers=bob)
+    for c in ("first", "second"):
+        with client.websocket_connect(f"/ws?token={ws_token(bob)}") as ws:
+            ws_recv_frame(ws)
+            ws_send(ws, "session.resume", 1, session_id=sid); ws_response(ws, 1)
+            ws_send(ws, "prompt.submit", 2, session_id=sid, content=c)
+            ws_response(ws, 2)
+            ws_events_until(ws, "turn.settled")
     detail = client.get(f"/api/sessions/{sid}", headers=bob).json()
     ids = [m["id"] for m in detail["messages"]]
     assert len(ids) == 4
-    assert ids == sorted(ids)  # ascending, unique
+    assert ids == sorted(ids)
     assert all(isinstance(i, int) for i in ids)
 
 
