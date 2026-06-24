@@ -130,3 +130,33 @@ def uid(client, admin, username) -> int:
 
 def sse_events(resp) -> list[dict]:
     return [json.loads(line[6:]) for line in resp.text.splitlines() if line.startswith("data: ")]
+
+
+# ---- WebSocket test helpers (gateway /ws, JSON-RPC) -----------------------
+
+def ws_token(auth: dict) -> str:
+    return auth["Authorization"].split(" ", 1)[1]
+
+def ws_send(ws, method: str, req_id, **params) -> None:
+    ws.send_text(json.dumps({"jsonrpc": "2.0", "id": req_id, "method": method, "params": params}))
+
+def ws_recv_frame(ws) -> dict:
+    return json.loads(ws.receive_text())
+
+def ws_response(ws, req_id) -> dict:
+    """读帧直到匹配 req_id 的 response/error。"""
+    while True:
+        f = ws_recv_frame(ws)
+        if f.get("id") == req_id:
+            return f
+
+def ws_events_until(ws, wire_type: str) -> list[dict]:
+    """收集 event 帧（params）直到 type==wire_type（含）或 error。"""
+    seen = []
+    while True:
+        f = ws_recv_frame(ws)
+        if f.get("method") == "event":
+            p = f["params"]
+            seen.append(p)
+            if p["type"] == wire_type or p["type"] == "error":
+                return seen
