@@ -16,6 +16,7 @@ from datetime import date
 from typing import Optional
 
 from ..models import Message
+from .redact import redact_sensitive_text
 
 log = logging.getLogger(__name__)
 
@@ -130,6 +131,7 @@ def _strip_summary_wrappers(content: str) -> str:
 
 
 def make_summary_message(summary: str) -> Message:
+    summary = redact_sensitive_text(summary)
     return Message(role="user", content=SUMMARY_PREFIX + summary.strip() + SUMMARY_SUFFIX,
                    compressed=True)
 
@@ -139,20 +141,21 @@ def _clip(text: str, limit: int = 2000) -> str:
 
 
 def serialize_turns(turns: list[Message]) -> str:
-    """Serialize messages into summarizer input, keeping tool call/result detail."""
+    """Serialize messages into summarizer input, keeping tool call/result detail.
+    Credentials are redacted here so secrets never reach the summarizer LLM."""
     lines: list[str] = []
     for m in turns:
         if m.role == "tool":
-            lines.append(f"[工具结果] {_clip(m.content)}")
+            lines.append(f"[工具结果] {_clip(redact_sensitive_text(m.content))}")
         elif m.tool_calls:
             calls = "; ".join(
-                f"{tc.name}({json.dumps(tc.arguments, ensure_ascii=False)[:300]})"
+                f"{tc.name}({redact_sensitive_text(json.dumps(tc.arguments, ensure_ascii=False))[:300]})"
                 for tc in m.tool_calls
             )
-            text = (m.content or "").strip()
+            text = redact_sensitive_text((m.content or "").strip())
             lines.append(f"[assistant] {_clip(text)}" + (f"\n  调用工具: {calls}" if calls else ""))
         elif m.content:
-            lines.append(f"[{m.role}] {_clip(m.content)}")
+            lines.append(f"[{m.role}] {_clip(redact_sensitive_text(m.content))}")
     joined = "\n".join(lines)
     if len(joined) > 60_000:
         joined = joined[:60_000] + "\n…[更早内容已截断]"
@@ -248,5 +251,5 @@ async def summarize(
     except Exception:
         log.exception("context compaction summary failed")
         return None
-    summary = "".join(parts).strip()
+    summary = redact_sensitive_text("".join(parts).strip())
     return summary or None
