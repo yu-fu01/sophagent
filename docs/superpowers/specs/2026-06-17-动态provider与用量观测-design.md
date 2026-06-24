@@ -15,7 +15,7 @@
 
 ## 2. 背景与现状
 
-- **Provider 是服务端静态配置**：`config.py` 的 `_load_providers` 从 `providers.yaml` / `$SOPHCLAW_PROVIDERS` 一次性加载到 `get_config().providers`（`dict[str, ProviderConfig]`）。README 与代码注释明确：**API key 永不入库**，agent 只按名字引用 provider。
+- **Provider 是服务端静态配置**：`config.py` 的 `_load_providers` 从 `providers.yaml` / `$SOPHAGENT_PROVIDERS` 一次性加载到 `get_config().providers`（`dict[str, ProviderConfig]`）。README 与代码注释明确：**API key 永不入库**，agent 只按名字引用 provider。
 - 多处**直接读静态 dict**：`api/agent_routes.py::_validate`、`providers/__init__.py::get_provider`、`agent/loop.py`（`get_config().providers[agent.provider].context_limit`）。
 - **Agent** 存 `provider`（名字）+ `model`（字符串），Agents 页用文本框手填 model（`web/index.html` `agentForm`）。
 - **Token 用量**：`AssistantTurn.input_tokens/output_tokens` 由适配器产出，runner 累加进 `self.usage`，仅在 `done` 事件透出；**无缓存指标**，聊天 UI 也**完全不显示**用量。
@@ -44,7 +44,7 @@
 
 ### 4.1 ProviderRegistry
 
-新增 `sophclaw/providers/registry.py`：
+新增 `sophagent/providers/registry.py`：
 
 ```python
 @dataclass
@@ -105,7 +105,7 @@ ALTER TABLE sessions ADD COLUMN thinking_mode TEXT;       -- NULL/'default'|'thi
 
 迁移按现有写法：`if session_cols and "override_provider" not in session_cols: ALTER ...`。
 
-### 5.3 加密模块 `sophclaw/crypto.py`
+### 5.3 加密模块 `sophagent/crypto.py`
 
 ```python
 # 用 config.secret 经 HKDF-SHA256 派生 32 字节 → urlsafe_b64 → Fernet
@@ -198,7 +198,7 @@ if thinking == "thinking":
 
 ### 9.3 缓存命中率（照搬 hermes，落在后端）
 
-新增 `sophclaw/usage.py`：
+新增 `sophagent/usage.py`：
 
 ```python
 def cache_hit_percent(cache_read, prompt_total):
@@ -262,23 +262,23 @@ composer 上方新增一行：`provider`（select，来自 registry）、`model`
 | 文件 | 改动 |
 |---|---|
 | `pyproject.toml` | 新增依赖 `cryptography` |
-| `sophclaw/crypto.py` | **新增**：Fernet 加解密 + 掩码 |
-| `sophclaw/usage.py` | **新增**：`cache_hit_percent` |
-| `sophclaw/providers/registry.py` | **新增**：`ProviderRegistry` + `ResolvedProvider` |
-| `sophclaw/providers/base.py` | `chat()` 增 `thinking` 参数 |
-| `sophclaw/providers/openai_provider.py` | 读 `cached_tokens`；`reasoning_effort` 映射 + 容错 |
-| `sophclaw/providers/anthropic_provider.py` | 读 cache token；`cache_control`；`thinking` 映射 |
-| `sophclaw/providers/__init__.py` | `get_provider` 委托 registry |
-| `sophclaw/models.py` | `AssistantTurn` 增 cache 字段；`StreamEvent` 增 `turn_usage`；`AgentDef`/session 相关；`ProviderCreate/Patch`、`SessionOverridePatch` pydantic 模型 |
-| `sophclaw/db.py` | `providers` 表入 SCHEMA；sessions 覆盖列迁移；provider CRUD 与 session override 方法 |
-| `sophclaw/config.py` | `_load_providers` 标记 builtin 源（供 registry 合并）|
-| `sophclaw/main.py` | 启动初始化 `app.state.providers` 并 `refresh()` |
-| `sophclaw/agent/runtime.py` | `build_runner` 注入 effective provider/model/thinking + ResolvedProvider |
-| `sophclaw/agent/loop.py` | 用注入的 ResolvedProvider；发 `turn_usage`；`done` 扩展用量字段 |
-| `sophclaw/api/provider_routes.py` | **新增**：provider CRUD + 模型列表 |
-| `sophclaw/api/__init__.py` | 注册 provider 路由 |
-| `sophclaw/api/agent_routes.py` | `_validate` 改查 registry |
-| `sophclaw/api/session_routes.py` | `PATCH` 写覆盖列；chat 路由读覆盖列传入 runner |
+| `sophagent/crypto.py` | **新增**：Fernet 加解密 + 掩码 |
+| `sophagent/usage.py` | **新增**：`cache_hit_percent` |
+| `sophagent/providers/registry.py` | **新增**：`ProviderRegistry` + `ResolvedProvider` |
+| `sophagent/providers/base.py` | `chat()` 增 `thinking` 参数 |
+| `sophagent/providers/openai_provider.py` | 读 `cached_tokens`；`reasoning_effort` 映射 + 容错 |
+| `sophagent/providers/anthropic_provider.py` | 读 cache token；`cache_control`；`thinking` 映射 |
+| `sophagent/providers/__init__.py` | `get_provider` 委托 registry |
+| `sophagent/models.py` | `AssistantTurn` 增 cache 字段；`StreamEvent` 增 `turn_usage`；`AgentDef`/session 相关；`ProviderCreate/Patch`、`SessionOverridePatch` pydantic 模型 |
+| `sophagent/db.py` | `providers` 表入 SCHEMA；sessions 覆盖列迁移；provider CRUD 与 session override 方法 |
+| `sophagent/config.py` | `_load_providers` 标记 builtin 源（供 registry 合并）|
+| `sophagent/main.py` | 启动初始化 `app.state.providers` 并 `refresh()` |
+| `sophagent/agent/runtime.py` | `build_runner` 注入 effective provider/model/thinking + ResolvedProvider |
+| `sophagent/agent/loop.py` | 用注入的 ResolvedProvider；发 `turn_usage`；`done` 扩展用量字段 |
+| `sophagent/api/provider_routes.py` | **新增**：provider CRUD + 模型列表 |
+| `sophagent/api/__init__.py` | 注册 provider 路由 |
+| `sophagent/api/agent_routes.py` | `_validate` 改查 registry |
+| `sophagent/api/session_routes.py` | `PATCH` 写覆盖列；chat 路由读覆盖列传入 runner |
 | `web/index.html` | Provider 管理卡片、model 下拉、会话工具栏、用量状态栏 + 每轮标签 |
 | `tests/test_*.py` | crypto / provider CRUD / registry / 覆盖 / 用量 / 权限 断言 |
 
