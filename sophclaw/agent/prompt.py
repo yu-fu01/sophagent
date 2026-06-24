@@ -5,7 +5,33 @@ from __future__ import annotations
 from datetime import datetime, timezone
 from pathlib import Path
 
+from ..config import get_config
 from ..models import AgentDef
+
+_MEMORY_SECTIONS = (
+    ("memory", "MEMORY (your notes)",
+     "Facts you saved about the environment, conventions, and lessons learned:"),
+    ("user", "USER PROFILE",
+     "What you know about this user — identity, preferences, communication style:"),
+)
+
+
+def _render_memory(memories: dict[str, list[str]]) -> list[str]:
+    """Render the dual-store memory blocks, each with a hermes-style usage
+    header. Empty stores are omitted entirely."""
+    cfg = get_config()
+    limits = {"memory": cfg.memory_total_chars, "user": cfg.user_total_chars}
+    parts: list[str] = []
+    for key, heading, intro in _MEMORY_SECTIONS:
+        entries = memories.get(key) or []
+        if not entries:
+            continue
+        used = sum(len(e) for e in entries)
+        limit = limits[key]
+        pct = round(used / limit * 100) if limit else 0
+        body = "\n".join(f"- {e}" for e in entries)
+        parts.append(f"## {heading} [{pct}% — {used}/{limit} chars]\n{intro}\n{body}")
+    return parts
 
 SELF_EVOLVE_GUIDE = """\
 ## Skills
@@ -18,11 +44,18 @@ a workflow worth repeating, capture it with skill_manage(action="create").
 When an existing skill turns out to be wrong or incomplete, improve it with
 skill_manage(action="patch"). Keep skills narrow, procedural and actionable."""
 
+SESSION_SEARCH_GUIDE = """\
+## Recall
+When the user references something from a past conversation ("last time", "as I
+mentioned", "we did this before") or you suspect relevant prior context exists,
+use session_search to recall it before asking them to repeat themselves. It
+searches only this user's own past conversations."""
+
 
 def build_system_prompt(
     agent: AgentDef,
     skill_index: list[dict] | None = None,
-    memories: list[str] | None = None,
+    memories: dict[str, list[str]] | None = None,
     workspace: Path | None = None,
 ) -> str:
     parts = [agent.system_prompt.strip()]
@@ -39,6 +72,9 @@ def build_system_prompt(
         env_lines.append("You have a private workspace directory; file and terminal tools operate inside it.")
     parts.append("## Environment\n" + "\n".join(env_lines))
 
+    if "session_search" in agent.tools:
+        parts.append(SESSION_SEARCH_GUIDE)
+
     has_skill_tools = any(t in agent.tools for t in ("skills_list", "skill_view", "skill_manage"))
     if has_skill_tools:
         parts.append(SELF_EVOLVE_GUIDE)
@@ -49,7 +85,6 @@ def build_system_prompt(
             parts.append("## Available Skills\n(none yet — create the first one when you learn something reusable)")
 
     if memories:
-        parts.append("## Memory\nFacts you saved in earlier conversations with this user:\n" +
-                     "\n".join(f"- {m}" for m in memories))
+        parts.extend(_render_memory(memories))
 
     return "\n\n".join(parts)

@@ -73,6 +73,10 @@ def client(tmp_path, monkeypatch):
     providers_mod.reset_providers()
     cfg = config_mod.get_config()
     cfg.providers["test"] = ProviderConfig(name="test", api_mode="openai", context_limit=100_000)
+    # Background self-improvement review is a production default-on feature, but
+    # it would fire after every scripted turn and perturb provider-call
+    # assertions. Turn-based tests opt out here; review tests drive it directly.
+    cfg.self_improve_enabled = False
     provider = EchoProvider()
     providers_mod._cache["test"] = provider
 

@@ -57,6 +57,7 @@ CREATE INDEX IF NOT EXISTS idx_messages_session ON messages(session_id, id);
 CREATE TABLE IF NOT EXISTS memory (
   id INTEGER PRIMARY KEY,
   user_id INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+  target TEXT NOT NULL DEFAULT 'memory',
   content TEXT NOT NULL,
   created_at TEXT NOT NULL,
   updated_at TEXT NOT NULL
@@ -117,7 +118,44 @@ CREATE TABLE IF NOT EXISTS im_bindings (
   created_at TEXT NOT NULL,
   PRIMARY KEY (platform, chat_id)
 );
+-- Staged memory writes awaiting user approval (when write_approval is on).
+CREATE TABLE IF NOT EXISTS pending_writes (
+  id INTEGER PRIMARY KEY,
+  user_id INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+  kind TEXT NOT NULL DEFAULT 'memory',
+  op TEXT NOT NULL,                          -- add | replace | remove
+  target TEXT NOT NULL DEFAULT 'memory',     -- memory | user
+  content TEXT NOT NULL DEFAULT '',
+  memory_id INTEGER,                         -- target row for replace/remove
+  origin TEXT NOT NULL DEFAULT 'foreground', -- foreground | review
+  created_at TEXT NOT NULL
+);
+CREATE INDEX IF NOT EXISTS idx_pending_user ON pending_writes(user_id, id);
+-- Full-text index over user/assistant message text for session_search.
+-- Standalone (not external-content) because messages.content is JSON; we sync
+-- it in Python from the message write paths. UNINDEXED columns are stored but
+-- not tokenised, so they can be combined with MATCH in a WHERE clause.
+CREATE VIRTUAL TABLE IF NOT EXISTS messages_fts USING fts5(
+  text,
+  message_id UNINDEXED,
+  session_id UNINDEXED,
+  user_id UNINDEXED,
+  role UNINDEXED,
+  tokenize = 'unicode61'
+);
 """
+
+
+_FTS_ROLES = ("user", "assistant")
+
+
+def _fts_text(role: str, content: str) -> Optional[str]:
+    """Text to index for session_search, or None to skip. Only user/assistant
+    turns are indexed (tool output is usually noise); empty content is skipped."""
+    if role not in _FTS_ROLES:
+        return None
+    text = (content or "").strip()
+    return text or None
 
 
 def now() -> str:
@@ -139,6 +177,7 @@ class Database:
         await self.conn.executescript(SCHEMA)
         await self.conn.commit()
         await self._migrate_structure()
+        await self._backfill_fts()
 
     async def _columns(self, table: str) -> set[str]:
         rows = await self._all(f"PRAGMA table_info({table})")
@@ -178,6 +217,12 @@ class Database:
         for col in ("override_provider", "override_model", "thinking_mode"):
             if session_cols and col not in session_cols:
                 await self._exec(f"ALTER TABLE sessions ADD COLUMN {col} TEXT")
+        memory_cols = await self._columns("memory")
+        if memory_cols and "target" not in memory_cols:
+            # dual-store: legacy single-store rows become agent-notes ('memory')
+            await self._exec(
+                "ALTER TABLE memory ADD COLUMN target TEXT NOT NULL DEFAULT 'memory'"
+            )
 
     async def close(self) -> None:
         if self.conn:
@@ -330,11 +375,31 @@ class Database:
 
     # -- messages ------------------------------------------------------------
 
-    async def append_messages(self, session_id: str, messages: list[Message]) -> None:
-        await self.conn.executemany(
-            "INSERT INTO messages (session_id, role, content, created_at) VALUES (?,?,?,?)",
-            [(session_id, m.role, m.to_json(), now()) for m in messages],
+    async def _session_user_id(self, session_id: str) -> Optional[int]:
+        row = await self._one("SELECT user_id FROM sessions WHERE id=?", (session_id,))
+        return row["user_id"] if row else None
+
+    async def _index_message(
+        self, message_id: int, session_id: str, user_id: Optional[int], role: str, content: str
+    ) -> None:
+        """Add a row to messages_fts if this message is searchable. No commit."""
+        text = _fts_text(role, content)
+        if text is None or user_id is None:
+            return
+        await self.conn.execute(
+            "INSERT INTO messages_fts (text, message_id, session_id, user_id, role) "
+            "VALUES (?,?,?,?,?)",
+            (text, message_id, session_id, user_id, role),
         )
+
+    async def append_messages(self, session_id: str, messages: list[Message]) -> None:
+        user_id = await self._session_user_id(session_id)
+        for m in messages:
+            cur = await self.conn.execute(
+                "INSERT INTO messages (session_id, role, content, created_at) VALUES (?,?,?,?)",
+                (session_id, m.role, m.to_json(), now()),
+            )
+            await self._index_message(cur.lastrowid, session_id, user_id, m.role, m.content)
         await self.conn.commit()
 
     async def load_messages(self, session_id: str) -> list[Message]:
@@ -355,32 +420,106 @@ class Database:
         """Delete the live (archived=0) message with id>=message_id and everything after it.
         Used by restore (rewind to before a user message) and re-edit (send-time replace).
         Returns the number of deleted rows."""
+        # collect the ids first so we can drop their FTS rows in lock-step
+        doomed = await self._all(
+            "SELECT id FROM messages WHERE session_id=? AND archived=0 AND id>=?",
+            (session_id, message_id),
+        )
         cur = await self.conn.execute(
             "DELETE FROM messages WHERE session_id=? AND archived=0 AND id>=?",
             (session_id, message_id),
         )
+        for r in doomed:
+            await self.conn.execute(
+                "DELETE FROM messages_fts WHERE message_id=?", (r["id"],)
+            )
         await self.conn.commit()
         return cur.rowcount
 
     async def compact_session(self, session_id: str, live_history: list[Message]) -> None:
-        """After in-memory compression: archive current rows (kept for audit)
+        """After in-memory compression: archive current rows (kept for audit, and
+        kept in the FTS index so session_search can still recall the originals)
         and re-insert the compressed history as the live message log."""
+        user_id = await self._session_user_id(session_id)
         await self.conn.execute("UPDATE messages SET archived=1 WHERE session_id=? AND archived=0", (session_id,))
-        await self.conn.executemany(
-            "INSERT INTO messages (session_id, role, content, created_at) VALUES (?,?,?,?)",
-            [(session_id, m.role, m.to_json(), now()) for m in live_history],
-        )
+        for m in live_history:
+            cur = await self.conn.execute(
+                "INSERT INTO messages (session_id, role, content, created_at) VALUES (?,?,?,?)",
+                (session_id, m.role, m.to_json(), now()),
+            )
+            await self._index_message(cur.lastrowid, session_id, user_id, m.role, m.content)
         await self.conn.commit()
+
+    # -- session search (FTS5) -------------------------------------------------
+
+    async def _backfill_fts(self) -> None:
+        """One-time index population for DBs that predate messages_fts. Idempotent:
+        guarded by the FTS table being empty."""
+        row = await self._one("SELECT count(*) AS c FROM messages_fts")
+        if row and row["c"]:
+            return
+        rows = await self._all(
+            "SELECT m.id, m.session_id, m.role, m.content, s.user_id "
+            "FROM messages m JOIN sessions s ON s.id = m.session_id "
+            "WHERE m.role IN ('user','assistant')"
+        )
+        for r in rows:
+            content = Message.from_json(r["content"]).content
+            await self._index_message(r["id"], r["session_id"], r["user_id"], r["role"], content)
+        await self.conn.commit()
+
+    async def search_messages(self, user_id: int, query: str, limit_rows: int = 50) -> list[aiosqlite.Row]:
+        """FTS5 ranked matches scoped to one user. Returns message_id, session_id,
+        role and a highlighted snippet, best matches first."""
+        return await self._all(
+            "SELECT message_id, session_id, role, "
+            "snippet(messages_fts, 0, '[', ']', '…', 12) AS snippet "
+            "FROM messages_fts WHERE messages_fts MATCH ? AND user_id=? "
+            "ORDER BY rank LIMIT ?",
+            (query, user_id, limit_rows),
+        )
+
+    async def session_texts(self, session_id: str) -> list[tuple[int, str, str]]:
+        """Ordered (id, role, text) of indexable user/assistant messages in a
+        session — the unit session_search windows over."""
+        rows = await self._all(
+            "SELECT id, role, content FROM messages WHERE session_id=? "
+            "AND role IN ('user','assistant') ORDER BY id",
+            (session_id,),
+        )
+        out: list[tuple[int, str, str]] = []
+        for r in rows:
+            text = (Message.from_json(r["content"]).content or "").strip()
+            if text:
+                out.append((r["id"], r["role"], text))
+        return out
+
+    async def recent_sessions(self, user_id: int, limit: int = 10) -> list[aiosqlite.Row]:
+        return await self._all(
+            "SELECT id, title, updated_at FROM sessions WHERE user_id=? "
+            "ORDER BY updated_at DESC LIMIT ?",
+            (user_id, limit),
+        )
 
     # -- memory ----------------------------------------------------------------
 
-    async def memory_list(self, user_id: int) -> list[aiosqlite.Row]:
-        return await self._all("SELECT * FROM memory WHERE user_id=? ORDER BY id", (user_id,))
+    async def memory_list(
+        self, user_id: int, target: str | None = None
+    ) -> list[aiosqlite.Row]:
+        if target is None:
+            return await self._all(
+                "SELECT * FROM memory WHERE user_id=? ORDER BY id", (user_id,)
+            )
+        return await self._all(
+            "SELECT * FROM memory WHERE user_id=? AND target=? ORDER BY id",
+            (user_id, target),
+        )
 
-    async def memory_add(self, user_id: int, content: str) -> int:
+    async def memory_add(self, user_id: int, content: str, target: str = "memory") -> int:
         cur = await self._exec(
-            "INSERT INTO memory (user_id, content, created_at, updated_at) VALUES (?,?,?,?)",
-            (user_id, content, now(), now()),
+            "INSERT INTO memory (user_id, target, content, created_at, updated_at) "
+            "VALUES (?,?,?,?,?)",
+            (user_id, target, content, now(), now()),
         )
         return cur.lastrowid
 
@@ -394,6 +533,39 @@ class Database:
     async def memory_remove(self, memory_id: int, user_id: int) -> bool:
         cur = await self._exec("DELETE FROM memory WHERE id=? AND user_id=?", (memory_id, user_id))
         return cur.rowcount > 0
+
+    # -- pending writes (write-approval staging) -----------------------------
+
+    async def pending_add(
+        self, user_id: int, *, op: str, target: str = "memory", content: str = "",
+        memory_id: int | None = None, origin: str = "foreground",
+    ) -> int:
+        cur = await self._exec(
+            "INSERT INTO pending_writes (user_id, op, target, content, memory_id, origin, "
+            "created_at) VALUES (?,?,?,?,?,?,?)",
+            (user_id, op, target, content, memory_id, origin, now()),
+        )
+        return cur.lastrowid
+
+    async def pending_list(self, user_id: int) -> list[aiosqlite.Row]:
+        return await self._all(
+            "SELECT * FROM pending_writes WHERE user_id=? ORDER BY id", (user_id,)
+        )
+
+    async def pending_get(self, pending_id: int, user_id: int) -> Optional[aiosqlite.Row]:
+        return await self._one(
+            "SELECT * FROM pending_writes WHERE id=? AND user_id=?", (pending_id, user_id)
+        )
+
+    async def pending_remove(self, pending_id: int, user_id: int) -> bool:
+        cur = await self._exec(
+            "DELETE FROM pending_writes WHERE id=? AND user_id=?", (pending_id, user_id)
+        )
+        return cur.rowcount > 0
+
+    async def pending_clear(self, user_id: int) -> int:
+        cur = await self._exec("DELETE FROM pending_writes WHERE user_id=?", (user_id,))
+        return cur.rowcount
 
     # -- providers -----------------------------------------------------------
 

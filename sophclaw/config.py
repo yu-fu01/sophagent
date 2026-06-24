@@ -44,8 +44,13 @@ class Config:
     max_upload_bytes: int = 10 * 1024 * 1024  # 上传/下载单文件上限 (10MB)
     max_skill_md_bytes: int = 64 * 1024
     max_skill_file_bytes: int = 256 * 1024
-    memory_max_items: int = 50
-    memory_max_chars: int = 500
+    # 双存储字符预算（对齐 hermes）：每个 target 的总字符上限 + 单条上限。
+    memory_total_chars: int = 2200  # MEMORY 段（agent 笔记，~800 token）
+    user_total_chars: int = 1375    # USER 段（用户画像，~500 token）
+    memory_max_chars: int = 500     # 单条上限
+    # 后台自改进 review（③）：turn 后重放对话自动写记忆/改 skill
+    self_improve_enabled: bool = True
+    review_max_iterations: int = 6
     # WebSocket DNS-rebinding defence: when non-empty, the gateway only accepts
     # handshakes whose Host header matches one of these (host or host:port).
     # Empty => accept any host (development / tests).
@@ -154,6 +159,8 @@ def load_config() -> Config:
             int(u) for u in
             (os.environ.get("SOPHCLAW_TELEGRAM_ALLOWED_USER_IDS") or "").split(",") if u
         ),
+        self_improve_enabled=os.environ.get("SOPHCLAW_SELF_IMPROVE", "true").lower()
+        not in {"0", "false", "no", "off"},
     )
     cfg.skills_dir.mkdir(parents=True, exist_ok=True)
     cfg.workspaces_dir.mkdir(parents=True, exist_ok=True)
@@ -187,6 +194,13 @@ async def effective_max_upload_bytes(db) -> int:
         except ValueError:
             pass
     return get_config().max_upload_bytes
+
+
+async def effective_write_approval(db) -> bool:
+    """Runtime-effective memory write-approval gate: an admin-set DB override
+    (key ``write_approval``) wins; default off (write freely, like hermes)."""
+    raw = await db.get_setting("write_approval")
+    return str(raw).lower() in {"1", "true", "yes", "on"} if raw is not None else False
 
 
 async def effective_compress_threshold(db) -> float:

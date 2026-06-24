@@ -29,7 +29,11 @@ async def build_runner(
     thinking_mode: Optional[str] = None,
 ) -> AgentRunner:
     cfg = get_config()
-    memories = [r["content"] for r in await db.memory_list(user_id)] if db else []
+    # dual-store: group entries by target ('memory' = agent notes, 'user' = profile)
+    memories: dict[str, list[str]] = {"memory": [], "user": []}
+    if db:
+        for r in await db.memory_list(user_id):
+            memories.setdefault(r["target"], []).append(r["content"])
     ctx = ToolContext(
         user_id=user_id,
         workspace=cfg.workspace_for(user_id),

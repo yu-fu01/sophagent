@@ -18,7 +18,7 @@ from __future__ import annotations
 from .registry import CommandDef, dispatch, get_commands, register, resolve
 from .builtin import (compact as cmd_compact, help as cmd_help, clear as cmd_clear,
                       model as cmd_model, title as cmd_title, stop as cmd_stop,
-                      undo as cmd_undo, retry as cmd_retry)
+                      undo as cmd_undo, retry as cmd_retry, memory as cmd_memory)
 
 
 def _init() -> None:
@@ -40,6 +40,9 @@ def _init() -> None:
     register(CommandDef("compact", "手动压缩对话以节省上下文", "会话",
                         args_hint="[聚焦主题]",
                         handler=cmd_compact.handle))
+    register(CommandDef("memory", "审批待入库的记忆写入（write_approval 开启时）", "配置",
+                        args_hint="pending | approve <id|all> | reject <id|all>",
+                        handler=cmd_memory.handle))
 
 
 _init()

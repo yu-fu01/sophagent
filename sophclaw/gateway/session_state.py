@@ -63,6 +63,8 @@ class SessionState:
     events: deque = field(default_factory=lambda: deque(maxlen=EVENT_BUFFER_MAX))
     grace_handle: Optional[asyncio.TimerHandle] = None
     grace_seconds: float = DEFAULT_GRACE_SECONDS
+    # a background self-improvement review is in flight for this session
+    review_running: bool = False
 
     # ── event flow ─────────────────────────────────────────────────────────
 
@@ -91,6 +93,20 @@ class SessionState:
         except Exception:
             log.exception("emit session.info failed session=%s", self.session_id)
         self.events.clear()
+
+    async def push_review_notice(self, summary: str, actions: list[str]) -> None:
+        """Out-of-turn push: the background self-improvement review saved
+        something. Emitted straight to the live transport (best-effort) and NOT
+        buffered into the turn replay deque — it happens after the turn settled,
+        so a reconnecting client reads the result from the DB, not a replay."""
+        wire_type, payload = protocol.remap_event(
+            {"type": "review", "summary": summary, "actions": actions}
+        )
+        frame = protocol.make_event(wire_type, self.session_id, payload)
+        try:
+            await self.transport.emit(frame)
+        except Exception:
+            log.debug("review notice dropped session=%s", self.session_id)
 
     # ── turn driving ────────────────────────────────────────────────────────
 

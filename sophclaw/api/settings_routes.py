@@ -7,7 +7,7 @@ from pydantic import BaseModel
 
 from ..auth import require_admin, require_user
 from ..config import (effective_max_upload_bytes, effective_compress_threshold,
-                      effective_telegram_token,
+                      effective_telegram_token, effective_write_approval,
                       get_config, COMPRESS_THRESHOLD_MIN, COMPRESS_THRESHOLD_MAX,
                       DEFAULT_COMPRESS_THRESHOLD)
 
@@ -25,6 +25,10 @@ class CompressThresholdBody(BaseModel):
     compress_threshold: float
 
 
+class WriteApprovalBody(BaseModel):
+    write_approval: bool
+
+
 @router.get("")
 async def get_settings(request: Request, _user=Depends(require_user)):
     db = request.app.state.db
@@ -38,7 +42,18 @@ async def get_settings(request: Request, _user=Depends(require_user)):
         "compress_threshold_min": COMPRESS_THRESHOLD_MIN,
         "compress_threshold_max": COMPRESS_THRESHOLD_MAX,
         "telegram_configured": bool(await effective_telegram_token(db)),
+        "write_approval": await effective_write_approval(db),
     }
+
+
+@router.put("/write_approval")
+async def set_write_approval(body: WriteApprovalBody, request: Request,
+                             admin=Depends(require_admin)):
+    """Toggle the global memory write-approval gate (admin policy)."""
+    await request.app.state.db.set_setting(
+        "write_approval", "true" if body.write_approval else "false", admin["id"]
+    )
+    return {"ok": True}
 
 
 @router.put("/max_upload_bytes")
