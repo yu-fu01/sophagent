@@ -218,3 +218,102 @@ async def test_review_stages_with_review_origin_when_gated(tmp_path, monkeypatch
         await db.close()
         config_mod.reset_config()
         providers_mod.reset_providers()
+
+
+# -- ④ 单元 4：/memory 审批命令 --------------------------------------------
+
+
+async def _cmd(db, args, user_id=1):
+    from sophclaw.agent.commands import dispatch_command
+
+    return await dispatch_command(
+        f"/memory {args}".strip(), db, {"id": "s1"}, {"id": user_id}, manager=None,
+    )
+
+
+@pytest.mark.asyncio
+async def test_memory_pending_lists_user_entries(tmp_path, monkeypatch):
+    db = await _db(tmp_path, monkeypatch)
+    try:
+        await db.pending_add(1, op="add", target="user", content="bob staged", origin="foreground")
+        await db.pending_add(2, op="add", target="user", content="alice staged", origin="review")
+        res = await _cmd(db, "pending", user_id=1)
+        assert res["handled"] and "bob staged" in res["content"]
+        assert "alice staged" not in res["content"]  # 隔离
+    finally:
+        await db.close()
+        config_mod.reset_config()
+
+
+@pytest.mark.asyncio
+async def test_memory_approve_executes_and_dequeues(tmp_path, monkeypatch):
+    db = await _db(tmp_path, monkeypatch)
+    try:
+        pid = await db.pending_add(1, op="add", target="user", content="approve me", origin="review")
+        res = await _cmd(db, f"approve {pid}", user_id=1)
+        assert res["handled"]
+        assert [r["content"] for r in await db.memory_list(1, target="user")] == ["approve me"]
+        assert await db.pending_list(1) == []  # 出队
+    finally:
+        await db.close()
+        config_mod.reset_config()
+
+
+@pytest.mark.asyncio
+async def test_memory_reject_drops_without_executing(tmp_path, monkeypatch):
+    db = await _db(tmp_path, monkeypatch)
+    try:
+        pid = await db.pending_add(1, op="add", target="user", content="drop me", origin="foreground")
+        await _cmd(db, f"reject {pid}", user_id=1)
+        assert await db.memory_list(1, target="user") == []  # 未执行
+        assert await db.pending_list(1) == []                 # 已丢弃
+    finally:
+        await db.close()
+        config_mod.reset_config()
+
+
+@pytest.mark.asyncio
+async def test_memory_approve_all(tmp_path, monkeypatch):
+    db = await _db(tmp_path, monkeypatch)
+    try:
+        await db.pending_add(1, op="add", target="user", content="a1", origin="foreground")
+        await db.pending_add(1, op="add", target="memory", content="a2", origin="review")
+        await _cmd(db, "approve all", user_id=1)
+        contents = {r["content"] for r in await db.memory_list(1)}
+        assert contents == {"a1", "a2"}
+        assert await db.pending_list(1) == []
+    finally:
+        await db.close()
+        config_mod.reset_config()
+
+
+@pytest.mark.asyncio
+async def test_memory_approve_others_pending_rejected(tmp_path, monkeypatch):
+    db = await _db(tmp_path, monkeypatch)
+    try:
+        pid = await db.pending_add(2, op="add", target="user", content="alice only", origin="foreground")
+        # bob (user 1) 试图 approve alice 的 pending
+        res = await _cmd(db, f"approve {pid}", user_id=1)
+        assert "not found" in res["content"].lower()
+        assert await db.memory_list(2, target="user") == []  # 未执行
+        assert len(await db.pending_list(2)) == 1            # 仍在 alice 队列
+    finally:
+        await db.close()
+        config_mod.reset_config()
+
+
+# -- ④ 单元 5：settings 路由 write_approval ---------------------------------
+
+
+def test_settings_write_approval_admin_toggle(client, admin, bob):
+    # 默认 GET 返回 False
+    assert client.get("/api/settings", headers=bob).json()["write_approval"] is False
+    # admin 开启
+    r = client.put("/api/settings/write_approval", json={"write_approval": True}, headers=admin)
+    assert r.status_code == 200, r.text
+    assert client.get("/api/settings", headers=bob).json()["write_approval"] is True
+
+
+def test_settings_write_approval_non_admin_forbidden(client, admin, bob):
+    r = client.put("/api/settings/write_approval", json={"write_approval": True}, headers=bob)
+    assert r.status_code == 403

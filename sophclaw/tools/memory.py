@@ -125,23 +125,7 @@ async def memory(
             return f"Error: rejected by safety scan ({reason})"
         if gated:
             return await _stage("add")
-        rows = await db.memory_list(ctx.user_id, target=target)
-        used = sum(len(r["content"]) for r in rows)
-        chk = check_write(
-            new_content=content,
-            existing_contents=[r["content"] for r in rows],
-            used_chars=used,
-            max_chars=cfg.memory_max_chars,
-            total_limit=limit,
-        )
-        if chk.status == "too_long":
-            return f"Error: entry too long (max {cfg.memory_max_chars} chars)"
-        if chk.status == "duplicate":
-            return "OK (no duplicate added — that entry already exists)"
-        if chk.status == "over_capacity":
-            return _over_capacity_msg(target, len(content), chk.used, chk.limit, rows)
-        mid = await db.memory_add(ctx.user_id, content, target=target)
-        return f"Saved {target} memory [{mid}]"
+        return await do_add(db, ctx.user_id, target, content, cfg)
 
     if action == "replace":
         content = content.strip()
@@ -155,23 +139,7 @@ async def memory(
             return f"Error: {target} memory [{memory_id}] not found"
         if gated:
             return await _stage("replace", mid=memory_id)
-        # capacity excludes the row being replaced (it's making way for the new one)
-        others = [r for r in rows if r["id"] != memory_id]
-        used = sum(len(r["content"]) for r in others)
-        chk = check_write(
-            new_content=content,
-            existing_contents=[r["content"] for r in others],
-            used_chars=used,
-            max_chars=cfg.memory_max_chars,
-            total_limit=limit,
-            check_dup=False,
-        )
-        if chk.status == "too_long":
-            return f"Error: entry too long (max {cfg.memory_max_chars} chars)"
-        if chk.status == "over_capacity":
-            return _over_capacity_msg(target, len(content), chk.used, chk.limit, others)
-        await db.memory_replace(memory_id, ctx.user_id, content)
-        return f"Updated {target} memory [{memory_id}]"
+        return await do_replace(db, ctx.user_id, target, content, memory_id, cfg)
 
     if action == "remove":
         if gated:
@@ -179,7 +147,72 @@ async def memory(
             if not any(r["id"] == memory_id for r in rows):
                 return f"Error: {target} memory [{memory_id}] not found"
             return await _stage("remove", mid=memory_id)
-        ok = await db.memory_remove(memory_id, ctx.user_id)
-        return f"Removed memory [{memory_id}]" if ok else f"Error: memory [{memory_id}] not found"
+        return await do_remove(db, ctx.user_id, memory_id)
 
     return f"Error: unknown action {action!r}"
+
+
+# -- shared write executors (used by the tool's non-gated path and by approval) --
+
+
+async def do_add(db, user_id: int, target: str, content: str, cfg) -> str:
+    limit = _limit_for(cfg, target)
+    rows = await db.memory_list(user_id, target=target)
+    used = sum(len(r["content"]) for r in rows)
+    chk = check_write(
+        new_content=content, existing_contents=[r["content"] for r in rows],
+        used_chars=used, max_chars=cfg.memory_max_chars, total_limit=limit,
+    )
+    if chk.status == "too_long":
+        return f"Error: entry too long (max {cfg.memory_max_chars} chars)"
+    if chk.status == "duplicate":
+        return "OK (no duplicate added — that entry already exists)"
+    if chk.status == "over_capacity":
+        return _over_capacity_msg(target, len(content), chk.used, chk.limit, rows)
+    mid = await db.memory_add(user_id, content, target=target)
+    return f"Saved {target} memory [{mid}]"
+
+
+async def do_replace(db, user_id: int, target: str, content: str, memory_id: int, cfg) -> str:
+    limit = _limit_for(cfg, target)
+    rows = await db.memory_list(user_id, target=target)
+    if not any(r["id"] == memory_id for r in rows):
+        return f"Error: {target} memory [{memory_id}] not found"
+    # capacity excludes the row being replaced (it's making way for the new one)
+    others = [r for r in rows if r["id"] != memory_id]
+    used = sum(len(r["content"]) for r in others)
+    chk = check_write(
+        new_content=content, existing_contents=[r["content"] for r in others],
+        used_chars=used, max_chars=cfg.memory_max_chars, total_limit=limit, check_dup=False,
+    )
+    if chk.status == "too_long":
+        return f"Error: entry too long (max {cfg.memory_max_chars} chars)"
+    if chk.status == "over_capacity":
+        return _over_capacity_msg(target, len(content), chk.used, chk.limit, others)
+    await db.memory_replace(memory_id, user_id, content)
+    return f"Updated {target} memory [{memory_id}]"
+
+
+async def do_remove(db, user_id: int, memory_id: int) -> str:
+    ok = await db.memory_remove(memory_id, user_id)
+    return f"Removed memory [{memory_id}]" if ok else f"Error: memory [{memory_id}] not found"
+
+
+async def apply_pending_write(db, user_id: int, row, cfg) -> str:
+    """Execute a previously-staged memory op, bypassing the approval gate
+    (approving IS the release). Re-runs the normal write checks (scan / capacity
+    / dedup), so an approved add that no longer fits still surfaces the
+    consolidation prompt instead of silently landing."""
+    op, target = row["op"], row["target"]
+    content, mid = row["content"], row["memory_id"]
+    if op in ("add", "replace"):
+        reason = scan_memory(content)
+        if reason:
+            return f"Error: rejected by safety scan ({reason})"
+    if op == "add":
+        return await do_add(db, user_id, target, content, cfg)
+    if op == "replace":
+        return await do_replace(db, user_id, target, content, mid, cfg)
+    if op == "remove":
+        return await do_remove(db, user_id, mid)
+    return f"Error: unknown pending op {op!r}"
