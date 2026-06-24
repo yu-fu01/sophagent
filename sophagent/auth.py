@@ -44,8 +44,19 @@ async def require_user(
     request: Request,
     creds: HTTPAuthorizationCredentials | None = Depends(_bearer),
 ) -> Any:
-    """Resolve the JWT to a live user row (revoked/deleted users fail here)."""
+    """Resolve the JWT to a live user row (revoked/deleted users fail here).
+
+    Local-dev escape hatch: with ``SOPHAGENT_NO_LOGIN`` enabled, a request that
+    carries no bearer token is served as the bootstrap admin. An explicit token
+    is still decoded normally, so per-user sessions keep working.
+    """
     if creds is None:
+        cfg = get_config()
+        if cfg.no_login:
+            admin = await request.app.state.db.get_user_by_username(cfg.admin_username)
+            if admin is None:
+                raise HTTPException(401, "no-login enabled but admin user is missing")
+            return admin
         raise HTTPException(401, "missing bearer token")
     try:
         payload = decode_token(creds.credentials)

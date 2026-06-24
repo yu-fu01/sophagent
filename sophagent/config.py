@@ -34,6 +34,10 @@ class Config:
     secret: str
     admin_username: str
     admin_password: str | None
+    # Local-dev only: when true, token-less requests auto-resolve to the
+    # bootstrap admin (the Vue frontend has no login page). Never enable in
+    # production — it disables authentication for anonymous callers.
+    no_login: bool = False
     providers: dict[str, ProviderConfig] = field(default_factory=dict)
     token_ttl_hours: int = 24
     max_concurrent_turns: int = 32
@@ -144,6 +148,8 @@ def load_config() -> Config:
         secret=_load_secret(data_dir),
         admin_username=os.environ.get("ADMIN_USERNAME", "admin"),
         admin_password=os.environ.get("ADMIN_PASSWORD") or None,
+        no_login=os.environ.get("SOPHAGENT_NO_LOGIN", "").lower()
+        in {"1", "true", "yes", "on"},
         providers=_load_providers(data_dir),
         token_ttl_hours=int(os.environ.get("SOPHAGENT_TOKEN_TTL_HOURS", "24")),
         max_concurrent_turns=int(os.environ.get("SOPHAGENT_MAX_CONCURRENT_TURNS", "32")),
