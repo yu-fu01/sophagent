@@ -54,6 +54,10 @@ class Config:
     # mid-turn: the turn keeps running; if no client reconnects in this window
     # the session state is reaped (DB history already persisted).
     ws_grace_seconds: float = 60.0
+    # IM 网关（Telegram）：配了 bot token 才启用 in-process 轮询。
+    telegram_bot_token: str = ""
+    # 额外白名单（逗号分隔的 Telegram user id）；空=仅靠配对码控制访问。
+    telegram_allowed_user_ids: tuple[int, ...] = ()
 
     @property
     def db_path(self) -> Path:
@@ -145,6 +149,11 @@ def load_config() -> Config:
             (os.environ.get("SOPHCLAW_ALLOWED_HOSTS") or "").split(",") if h
         ),
         ws_grace_seconds=float(os.environ.get("SOPHCLAW_WS_GRACE_SECONDS", "60")),
+        telegram_bot_token=os.environ.get("SOPHCLAW_TELEGRAM_BOT_TOKEN", ""),
+        telegram_allowed_user_ids=tuple(
+            int(u) for u in
+            (os.environ.get("SOPHCLAW_TELEGRAM_ALLOWED_USER_IDS") or "").split(",") if u
+        ),
     )
     cfg.skills_dir.mkdir(parents=True, exist_ok=True)
     cfg.workspaces_dir.mkdir(parents=True, exist_ok=True)
