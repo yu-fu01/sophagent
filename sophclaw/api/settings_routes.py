@@ -7,6 +7,7 @@ from pydantic import BaseModel
 
 from ..auth import require_admin, require_user
 from ..config import (effective_max_upload_bytes, effective_compress_threshold,
+                      effective_telegram_token,
                       get_config, COMPRESS_THRESHOLD_MIN, COMPRESS_THRESHOLD_MAX,
                       DEFAULT_COMPRESS_THRESHOLD)
 
@@ -36,6 +37,7 @@ async def get_settings(request: Request, _user=Depends(require_user)):
         "default_compress_threshold": DEFAULT_COMPRESS_THRESHOLD,
         "compress_threshold_min": COMPRESS_THRESHOLD_MIN,
         "compress_threshold_max": COMPRESS_THRESHOLD_MAX,
+        "telegram_configured": bool(await effective_telegram_token(db)),
     }
 
 
@@ -59,3 +61,17 @@ async def set_compress_threshold(body: CompressThresholdBody, request: Request,
                                  f"{COMPRESS_THRESHOLD_MIN} and {COMPRESS_THRESHOLD_MAX}")
     await request.app.state.db.set_setting("compress_threshold", str(value), admin["id"])
     return {"ok": True}
+
+
+class TelegramTokenBody(BaseModel):
+    token: str
+
+
+@router.put("/telegram")
+async def set_telegram_token(body: TelegramTokenBody, request: Request,
+                             admin=Depends(require_admin)):
+    token = (body.token or "").strip()
+    await request.app.state.db.set_setting("telegram_bot_token", token, admin["id"])
+    # 现场生效：停旧 polling、按新 token 起新（空则停）
+    await request.app.state.im_controller.restart(request.app.state.db)
+    return {"ok": True, "configured": bool(token)}

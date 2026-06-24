@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-import asyncio
 import logging
 import mimetypes
 import secrets
@@ -67,25 +66,15 @@ async def lifespan(app: FastAPI):
     if not registry.names():
         log.warning("no model providers configured; set SOPHCLAW_PROVIDERS or providers.yaml")
 
-    # IM 网关（Telegram）：配了 token 才起 in-process 轮询
-    im_task = None
-    if cfg.telegram_bot_token:
-        from .im.adapter import TelegramClient, run_polling
-        from .im.driver import IMDriver
-        tg_client = TelegramClient(cfg.telegram_bot_token)
-        im_driver = IMDriver(db=db, manager=app.state.manager, skill_store=app.state.skill_store)
-        im_task = asyncio.create_task(
-            run_polling(tg_client, im_driver, allowed_user_ids=cfg.telegram_allowed_user_ids)
-        )
-        log.info("IM gateway (telegram) polling started")
+    # IM 网关（Telegram）：token 现场可配（DB settings），controller 管 polling 生命周期
+    from .im.controller import IMController
+    from .im.driver import IMDriver
+    im_driver = IMDriver(db=db, manager=app.state.manager, skill_store=app.state.skill_store)
+    app.state.im_controller = IMController(im_driver, allowed_user_ids=cfg.telegram_allowed_user_ids)
+    await app.state.im_controller.restart(db)
 
     yield
-    if im_task is not None:
-        im_task.cancel()
-        try:
-            await im_task
-        except asyncio.CancelledError:
-            pass
+    await app.state.im_controller.stop()
     await db.close()
 
 

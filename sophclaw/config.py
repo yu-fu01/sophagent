@@ -201,3 +201,13 @@ async def effective_compress_threshold(db) -> float:
         except (ValueError, TypeError):
             pass
     return DEFAULT_COMPRESS_THRESHOLD
+
+
+async def effective_telegram_token(db) -> str:
+    """Runtime-effective Telegram bot token: a DB setting (key
+    ``telegram_bot_token``) wins; otherwise fall back to the env/default
+    value baked into Config. Empty string => IM gateway off."""
+    raw = await db.get_setting("telegram_bot_token")
+    if raw:
+        return raw
+    return get_config().telegram_bot_token

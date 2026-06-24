@@ -1182,6 +1182,32 @@ async function renderAdmin() {
     } catch (e) { alertErr(e); }
   };
 
+  // Telegram (IM 网关) card — token 现场可配，admin
+  const tcfg = card(box, "Telegram (IM 网关 — admin)");
+  const tgOn = s.telegram_configured;
+  tcfg.insertAdjacentHTML("beforeend", `
+    <div class="muted" style="margin-bottom:8px">状态：<b>${tgOn ? "已配置，polling 运行中" : "未配置"}</b>。token 仅存服务端，此处不回显。留空保存=清除。</div>
+    <div style="display:flex;gap:8px;align-items:center;max-width:520px">
+      <input id="cfg-tg-token" type="password" placeholder="${tgOn ? '输入新 token 覆盖' : '粘贴 bot token'}" style="flex:1" autocomplete="off">
+      <button id="cfg-tg-save">保存</button>
+      ${tgOn ? '<button id="cfg-tg-clear" class="ghost">清除</button>' : ''}
+    </div>`);
+  $("cfg-tg-save").onclick = async () => {
+    const token = $("cfg-tg-token").value.trim();
+    if (!token) { alert("请输入 token（或点清除）"); return; }
+    try {
+      await apiJson("/api/settings/telegram", {method: "PUT", body: {token}});
+      alert("已保存，IM 网关已生效"); renderAdmin();
+    } catch (e) { alertErr(e); }
+  };
+  if (tgOn) $("cfg-tg-clear").onclick = async () => {
+    if (!confirm("清除 token 将停止 IM 网关，确定？")) return;
+    try {
+      await apiJson("/api/settings/telegram", {method: "PUT", body: {token: ""}});
+      alert("已清除"); renderAdmin();
+    } catch (e) { alertErr(e); }
+  };
+
   // skills card
   const sc = card(box, "Skills (agent-created knowledge — review here)");
   if (!skills.length) sc.insertAdjacentHTML("beforeend", `<div class="muted">No skills yet. Agents create them as they learn.</div>`);
