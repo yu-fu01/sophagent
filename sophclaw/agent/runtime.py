@@ -7,7 +7,7 @@ import logging
 from dataclasses import replace as dc_replace
 from typing import Any, Awaitable, Callable, Optional
 
-from ..config import get_config
+from ..config import DEFAULT_COMPRESS_THRESHOLD, effective_compress_threshold, get_config
 from ..models import AgentDef, Message
 from ..tools.registry import ToolContext
 from .loop import AgentRunner
@@ -50,6 +50,7 @@ async def build_runner(
                         override_provider, agent.provider)
     eff = dc_replace(agent, provider=eff_provider, model=override_model or agent.model)
     ctx.agent = eff  # 让工具上下文也用 effective agent
-    runner = AgentRunner(eff, ctx, history, on_persist=on_persist)
+    threshold = await effective_compress_threshold(db) if db else DEFAULT_COMPRESS_THRESHOLD
+    runner = AgentRunner(eff, ctx, history, on_persist=on_persist, compress_threshold=threshold)
     runner.thinking = thinking_mode if thinking_mode and thinking_mode != "default" else None
     return runner

@@ -13,6 +13,10 @@ from pathlib import Path
 
 import yaml
 
+DEFAULT_COMPRESS_THRESHOLD = 0.5   # 对齐 hermes threshold_percent；超过 context*该值触发压缩
+COMPRESS_THRESHOLD_MIN = 0.3
+COMPRESS_THRESHOLD_MAX = 0.9
+
 
 @dataclass
 class ProviderConfig:
@@ -174,3 +178,17 @@ async def effective_max_upload_bytes(db) -> int:
         except ValueError:
             pass
     return get_config().max_upload_bytes
+
+
+async def effective_compress_threshold(db) -> float:
+    """Runtime-effective auto-compaction trigger ratio: an admin-set DB override
+    (key ``compress_threshold``) wins, clamped into [COMPRESS_THRESHOLD_MIN,
+    COMPRESS_THRESHOLD_MAX]. A malformed value falls back to the default."""
+    raw = await db.get_setting("compress_threshold")
+    if raw is not None:
+        try:
+            val = float(raw)
+            return max(COMPRESS_THRESHOLD_MIN, min(val, COMPRESS_THRESHOLD_MAX))
+        except (ValueError, TypeError):
+            pass
+    return DEFAULT_COMPRESS_THRESHOLD
