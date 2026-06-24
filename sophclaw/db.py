@@ -102,6 +102,19 @@ CREATE TABLE IF NOT EXISTS settings (
   updated_at TEXT,
   updated_by INTEGER
 );
+-- Staged memory writes awaiting user approval (when write_approval is on).
+CREATE TABLE IF NOT EXISTS pending_writes (
+  id INTEGER PRIMARY KEY,
+  user_id INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+  kind TEXT NOT NULL DEFAULT 'memory',
+  op TEXT NOT NULL,                          -- add | replace | remove
+  target TEXT NOT NULL DEFAULT 'memory',     -- memory | user
+  content TEXT NOT NULL DEFAULT '',
+  memory_id INTEGER,                         -- target row for replace/remove
+  origin TEXT NOT NULL DEFAULT 'foreground', -- foreground | review
+  created_at TEXT NOT NULL
+);
+CREATE INDEX IF NOT EXISTS idx_pending_user ON pending_writes(user_id, id);
 -- Full-text index over user/assistant message text for session_search.
 -- Standalone (not external-content) because messages.content is JSON; we sync
 -- it in Python from the message write paths. UNINDEXED columns are stored but
@@ -504,6 +517,39 @@ class Database:
     async def memory_remove(self, memory_id: int, user_id: int) -> bool:
         cur = await self._exec("DELETE FROM memory WHERE id=? AND user_id=?", (memory_id, user_id))
         return cur.rowcount > 0
+
+    # -- pending writes (write-approval staging) -----------------------------
+
+    async def pending_add(
+        self, user_id: int, *, op: str, target: str = "memory", content: str = "",
+        memory_id: int | None = None, origin: str = "foreground",
+    ) -> int:
+        cur = await self._exec(
+            "INSERT INTO pending_writes (user_id, op, target, content, memory_id, origin, "
+            "created_at) VALUES (?,?,?,?,?,?,?)",
+            (user_id, op, target, content, memory_id, origin, now()),
+        )
+        return cur.lastrowid
+
+    async def pending_list(self, user_id: int) -> list[aiosqlite.Row]:
+        return await self._all(
+            "SELECT * FROM pending_writes WHERE user_id=? ORDER BY id", (user_id,)
+        )
+
+    async def pending_get(self, pending_id: int, user_id: int) -> Optional[aiosqlite.Row]:
+        return await self._one(
+            "SELECT * FROM pending_writes WHERE id=? AND user_id=?", (pending_id, user_id)
+        )
+
+    async def pending_remove(self, pending_id: int, user_id: int) -> bool:
+        cur = await self._exec(
+            "DELETE FROM pending_writes WHERE id=? AND user_id=?", (pending_id, user_id)
+        )
+        return cur.rowcount > 0
+
+    async def pending_clear(self, user_id: int) -> int:
+        cur = await self._exec("DELETE FROM pending_writes WHERE user_id=?", (user_id,))
+        return cur.rowcount
 
     # -- providers -----------------------------------------------------------
 

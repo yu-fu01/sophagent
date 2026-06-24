@@ -101,6 +101,8 @@ async def run_review(
             db=db, skill_store=skill_store, agent=review_agent,
             user_id=user_id, history=list(history), on_persist=None,
         )
+        # tag any write-approval staging done during review as auto-origin
+        runner.ctx.services["write_origin"] = "review"
         pending: dict[str, str] = {}
         async for ev in runner.run(COMBINED_REVIEW_PROMPT):
             etype = ev.get("type")

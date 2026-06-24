@@ -6,7 +6,7 @@ from __future__ import annotations
 from dataclasses import dataclass
 
 from ..agent.memory_guard import scan_memory
-from ..config import get_config
+from ..config import effective_write_approval, get_config
 from .registry import ToolContext, tool
 
 
@@ -106,6 +106,16 @@ async def memory(
             return f"No {target} memories stored."
         return "\n".join(f"[{r['id']}] {r['content']}" for r in rows)
 
+    gated = await effective_write_approval(db)
+    origin = ctx.services.get("write_origin", "foreground")
+
+    async def _stage(op: str, *, mid: int | None = None) -> str:
+        pid = await db.pending_add(
+            ctx.user_id, op=op, target=target, content=content,
+            memory_id=mid, origin=origin,
+        )
+        return f"Staged {op} for approval [pending {pid}] — review with /memory pending"
+
     if action == "add":
         content = content.strip()
         if not content:
@@ -113,6 +123,8 @@ async def memory(
         reason = scan_memory(content)
         if reason:
             return f"Error: rejected by safety scan ({reason})"
+        if gated:
+            return await _stage("add")
         rows = await db.memory_list(ctx.user_id, target=target)
         used = sum(len(r["content"]) for r in rows)
         chk = check_write(
@@ -141,6 +153,8 @@ async def memory(
         rows = await db.memory_list(ctx.user_id, target=target)
         if not any(r["id"] == memory_id for r in rows):
             return f"Error: {target} memory [{memory_id}] not found"
+        if gated:
+            return await _stage("replace", mid=memory_id)
         # capacity excludes the row being replaced (it's making way for the new one)
         others = [r for r in rows if r["id"] != memory_id]
         used = sum(len(r["content"]) for r in others)
@@ -160,6 +174,11 @@ async def memory(
         return f"Updated {target} memory [{memory_id}]"
 
     if action == "remove":
+        if gated:
+            rows = await db.memory_list(ctx.user_id, target=target)
+            if not any(r["id"] == memory_id for r in rows):
+                return f"Error: {target} memory [{memory_id}] not found"
+            return await _stage("remove", mid=memory_id)
         ok = await db.memory_remove(memory_id, ctx.user_id)
         return f"Removed memory [{memory_id}]" if ok else f"Error: memory [{memory_id}] not found"
 

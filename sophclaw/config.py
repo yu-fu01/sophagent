@@ -187,6 +187,13 @@ async def effective_max_upload_bytes(db) -> int:
     return get_config().max_upload_bytes
 
 
+async def effective_write_approval(db) -> bool:
+    """Runtime-effective memory write-approval gate: an admin-set DB override
+    (key ``write_approval``) wins; default off (write freely, like hermes)."""
+    raw = await db.get_setting("write_approval")
+    return str(raw).lower() in {"1", "true", "yes", "on"} if raw is not None else False
+
+
 async def effective_compress_threshold(db) -> float:
     """Runtime-effective auto-compaction trigger ratio: an admin-set DB override
     (key ``compress_threshold``) wins, clamped into [COMPRESS_THRESHOLD_MIN,
