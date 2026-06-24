@@ -2,10 +2,10 @@
 
 from types import SimpleNamespace
 
-from sophclaw.config import ProviderConfig
-from sophclaw.models import Message, ToolCall
-from sophclaw.providers.anthropic_provider import messages_to_anthropic, tools_to_anthropic
-from sophclaw.providers.openai_provider import OpenAIProvider, _parse_arguments, messages_to_openai
+from sophagent.config import ProviderConfig
+from sophagent.models import Message, ToolCall
+from sophagent.providers.anthropic_provider import messages_to_anthropic, tools_to_anthropic
+from sophagent.providers.openai_provider import OpenAIProvider, _parse_arguments, messages_to_openai
 
 HISTORY = [
     Message(role="user", content="hi"),

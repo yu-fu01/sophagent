@@ -7,9 +7,9 @@ import base64
 
 import pytest
 
-from sophclaw import config as config_mod
-from sophclaw.config import effective_max_upload_bytes, get_config
-from sophclaw.db import Database
+from sophagent import config as config_mod
+from sophagent.config import effective_max_upload_bytes, get_config
+from sophagent.db import Database
 
 DEFAULT = 10 * 1024 * 1024  # 内置默认 10MB
 
@@ -23,7 +23,7 @@ def data_url(content: bytes, mime: str = "text/plain") -> str:
 
 @pytest.mark.asyncio
 async def test_setting_upsert_roundtrip(tmp_path, monkeypatch):
-    monkeypatch.setenv("SOPHCLAW_DATA_DIR", str(tmp_path / "data"))
+    monkeypatch.setenv("SOPHAGENT_DATA_DIR", str(tmp_path / "data"))
     config_mod.reset_config()
     db = Database(tmp_path / "s.db")
     await db.connect()
@@ -44,7 +44,7 @@ async def test_setting_upsert_roundtrip(tmp_path, monkeypatch):
 
 @pytest.mark.asyncio
 async def test_effective_falls_back_to_default(tmp_path, monkeypatch):
-    monkeypatch.setenv("SOPHCLAW_DATA_DIR", str(tmp_path / "data"))
+    monkeypatch.setenv("SOPHAGENT_DATA_DIR", str(tmp_path / "data"))
     config_mod.reset_config()
     db = Database(tmp_path / "s.db")
     await db.connect()
@@ -57,7 +57,7 @@ async def test_effective_falls_back_to_default(tmp_path, monkeypatch):
 
 @pytest.mark.asyncio
 async def test_effective_uses_db_value(tmp_path, monkeypatch):
-    monkeypatch.setenv("SOPHCLAW_DATA_DIR", str(tmp_path / "data"))
+    monkeypatch.setenv("SOPHAGENT_DATA_DIR", str(tmp_path / "data"))
     config_mod.reset_config()
     db = Database(tmp_path / "s.db")
     await db.connect()
@@ -71,7 +71,7 @@ async def test_effective_uses_db_value(tmp_path, monkeypatch):
 
 @pytest.mark.asyncio
 async def test_effective_ignores_garbage_db_value(tmp_path, monkeypatch):
-    monkeypatch.setenv("SOPHCLAW_DATA_DIR", str(tmp_path / "data"))
+    monkeypatch.setenv("SOPHAGENT_DATA_DIR", str(tmp_path / "data"))
     config_mod.reset_config()
     db = Database(tmp_path / "s.db")
     await db.connect()
@@ -155,12 +155,12 @@ def test_new_limit_enforced_on_read(client, admin, bob):
 
 # -- 压缩触发阈值 effective_compress_threshold -------------------------------
 
-from sophclaw.config import effective_compress_threshold, DEFAULT_COMPRESS_THRESHOLD
+from sophagent.config import effective_compress_threshold, DEFAULT_COMPRESS_THRESHOLD
 
 
 @pytest.mark.asyncio
 async def test_compress_threshold_default(tmp_path, monkeypatch):
-    monkeypatch.setenv("SOPHCLAW_DATA_DIR", str(tmp_path / "data"))
+    monkeypatch.setenv("SOPHAGENT_DATA_DIR", str(tmp_path / "data"))
     config_mod.reset_config()
     db = Database(tmp_path / "s.db")
     await db.connect()
@@ -173,7 +173,7 @@ async def test_compress_threshold_default(tmp_path, monkeypatch):
 
 @pytest.mark.asyncio
 async def test_compress_threshold_override_and_clamp(tmp_path, monkeypatch):
-    monkeypatch.setenv("SOPHCLAW_DATA_DIR", str(tmp_path / "data"))
+    monkeypatch.setenv("SOPHAGENT_DATA_DIR", str(tmp_path / "data"))
     config_mod.reset_config()
     db = Database(tmp_path / "s.db")
     await db.connect()

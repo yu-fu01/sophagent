@@ -1,6 +1,6 @@
 """TelegramTransport: 内部 agent 事件 -> Telegram edit-in-place 流式。
 
-消费 sophclaw 内部事件（text_delta/done/error/...），不使用 WS 的 wire 帧。
+消费 sophagent 内部事件（text_delta/done/error/...），不使用 WS 的 wire 帧。
 首轮首帧 sendMessage 记 message_id；后续累积文本 editMessageText（限频）；
 done 落最终全文并清 message_id（下一轮首帧重发新消息）。
 reasoning/tool/turn_usage/session.info/queued_next 忽略。

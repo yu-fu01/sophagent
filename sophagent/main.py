@@ -19,7 +19,7 @@ from .auth import hash_password
 from .config import get_config
 from .db import Database
 
-log = logging.getLogger("sophclaw")
+log = logging.getLogger("sophagent")
 
 WEB_DIR = Path(__file__).resolve().parent.parent / "web"
 
@@ -64,7 +64,7 @@ async def lifespan(app: FastAPI):
     registry = init_registry(db, cfg)
     await registry.refresh()
     if not registry.names():
-        log.warning("no model providers configured; set SOPHCLAW_PROVIDERS or providers.yaml")
+        log.warning("no model providers configured; set SOPHAGENT_PROVIDERS or providers.yaml")
 
     # IM 网关（Telegram）：token 现场可配（DB settings），controller 管 polling 生命周期
     from .im.controller import IMController
@@ -79,7 +79,7 @@ async def lifespan(app: FastAPI):
 
 
 def create_app() -> FastAPI:
-    app = FastAPI(title="sophclaw-agent", version=__version__, lifespan=lifespan)
+    app = FastAPI(title="sophagent", version=__version__, lifespan=lifespan)
     mount_routes(app)
 
     from .gateway.ws import handle_ws

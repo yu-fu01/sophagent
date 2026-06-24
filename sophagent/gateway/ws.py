@@ -2,7 +2,7 @@
 
 One ``handle_ws`` coroutine per connection. It authenticates the JWT from the
 query string, sends ``gateway.ready``, then pumps inbound JSON-RPC requests
-through :func:`sophclaw.gateway.dispatcher.dispatch` and writes each response.
+through :func:`sophagent.gateway.dispatcher.dispatch` and writes each response.
 
 On disconnect it hands every session this connection owned to the detach grace
 window: the running turn keeps going, events keep buffering, and a reconnect
@@ -48,7 +48,7 @@ async def handle_ws(ws: WebSocket) -> None:
     transport = WSTransport(ws, peer=peer)
 
     # gateway.ready — tells the client it may now resume a session / send.
-    if not await transport.emit(protocol.make_event("gateway.ready", None, {"server": "sophclaw"})):
+    if not await transport.emit(protocol.make_event("gateway.ready", None, {"server": "sophagent"})):
         log.warning("ws ready frame send failed peer=%s", peer)
         await _safe_close(ws)
         return

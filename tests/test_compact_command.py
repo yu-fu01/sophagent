@@ -4,9 +4,9 @@ from typing import AsyncIterator
 
 import pytest
 
-from sophclaw.agent.commands.builtin import compact as cmd
-from sophclaw.agent.compaction import SUMMARY_PREFIX
-from sophclaw.models import AssistantTurn, Message, StreamEvent
+from sophagent.agent.commands.builtin import compact as cmd
+from sophagent.agent.compaction import SUMMARY_PREFIX
+from sophagent.models import AssistantTurn, Message, StreamEvent
 
 
 class _FakeProvider:
@@ -52,7 +52,7 @@ def fake_compact_ctx():
 async def test_compact_with_focus_passes_focus_into_prompt(monkeypatch, fake_compact_ctx):
     """/compact 鉴权模块 → 摘要 prompt 含 focus 关键词。"""
     provider = _FakeProvider()
-    monkeypatch.setattr("sophclaw.providers.get_provider", lambda name: provider)
+    monkeypatch.setattr("sophagent.providers.get_provider", lambda name: provider)
     ctx = fake_compact_ctx(num_messages=8)
     res = await cmd.handle("鉴权模块", ctx)
     assert res["action"] == "reload"

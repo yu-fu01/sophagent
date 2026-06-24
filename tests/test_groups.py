@@ -5,7 +5,7 @@ import pytest
 
 from conftest import make_user, uid
 
-from sophclaw.db import Database
+from sophagent.db import Database
 
 # An excerpt of the pre-multiuser schema (no groups, agents UNIQUE(name), no group_id).
 OLD_SCHEMA = """

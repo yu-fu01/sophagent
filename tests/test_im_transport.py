@@ -1,7 +1,7 @@
 """TelegramTransport: 内部事件 -> edit-in-place 流式（限频）。"""
 import asyncio
 import pytest
-from sophclaw.im.transport import TelegramTransport
+from sophagent.im.transport import TelegramTransport
 
 
 class FakeClient:

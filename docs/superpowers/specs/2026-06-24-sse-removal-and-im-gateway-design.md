@@ -9,12 +9,12 @@
 两个独立需求，一并在此 worktree 完成：
 
 - **REQ1：完全移除 SSE，只保留 WS。** 删除 REST 对话流（`/chat` SSE）与控制类 HTTP 路由（`/stop`、`/truncate`），前端对话通路只走 WebSocket JSON-RPC 网关。
-- **REQ2：新增 IM 网关（Telegram，仿 hermes）。** 用户在 Telegram 给 bot 发消息 → 网关路由到 sophclaw agent → 流式回复推回该 Telegram chat。配对码绑定 Telegram 身份到 sophclaw 用户。
+- **REQ2：新增 IM 网关（Telegram，仿 hermes）。** 用户在 Telegram 给 bot 发消息 → 网关路由到 sophagent agent → 流式回复推回该 Telegram chat。配对码绑定 Telegram 身份到 sophagent 用户。
 
 ## 2. 背景
 
-- sophclaw 已有 JSON-RPC over WebSocket 网关（`sophclaw/gateway/`，本会话上一里程碑），承载对话流式推送 + 客户端上行控制命令（send/stop/resume/edit/slash/queue），支持 detach + 重连回放。
-- 共享 turn 核心 `sophclaw/agent/turn.py`（`run_turns` / `pre_submit`）同时被 SSE 路由与 WS `prompt.submit` 调用。
+- sophagent 已有 JSON-RPC over WebSocket 网关（`sophagent/gateway/`，本会话上一里程碑），承载对话流式推送 + 客户端上行控制命令（send/stop/resume/edit/slash/queue），支持 detach + 重连回放。
+- 共享 turn 核心 `sophagent/agent/turn.py`（`run_turns` / `pre_submit`）同时被 SSE 路由与 WS `prompt.submit` 调用。
 - `Transport` 抽象（`gateway/transport.py`）：`WSTransport` 把 agent 事件发到浏览器。**IM 网关 = 再加一类 Transport**，把事件发到 IM 平台。这是 REQ2 的架构关键：不重写 agent，复用 `run_turns` + `SessionManager` + `db`。
 - hermes 的 IM 网关是多平台聊天桥接（Telegram/Discord/微信/飞书/Signal…），核心抽象：Platform Adapter + `MessageEvent` 归一化 + 会话映射 + 流式分发。Telegram 出站用 **edit-in-place 流式**（`editMessageText` 原地更新）。本规格仅做 Telegram。
 
@@ -23,10 +23,10 @@
 | 维度 | 决策 |
 |---|---|
 | IM 平台 | 仅 Telegram（`getUpdates` 长轮询，无需公网 URL/SSL，docker 本地可跑）。多平台扩展留接口但本期不实现 |
-| 进程模型 | **in-process**。Telegram 轮询作为 lifespan 启动的后台 asyncio task，配 `SOPHCLAW_TELEGRAM_BOT_TOKEN` 才起。直接共享 db/manager，不另开进程（sophclaw 是轻量单进程服务） |
-| 身份绑定 | **配对码**（仿 hermes）。sophclaw 用户在 web UI 生成一次性码 → Telegram 端 `/pair <code>` 绑定到该用户 + 某 agent |
+| 进程模型 | **in-process**。Telegram 轮询作为 lifespan 启动的后台 asyncio task，配 `SOPHAGENT_TELEGRAM_BOT_TOKEN` 才起。直接共享 db/manager，不另开进程（sophagent 是轻量单进程服务） |
+| 身份绑定 | **配对码**（仿 hermes）。sophagent 用户在 web UI 生成一次性码 → Telegram 端 `/pair <code>` 绑定到该用户 + 某 agent |
 | agent 选择 | 固定在配对时（配对码绑定 user+agent）。`/new` 重置 session；v1 不做 `/agent` 切换（YAGNI） |
-| 会话模型 | 一个 `chat_id` ↔ 一个 sophclaw session（持久，绑定时创建）。IM 与 web 共享同一 session，双向可见 |
+| 会话模型 | 一个 `chat_id` ↔ 一个 sophagent session（持久，绑定时创建）。IM 与 web 共享同一 session，双向可见 |
 | 出站投递 | **流式编辑**（edit-in-place），对齐 hermes。限频节流；最终 edit 落完整文本 |
 | reasoning | IM 不显示思考（忽略 `reasoning.delta`，防刷屏） |
 | 工具调用 | v1 忽略 `tool.call`/`tool.result` 细节（不单独显示）；仅正文流式 |
@@ -71,10 +71,10 @@
 
 ## 5. REQ2：IM 网关（Telegram）
 
-### 5.1 模块划分（新建 `sophclaw/im/`）
+### 5.1 模块划分（新建 `sophagent/im/`）
 
 ```
-sophclaw/
+sophagent/
 ├── im/                       # 新增：IM 网关（Telegram）
 │   ├── adapter.py            # Telegram 适配器：getUpdates 轮询 → MessageEvent；httpx 直连 Bot API
 │   ├── transport.py          # TelegramTransport(Transport)：agent 事件 → edit-in-place 流式（限频）
@@ -109,7 +109,7 @@ Telegram <──sendMessage/editMessageText──  TelegramTransport.on_event
 
 ### 5.4 出站（transport.py `TelegramTransport`）
 
-`TelegramTransport` **不**实现 WS 的 `gateway.Transport`（IM 不需要 JSON-RPC wire 帧）。它暴露 `on_event(ev: dict)`，直接消费 sophclaw 内部事件（`text_delta`/`done`/`error`/…），按语义投递到 Telegram：
+`TelegramTransport` **不**实现 WS 的 `gateway.Transport`（IM 不需要 JSON-RPC wire 帧）。它暴露 `on_event(ev: dict)`，直接消费 sophagent 内部事件（`text_delta`/`done`/`error`/…），按语义投递到 Telegram：
 
 - `text_delta`（`ev.text`）：累积文本。**本轮首帧** → `sendMessage` 发一条，记 `message_id`；后续帧 → 限频 `editMessageText`（最小 600ms 一次，防 ~30 edit/min 速率限制）。
 - `done`：最终 `editMessageText` 落完整文本，**清空 `message_id`**（下一轮首帧重新 `sendMessage` 新消息）。
@@ -153,7 +153,7 @@ CREATE TABLE im_bindings (
 DB 方法：`create_pair_code(user_id, agent_id) -> code`、`consume_pair_code(code) -> (user_id, agent_id)|None`（校验未用+未过期，标记 used）、`upsert_binding(platform, chat_id, user_id, agent_id, session_id)`、`get_binding(platform, chat_id)`。
 
 **配对流程**：
-1. sophclaw 用户在 web UI「IM 绑定」页选 agent → `POST /api/im/pair-code {agent_id}`（新 REST 路由，需登录）→ 返回 8 位码（TTL 10min）。
+1. sophagent 用户在 web UI「IM 绑定」页选 agent → `POST /api/im/pair-code {agent_id}`（新 REST 路由，需登录）→ 返回 8 位码（TTL 10min）。
 2. Telegram 端 `/pair <code>` → `pairing.consume_pair_code` → 写 `im_bindings`、`db.create_session`（绑定的 user+agent）→ 回复"✅ 已绑定，agent=<name>，发消息开始对话"。
 3. 同一 chat 重复 `/pair` → 覆盖绑定（换 agent）。
 
@@ -168,18 +168,18 @@ DB 方法：`create_pair_code(user_id, agent_id) -> code`、`consume_pair_code(c
 | `/stop` | `manager.stop(session_id)` 中断当前 turn |
 | `/help` | 列出命令 |
 
-非 `/` 开头的文本 → 走 driver 的 turn 路径。sophclaw 现有斜杠命令（`/compact` `/model` 等）**不在 IM 暴露**（v1 IM 只有上述 4 条；避免与平台命令冲突）。
+非 `/` 开头的文本 → 走 driver 的 turn 路径。sophagent 现有斜杠命令（`/compact` `/model` 等）**不在 IM 暴露**（v1 IM 只有上述 4 条；避免与平台命令冲突）。
 
 ### 5.8 进程集成（main.py lifespan）
 
-- lifespan 启动末尾：若 `SOPHCLAW_TELEGRAM_BOT_TOKEN` 非空 → `asyncio.create_task(im.adapter.run_polling())`；存 task 引用，shutdown 时 cancel。
+- lifespan 启动末尾：若 `SOPHAGENT_TELEGRAM_BOT_TOKEN` 非空 → `asyncio.create_task(im.adapter.run_polling())`；存 task 引用，shutdown 时 cancel。
 - 不配 token → IM 网关不启用，零开销。
 
 ### 5.9 配置（config.py）
 
 新增：
-- `telegram_bot_token: str`（env `SOPHCLAW_TELEGRAM_BOT_TOKEN`，默认空）
-- `telegram_allowed_user_ids: tuple[int, ...]`（env `SOPHCLAW_TELEGRAM_ALLOWED_USER_IDS`，逗号分隔，默认空=不额外限制，仅配对码控制）
+- `telegram_bot_token: str`（env `SOPHAGENT_TELEGRAM_BOT_TOKEN`，默认空）
+- `telegram_allowed_user_ids: tuple[int, ...]`（env `SOPHAGENT_TELEGRAM_ALLOWED_USER_IDS`，逗号分隔，默认空=不额外限制，仅配对码控制）
 
 ### 5.10 依赖
 

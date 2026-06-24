@@ -4,8 +4,8 @@ from typing import AsyncIterator
 
 import pytest
 
-from sophclaw.agent import compaction as C
-from sophclaw.models import AssistantTurn, Message, StreamEvent, ToolCall
+from sophagent.agent import compaction as C
+from sophagent.models import AssistantTurn, Message, StreamEvent, ToolCall
 
 
 def test_make_summary_message_has_prefix_and_flag():

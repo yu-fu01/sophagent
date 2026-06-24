@@ -39,7 +39,7 @@ openai_provider  --StreamEvent("reasoning_delta")-->  loop  --{"type":"reasoning
 
 ## 5. 后端改动
 
-### 5.1 `sophclaw/models.py`
+### 5.1 `sophagent/models.py`
 
 `StreamEvent.type` 的 Literal 增加 `"reasoning_delta"`：
 
@@ -49,7 +49,7 @@ type: Literal["text_delta", "reasoning_delta", "turn_done"]
 
 复用现有 `text` 字段承载思考增量。`AssistantTurn.reasoning` 与 `Message.reasoning` 保持不变（持久化 + 回传逻辑原样保留）。
 
-### 5.2 `sophclaw/providers/openai_provider.py`
+### 5.2 `sophagent/providers/openai_provider.py`
 
 现在拿到 `reasoning_delta` 仅 append；改为**同时** yield 事件——攒 buffer 用于 `turn_done`/回传，事件用于实时展示，两者不冲突：
 
@@ -62,7 +62,7 @@ if reasoning_delta:
 
 Anthropic provider 本次不动（OpenAI 系思考模型是当前唯一会产生 reasoning 的来源）。
 
-### 5.3 `sophclaw/agent/loop.py`
+### 5.3 `sophagent/agent/loop.py`
 
 `run()` 的事件循环转发新事件：
 
@@ -162,8 +162,8 @@ else if (m.role === "assistant") {
 
 | 文件 | 改动 |
 |---|---|
-| `sophclaw/models.py` | `StreamEvent.type` Literal 加 `"reasoning_delta"` |
-| `sophclaw/providers/openai_provider.py` | reasoning 增量额外 yield 事件 |
-| `sophclaw/agent/loop.py` | 转发 `reasoning_delta` UI 事件 |
+| `sophagent/models.py` | `StreamEvent.type` Literal 加 `"reasoning_delta"` |
+| `sophagent/providers/openai_provider.py` | reasoning 增量额外 yield 事件 |
+| `sophagent/agent/loop.py` | 转发 `reasoning_delta` UI 事件 |
 | `web/index.html` | `addThinking()` + 流式状态机 + 历史渲染 + `.thinking` CSS |
 | `tests/test_*.py` | 新增 reasoning 流式事件断言 |

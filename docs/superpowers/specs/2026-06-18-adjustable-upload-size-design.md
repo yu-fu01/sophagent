@@ -6,8 +6,8 @@
 ## 背景与目标
 
 当前单文件大小上限 `max_upload_bytes`（默认 10 MB）是启动时从环境变量
-`SOPHCLAW_MAX_UPLOAD_BYTES` 读入、缓存在 `Config` 单例里的**静态值**。它在
-`sophclaw/api/file_routes.py` 中被两处使用：
+`SOPHAGENT_MAX_UPLOAD_BYTES` 读入、缓存在 `Config` 单例里的**静态值**。它在
+`sophagent/api/file_routes.py` 中被两处使用：
 
 - 上传 `/upload`（`file_routes.py:126`）：解码后超过上限返回 413。
 - 读取/下载 `/read`（`file_routes.py:107`）：文件大于上限返回 413。
@@ -15,7 +15,7 @@
 目标：让这个上限在**运行时可由 admin 调整**，改动立即生效、重启后保留，普通用户
 无修改权。
 
-> 范围说明：`sophclaw/tools/files.py` 的 `MAX_READ_BYTES`（256 KB）是 agent 读文件
+> 范围说明：`sophagent/tools/files.py` 的 `MAX_READ_BYTES`（256 KB）是 agent 读文件
 > 工具的文本/二进制解码阈值，与本需求无关，**不在范围内**。
 
 ## 决策摘要
@@ -65,7 +65,7 @@ async def effective_max_upload_bytes(db) -> int:
 
 ## 第 2 节：API 层
 
-新增 `sophclaw/api/settings_routes.py`，挂载在 `/api/settings`，并在 `main.py` 注册。
+新增 `sophagent/api/settings_routes.py`，挂载在 `/api/settings`，并在 `main.py` 注册。
 
 常量：`MIN_UPLOAD_BYTES = 1024`（1 KB），`MAX_UPLOAD_CEILING = 1024 * 1024 * 1024`
 （1 GB，硬顶，不可调）。
@@ -134,10 +134,10 @@ admin。
 
 ## 受影响文件
 
-- `sophclaw/db.py` — settings 表 + `get_setting`/`set_setting`
-- `sophclaw/config.py`（或新建 `sophclaw/settings.py`）— `effective_max_upload_bytes`
-- `sophclaw/api/file_routes.py` — 上传/读取改用生效解析
-- `sophclaw/api/settings_routes.py` — 新增
-- `sophclaw/main.py` — 注册 router
+- `sophagent/db.py` — settings 表 + `get_setting`/`set_setting`
+- `sophagent/config.py`（或新建 `sophagent/settings.py`）— `effective_max_upload_bytes`
+- `sophagent/api/file_routes.py` — 上传/读取改用生效解析
+- `sophagent/api/settings_routes.py` — 新增
+- `sophagent/main.py` — 注册 router
 - `web/index.html` — admin 面板系统设置卡片
 - `tests/` — 新增 settings 相关测试 + 改造 `test_files_api.py`

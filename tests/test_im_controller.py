@@ -1,7 +1,7 @@
 """IMController: token 变化驱动 polling (re)start/stop。"""
 import asyncio
 import pytest
-from sophclaw.im.controller import IMController
+from sophagent.im.controller import IMController
 
 
 class FakeDB:

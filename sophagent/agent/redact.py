@@ -1,10 +1,10 @@
 """确定性凭据脱敏——把文本中的密钥/令牌/密码替换为 [REDACTED]。
 
-移植自 hermes-agent/agent/redact.py 的核心思路,精简到 sophclaw 压缩场景够用：
+移植自 hermes-agent/agent/redact.py 的核心思路,精简到 sophagent 压缩场景够用：
 用一组正则匹配常见凭据形态,统一替换为 [REDACTED]。每条正则前用廉价的子串
 预检 gate（如 "=" in text）以降低无凭据文本的扫描开销。
 
-默认开启；设环境变量 SOPHCLAW_REDACT_SECRETS=0/false/no/off 可关闭（调试用）。
+默认开启；设环境变量 SOPHAGENT_REDACT_SECRETS=0/false/no/off 可关闭（调试用）。
 """
 
 import os
@@ -12,7 +12,7 @@ import re
 
 PLACEHOLDER = "[REDACTED]"
 
-_REDACT_ENABLED = os.getenv("SOPHCLAW_REDACT_SECRETS", "true").lower() in {"1", "true", "yes", "on"}
+_REDACT_ENABLED = os.getenv("SOPHAGENT_REDACT_SECRETS", "true").lower() in {"1", "true", "yes", "on"}
 
 # 厂商 API key 前缀（前缀 + 连续 token 字符,长度下限防误伤）
 _PREFIX_PATTERNS = [
@@ -84,7 +84,7 @@ def redact_sensitive_text(text):
     """把 ``text`` 中的凭据替换为 [REDACTED]。非字符串原样返回；空/None 直接返回。
 
     对任意字符串安全调用——不含凭据的文本原样通过。默认启用,可由
-    SOPHCLAW_REDACT_SECRETS 环境变量关闭。每条正则前有廉价子串预检。
+    SOPHAGENT_REDACT_SECRETS 环境变量关闭。每条正则前有廉价子串预检。
     """
     if text is None:
         return None

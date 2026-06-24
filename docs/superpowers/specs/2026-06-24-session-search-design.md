@@ -4,7 +4,7 @@
 
 ## 背景与目标
 
-hermes 的 `session_search` 用 SQLite FTS5 对全部历史会话做全文检索，无 LLM 调用、无摘要、无截断，按需召回过往上下文。sophclaw 已把每条消息存进 `messages` 表（`content` 为 `Message.to_json()`），具备做 FTS 的基础。
+hermes 的 `session_search` 用 SQLite FTS5 对全部历史会话做全文检索，无 LLM 调用、无摘要、无截断，按需召回过往上下文。sophagent 已把每条消息存进 `messages` 表（`content` 为 `Message.to_json()`），具备做 FTS 的基础。
 
 ### 目标
 
@@ -16,14 +16,14 @@ hermes 的 `session_search` 用 SQLite FTS5 对全部历史会话做全文检索
 
 ### 关键约束：多用户隔离
 
-sophclaw 是多用户服务器，hermes 是单用户。**每个查询强制 `sessions.user_id = ctx.user_id`**——agent 只能搜索调用者本人的会话。这是不可妥协的安全边界。
+sophagent 是多用户服务器，hermes 是单用户。**每个查询强制 `sessions.user_id = ctx.user_id`**——agent 只能搜索调用者本人的会话。这是不可妥协的安全边界。
 
 ### 非目标（YAGNI）
 
 - bookends（首尾各 3 条消息）——±window + 翻阅已能重建上下文，裁掉。
 - 索引 tool 消息——只索引 `user` + `assistant`（工具输出多为噪声）。
 - `sort` / 复杂 `role_filter` 参数——v1 用 FTS5 相关性默认排序。
-- 跨 session lineage 去重（hermes 有 session 派生关系，sophclaw 没有）。
+- 跨 session lineage 去重（hermes 有 session 派生关系，sophagent 没有）。
 
 ## 设计
 
@@ -108,10 +108,10 @@ match_message_id, messages: [{id, role, text, is_anchor}], (±window 条)
 
 | 文件 | 改动 |
 |---|---|
-| `sophclaw/db.py` | SCHEMA 加 `messages_fts`；`append_messages` 逐行插入 + FTS 同步；`truncate_from`/`compact_session` 同步；回填；新增 `search_messages`/`session_window`/`recent_sessions` 查询方法 |
-| `sophclaw/tools/session_search.py` | 新工具，三形态分发 + 输出格式化 |
-| `sophclaw/tools/__init__.py` | 注册新工具 |
-| `sophclaw/agent/prompt.py` | session_search 引导语 |
+| `sophagent/db.py` | SCHEMA 加 `messages_fts`；`append_messages` 逐行插入 + FTS 同步；`truncate_from`/`compact_session` 同步；回填；新增 `search_messages`/`session_window`/`recent_sessions` 查询方法 |
+| `sophagent/tools/session_search.py` | 新工具，三形态分发 + 输出格式化 |
+| `sophagent/tools/__init__.py` | 注册新工具 |
+| `sophagent/agent/prompt.py` | session_search 引导语 |
 | `tests/test_session_search.py` | 新增 |
 
 无前端变更。无 API 路由变更（工具对 agent 透明）。

@@ -19,13 +19,13 @@
 - 流式入口 `sendMsg()`（`web/index.html:362-418`）逐事件 append；历史入口 `openSession()`（`web/index.html:232-250`）按存库消息重建。
 - 流事件类型：`reasoning_delta {text}`、`text_delta {text}`、`tool_call {id,name,arguments}`、`tool_result {id,preview}`、`error {message}`。
 - 历史消息字段：`m.reasoning`（字符串）、`m.tool_calls[]`（`{name, arguments}`，**无结果预览、无 error 标记**）、`m.content`。
-- sophclaw 工具集：`terminal`、`python_exec`、`read_file`、`write_file`、`edit_file`、`list_dir`、`web_fetch`、`web_search`、`delegate_task`、`memory`、`skills_list`、`skill_view`、`skill_manage`。
+- sophagent 工具集：`terminal`、`python_exec`、`read_file`、`write_file`、`edit_file`、`list_dir`、`web_fetch`、`web_search`、`delegate_task`、`memory`、`skills_list`、`skill_view`、`skill_manage`。
 
 ## 3. 范围决策
 
 | 维度 | 决策 |
 |---|---|
-| 方案 | **方案 A：移植 hermes 完整 worklog 机制**（核心逻辑忠实移植，外围 hermes 耦合按 sophclaw 现实裁剪） |
+| 方案 | **方案 A：移植 hermes 完整 worklog 机制**（核心逻辑忠实移植，外围 hermes 耦合按 sophagent 现实裁剪） |
 | 分组边界 | **整轮**的思考 + 工具合并为一个折叠组；最终回答正文留在组外 |
 | 流式行为 | 进行中的组**默认展开**（可见实时思考/工具输出），摘要头实时更新；正文开始或本轮结束后**自动折叠**为一行摘要 |
 | 历史 | 重开旧会话时，每个 assistant 回合重建为**默认折叠**的活动组 |
@@ -138,7 +138,7 @@
 
 改造 `web/index.html:240-247`：每条 assistant 消息重建一个**默认折叠**的 `details.worklog`：
 - `m.reasoning` → thinking-card（折叠）。
-- `m.tool_calls[]` → 每个一个 `tool-card-row`，全部按 `data-tool-done=true`、无 error、无结果预览（sophclaw 未存）。
+- `m.tool_calls[]` → 每个一个 `tool-card-row`，全部按 `data-tool-done=true`、无 error、无结果预览（sophagent 未存）。
 - 调用 `syncWorklogSummary` 生成定格摘要。
 - `m.content` → 走 `addBubble("assistant")`，组外。
 - 与流式构建**共用** `ensureWorklog`/`appendToolRow`/`worklogSummary` 等函数。
@@ -163,7 +163,7 @@
 
 ## 10. 裁剪清单（hermes 特有，不移植）
 
-- SSE / `messages.js` 那套（sophclaw 有自己的 stream loop）。
+- SSE / `messages.js` 那套（sophagent 有自己的 stream loop）。
 - 子 agent / 委派进度专用 UI、transparent stream 模式。
 - i18n（`t()`）——用静态中文。
 - `li()` 图标库——用 unicode / 内联字符。

@@ -1,6 +1,6 @@
 """Transport abstraction for the WebSocket gateway.
 
-sophclaw is single-process asyncio (unlike hermes, which marshals writes across
+sophagent is single-process asyncio (unlike hermes, which marshals writes across
 threads), so this is a thin, fully-async layer: every transport is just an
 async ``emit(frame)`` plus a ``close()``.
 
@@ -44,7 +44,7 @@ class Transport(Protocol):
 # runner's emits land on the owning session's transport even after the
 # dispatcher returns.
 _current_transport: contextvars.ContextVar[Optional[Transport]] = contextvars.ContextVar(
-    "sophclaw_gateway_transport", default=None
+    "sophagent_gateway_transport", default=None
 )
 
 

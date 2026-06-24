@@ -6,16 +6,16 @@
 
 ## 1. 目标
 
-为 sophclaw 引入 WebSocket 通道，承载**对话流式推送**与**客户端上行控制命令**（发送/停止/恢复/重新编辑/斜杠/排队），并支持**断线 detach + 重连回放**——客户端在 turn 运行中掉线时，turn 在后台继续，重连后回放漏掉的事件。
+为 sophagent 引入 WebSocket 通道，承载**对话流式推送**与**客户端上行控制命令**（发送/停止/恢复/重新编辑/斜杠/排队），并支持**断线 detach + 重连回放**——客户端在 turn 运行中掉线时，turn 在后台继续，重连后回放漏掉的事件。
 
 协议采用 JSON-RPC 2.0（双向、请求带 id / 事件无 id），与 hermes `tui_gateway` 线兼容。
 
 ## 2. 背景与现状
 
-- **框架**：FastAPI + uvicorn（单进程 asyncio），`sophclaw/main.py` 的 `create_app()` 挂载 REST 路由。
+- **框架**：FastAPI + uvicorn（单进程 asyncio），`sophagent/main.py` 的 `create_app()` 挂载 REST 路由。
 - **当前对话通道**：`POST /api/sessions/{id}/chat` 返回 `StreamingResponse`（SSE，换行分隔 JSON）。`AgentRunner.run()` 是 async generator，逐个 yield 事件（`text_delta`/`reasoning_delta`/`tool_call`/`tool_result`/`done`/`error` 等）。
 - **单向痛点**：SSE 仅 server→client；客户端发停止/恢复/重新编辑/斜杠/排队都得另开 HTTP POST，无法在一条连接上双向交互、也无法做断线重连续传。
-- **消息队列**：`SessionManager`（`sophclaw/agent/manager.py`）已实现 in-process `asyncio.Queue`，每 session 上限 3 条，忙时自动入队、turn 结束 `queued_next` 消费。
+- **消息队列**：`SessionManager`（`sophagent/agent/manager.py`）已实现 in-process `asyncio.Queue`，每 session 上限 3 条，忙时自动入队、turn 结束 `queued_next` 消费。
 - **并发控制**：`manager.lock_for(session_id)`（per-session 序列化）+ 全局 `Semaphore(max_concurrent_turns=32)`。
 - **已有控制 feature**：停止（`POST /stop` + `manager.stop()`）、恢复/重新编辑（`POST /truncate` + `db.truncate_from`）、斜杠命令。
 - **认证**：JWT Bearer（`auth.create_token`/`decode_token`，`require_user` 依赖），PyJWT，默认 24h TTL。
@@ -27,7 +27,7 @@
 | 维度 | 决策 |
 |---|---|
 | WS 承载范围 | 对话流式推送 + 客户端上行控制命令（send/stop/resume/edit/slash/queue）。REST 保留登录、session 列表、文件、settings 等非对话操作 |
-| 协议格式 | JSON-RPC 2.0（newline-delimited），与 hermes 线兼容。事件 type 复用 sophclaw 现有名，仅套 RPC 信封 |
+| 协议格式 | JSON-RPC 2.0（newline-delimited），与 hermes 线兼容。事件 type 复用 sophagent 现有名，仅套 RPC 信封 |
 | 旧通道迁移 | 双轨过渡：阶段1 新增 WS + 保留 SSE/控制 HTTP 路由；阶段2 稳定后删除旧对话路由 |
 | 断线策略 | detach + 重连回放：ws 断开 → turn 后台继续、事件写缓冲 → 重连从水位回放 |
 | 事件缓冲 | 仅缓存当前进行中 turn 的 `deque(maxlen=500)`，无条件写入、turn 落库后清空；重连回放该 turn 全量事件 |
@@ -35,11 +35,11 @@
 | 认证 | query param `?token=<jwt>`（浏览器 WS 不可设自定义 header）+ Origin/Host 校验 |
 | 多端同时在线 | 不支持。单活跃 transport，重连即接管（YAGNI） |
 | 一次性 ticket 认证 | 不做。本期 query param JWT；access log 脱敏（后续可选） |
-| 跨进程/水平扩展 | 不做。session_state 内存态，符合 sophclaw 单进程现状 |
+| 跨进程/水平扩展 | 不做。session_state 内存态，符合 sophagent 单进程现状 |
 
 ## 4. 架构方案
 
-参照 hermes `tui_gateway/`，在 sophclaw 新建 `gateway/` 子包，作为 JSON-RPC 网关层。**复用**现有 `AgentRunner`、`SessionManager`、`db`、`auth`，不重写 agent 逻辑；在 `AgentRunner.run()` 与传输之间插入一层 transport 抽象。
+参照 hermes `tui_gateway/`，在 sophagent 新建 `gateway/` 子包，作为 JSON-RPC 网关层。**复用**现有 `AgentRunner`、`SessionManager`、`db`、`auth`，不重写 agent 逻辑；在 `AgentRunner.run()` 与传输之间插入一层 transport 抽象。
 
 > 选型说明：评估过三条路线。
 > - 方案 A（per-session 事件缓冲 + 水位回放，纯 async）：最轻，但仅是"通道"层面。
@@ -50,9 +50,9 @@
 ### 4.1 模块划分
 
 ```
-sophclaw/
+sophagent/
 ├── gateway/                  # 新增：JSON-RPC over WebSocket 网关
-│   ├── protocol.py           # JSON-RPC 帧构造 + 错误码常量 + sophclaw 事件类型
+│   ├── protocol.py           # JSON-RPC 帧构造 + 错误码常量 + sophagent 事件类型
 │   ├── transport.py          # Transport Protocol + WSTransport(async) + contextvar 绑定
 │   ├── dispatcher.py         # dispatch(req, transport) 路由到 method handler
 │   ├── session_state.py      # 运行态：agent task/running/history_version/事件缓冲/detach·grace
@@ -123,7 +123,7 @@ _grace: asyncio.TimerHandle | None   # detach 后的 grace 定时器
 - **响应**（匹配 id）：`{"jsonrpc":"2.0","id":"1","result":{...}}` 或 `{"jsonrpc":"2.0","id":"1","error":{"code":-32xxx,"message":"..."}}`
 - **事件**（无 id）：`{"jsonrpc":"2.0","method":"event","params":{"type":<ev>,"session_id":"...","payload":{...}}}`
 
-事件 type 复用 sophclaw 现有名（不改语义）：`gateway.ready`、`message.start`、`message.delta`（原 text_delta）、`reasoning.delta`、`tool.call`、`tool.result`、`message.complete`（原 done）、`queued_next`、`session.info`（含 `history_version`）、`error`。
+事件 type 复用 sophagent 现有名（不改语义）：`gateway.ready`、`message.start`、`message.delta`（原 text_delta）、`reasoning.delta`、`tool.call`、`tool.result`、`message.complete`（原 done）、`queued_next`、`session.info`（含 `history_version`）、`error`。
 
 ### 5.3 错误码
 
@@ -134,7 +134,7 @@ _grace: asyncio.TimerHandle | None   # detach 后的 grace 定时器
 
 ### 6.1 共享 turn 核心
 
-将 `session_routes.py` 的 `_run_one_turn` 核心提取为共享函数（`sophclaw/agent/turn.py` 或 `SessionManager` 方法），HTTP SSE 路由与 RPC `prompt.submit` **都调用它**，差异仅在"事件往哪送"：HTTP 走 `StreamingResponse` 的 `asyncio.Queue`，RPC 走 `session.emit`（缓冲+transport）。turn 逻辑单一来源，双轨语义一致。`SessionManager` 的 lock/semaphore/消息队列（3 条上限）原样复用。
+将 `session_routes.py` 的 `_run_one_turn` 核心提取为共享函数（`sophagent/agent/turn.py` 或 `SessionManager` 方法），HTTP SSE 路由与 RPC `prompt.submit` **都调用它**，差异仅在"事件往哪送"：HTTP 走 `StreamingResponse` 的 `asyncio.Queue`，RPC 走 `session.emit`（缓冲+transport）。turn 逻辑单一来源，双轨语义一致。`SessionManager` 的 lock/semaphore/消息队列（3 条上限）原样复用。
 
 ### 6.2 双轨过渡
 

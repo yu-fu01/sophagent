@@ -1,8 +1,8 @@
 import pytest
-from sophclaw.config import ProviderConfig
-from sophclaw.crypto import encrypt
-from sophclaw.db import Database
-from sophclaw.providers.registry import ProviderRegistry, ResolvedProvider
+from sophagent.config import ProviderConfig
+from sophagent.crypto import encrypt
+from sophagent.db import Database
+from sophagent.providers.registry import ProviderRegistry, ResolvedProvider
 
 SECRET = "0" * 64
 

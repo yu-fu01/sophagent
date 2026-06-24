@@ -1,11 +1,11 @@
-# sophclaw 多用户 + 用户组设计
+# sophagent 多用户 + 用户组设计
 
 状态：已批准设计，待写实现计划
 日期：2026-06-16
 
 ## 1. 背景与目标
 
-当前 sophclaw 的多用户模型很薄：
+当前 sophagent 的多用户模型很薄：
 
 - `users` 表有 `role`（admin/user），首个引导用户是 admin。
 - `agents` 全局共享，仅 admin 可增删改，所有登录用户可见。

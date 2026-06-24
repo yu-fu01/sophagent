@@ -5,13 +5,13 @@ from __future__ import annotations
 
 import pytest
 
-from sophclaw import config as config_mod
-from sophclaw.db import Database
-from sophclaw.models import Message
+from sophagent import config as config_mod
+from sophagent.db import Database
+from sophagent.models import Message
 
 
 async def _db(tmp_path, monkeypatch) -> Database:
-    monkeypatch.setenv("SOPHCLAW_DATA_DIR", str(tmp_path / "data"))
+    monkeypatch.setenv("SOPHAGENT_DATA_DIR", str(tmp_path / "data"))
     config_mod.reset_config()
     db = Database(tmp_path / "s.db")
     await db.connect()
@@ -128,8 +128,8 @@ async def test_backfill_indexes_existing_messages(tmp_path, monkeypatch):
 
 
 def _ctx(db, user_id: int):
-    from sophclaw.models import AgentDef
-    from sophclaw.tools.registry import ToolContext
+    from sophagent.models import AgentDef
+    from sophagent.tools.registry import ToolContext
 
     agent = AgentDef(
         id=1, name="t", description="", system_prompt="p",
@@ -141,7 +141,7 @@ def _ctx(db, user_id: int):
 
 @pytest.mark.asyncio
 async def test_tool_discovery_returns_match_and_window(tmp_path, monkeypatch):
-    from sophclaw.tools.session_search import session_search
+    from sophagent.tools.session_search import session_search
 
     db = await _db(tmp_path, monkeypatch)
     try:
@@ -164,7 +164,7 @@ async def test_tool_discovery_returns_match_and_window(tmp_path, monkeypatch):
 
 @pytest.mark.asyncio
 async def test_tool_browse_lists_recent_sessions(tmp_path, monkeypatch):
-    from sophclaw.tools.session_search import session_search
+    from sophagent.tools.session_search import session_search
 
     db = await _db(tmp_path, monkeypatch)
     try:
@@ -181,7 +181,7 @@ async def test_tool_browse_lists_recent_sessions(tmp_path, monkeypatch):
 
 @pytest.mark.asyncio
 async def test_tool_scroll_returns_window(tmp_path, monkeypatch):
-    from sophclaw.tools.session_search import session_search
+    from sophagent.tools.session_search import session_search
 
     db = await _db(tmp_path, monkeypatch)
     try:
@@ -203,7 +203,7 @@ async def test_tool_scroll_returns_window(tmp_path, monkeypatch):
 
 @pytest.mark.asyncio
 async def test_tool_scroll_rejects_other_users_session(tmp_path, monkeypatch):
-    from sophclaw.tools.session_search import session_search
+    from sophagent.tools.session_search import session_search
 
     db = await _db(tmp_path, monkeypatch)
     try:
@@ -223,7 +223,7 @@ async def test_tool_scroll_rejects_other_users_session(tmp_path, monkeypatch):
 
 @pytest.mark.asyncio
 async def test_tool_handles_invalid_fts_query(tmp_path, monkeypatch):
-    from sophclaw.tools.session_search import session_search
+    from sophagent.tools.session_search import session_search
 
     db = await _db(tmp_path, monkeypatch)
     try:
@@ -241,7 +241,7 @@ async def test_tool_handles_invalid_fts_query(tmp_path, monkeypatch):
 
 
 def _agent_with_tools(tools):
-    from sophclaw.models import AgentDef
+    from sophagent.models import AgentDef
 
     return AgentDef(
         id=1, name="t", description="", system_prompt="You help.",
@@ -250,9 +250,9 @@ def _agent_with_tools(tools):
 
 
 def test_prompt_includes_session_search_guidance_when_tool_enabled(tmp_path, monkeypatch):
-    monkeypatch.setenv("SOPHCLAW_DATA_DIR", str(tmp_path / "data"))
+    monkeypatch.setenv("SOPHAGENT_DATA_DIR", str(tmp_path / "data"))
     config_mod.reset_config()
-    from sophclaw.agent.prompt import build_system_prompt
+    from sophagent.agent.prompt import build_system_prompt
 
     try:
         out = build_system_prompt(_agent_with_tools(["session_search"]))
@@ -263,9 +263,9 @@ def test_prompt_includes_session_search_guidance_when_tool_enabled(tmp_path, mon
 
 
 def test_prompt_omits_guidance_without_tool(tmp_path, monkeypatch):
-    monkeypatch.setenv("SOPHCLAW_DATA_DIR", str(tmp_path / "data"))
+    monkeypatch.setenv("SOPHAGENT_DATA_DIR", str(tmp_path / "data"))
     config_mod.reset_config()
-    from sophclaw.agent.prompt import build_system_prompt
+    from sophagent.agent.prompt import build_system_prompt
 
     try:
         out = build_system_prompt(_agent_with_tools(["read_file"]))

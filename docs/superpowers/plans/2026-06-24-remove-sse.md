@@ -2,7 +2,7 @@
 
 > **面向 AI 代理的工作者：** 必需子技能：使用 superpowers:subagent-driven-development（推荐）或 superpowers:executing-plans 逐任务实现此计划。步骤使用复选框（`- [ ]`）语法来跟踪进度。
 
-**目标：** 删除 REST 对话流（`/chat` SSE）与控制类 HTTP 路由（`/stop`、`/truncate`），sophclaw 对话通路只走 WebSocket JSON-RPC 网关。
+**目标：** 删除 REST 对话流（`/chat` SSE）与控制类 HTTP 路由（`/stop`、`/truncate`），sophagent 对话通路只走 WebSocket JSON-RPC 网关。
 
 **架构：** 前端与测试从 `/chat` SSE 迁到 WS（`prompt.submit`/`session.interrupt`/新增 `session.truncate`/`message.edit`）。后端删三个路由 + `StreamingResponse`。WS 网关与共享 turn 核心 `run_turns` 不变。
 
@@ -17,9 +17,9 @@
 - 修改：`tests/conftest.py` — 新增 WS 测试 helper（`ws_token`/`ws_send`/`ws_recv_frame`/`ws_response`/`ws_events_until`），保留 `sse_events` 直到最后删除。
 - 修改：`tests/test_api.py` — 11 个走 `/chat` SSE 的测试迁 WS。
 - 修改：`tests/test_overrides_usage.py` — 5 个走 `/chat` SSE 的测试迁 WS。
-- 修改：`sophclaw/gateway/methods.py` — 新增 `session.truncate` 方法。
-- 修改：`sophclaw/gateway/protocol.py` — 无（错误码已有 `ERR_BUSY`/`ERR_FORBIDDEN`）。
-- 修改：`sophclaw/api/session_routes.py` — 删 `/chat`、`/stop`、`/truncate` 路由与 `_start_sse_turn`、`StreamingResponse`。
+- 修改：`sophagent/gateway/methods.py` — 新增 `session.truncate` 方法。
+- 修改：`sophagent/gateway/protocol.py` — 无（错误码已有 `ERR_BUSY`/`ERR_FORBIDDEN`）。
+- 修改：`sophagent/api/session_routes.py` — 删 `/chat`、`/stop`、`/truncate` 路由与 `_start_sse_turn`、`StreamingResponse`。
 - 修改：`web/index.html` — 重新编辑走 `message.edit`、恢复走 `session.truncate`。
 
 ---
@@ -84,7 +84,7 @@ git commit -m "test: 加 WebSocket 测试 helper（ws_send/ws_response/ws_events
 ## 任务 2：新增 WS 方法 `session.truncate`
 
 **文件：**
-- 修改：`sophclaw/gateway/methods.py`（新增 `m_session_truncate`，注册进 `METHODS`）
+- 修改：`sophagent/gateway/methods.py`（新增 `m_session_truncate`，注册进 `METHODS`）
 - 测试：`tests/test_gateway_ws.py`（追加用例）
 
 - [ ] **步骤 1：写失败测试**
@@ -145,7 +145,7 @@ def test_session_truncate_other_user_forbidden(client, bob, agent_id, admin):
 
 - [ ] **步骤 3：实现 `m_session_truncate`**
 
-在 `sophclaw/gateway/methods.py` 的 `m_queue_submit` 之前插入：
+在 `sophagent/gateway/methods.py` 的 `m_queue_submit` 之前插入：
 
 ```python
 async def m_session_truncate(params: dict[str, Any], ctx: GatewayContext) -> dict[str, Any]:
@@ -175,7 +175,7 @@ async def m_session_truncate(params: dict[str, Any], ctx: GatewayContext) -> dic
 - [ ] **步骤 5：Commit**
 
 ```bash
-git add sophclaw/gateway/methods.py tests/test_gateway_ws.py
+git add sophagent/gateway/methods.py tests/test_gateway_ws.py
 git commit -m "feat(gateway): 新增 session.truncate WS 方法（恢复用，仅截断不开轮）"
 ```
 
@@ -699,7 +699,7 @@ def test_thinking_default_folds_to_none(client, bob, agent_id):
 
 ```python
 def test_turn_usage_and_done_usage(client, bob, agent_id):
-    from sophclaw.models import AssistantTurn
+    from sophagent.models import AssistantTurn
     client.provider.script = [AssistantTurn(content="hi", stop_reason="stop",
         input_tokens=100, output_tokens=20, cache_read_tokens=40)]
     s = client.post("/api/sessions", headers=bob, json={"agent_id": agent_id}).json()
@@ -750,13 +750,13 @@ git commit -m "test: overrides 用例迁移到 WS（thinking/usage/fallback）"
 ## 任务 9：删 SSE 路由 + 前端迁移
 
 **文件：**
-- 修改：`sophclaw/api/session_routes.py` — 删 `/chat`、`/stop`、`/truncate`、`_start_sse_turn`、`StreamingResponse` import。
+- 修改：`sophagent/api/session_routes.py` — 删 `/chat`、`/stop`、`/truncate`、`_start_sse_turn`、`StreamingResponse` import。
 - 修改：`web/index.html` — 重新编辑走 `message.edit`、恢复走 `session.truncate`。
 - 修改：`tests/conftest.py` — 删 `sse_events` helper（已无人用）。
 
 - [ ] **步骤 1：删后端路由**
 
-`sophclaw/api/session_routes.py`：
+`sophagent/api/session_routes.py`：
 
 1. 删除 `import asyncio`（仍用于？检查：删 `_start_sse_turn` 后 `asyncio.Queue`/`create_task` 不再用 → 删 `import asyncio`）。`import json` 仍用（其它路由？检查后保留/删）。实际仅 `chat`/`_start_sse_turn` 用 `asyncio`/`json`，删后这两个 import 可移除。保留 `uuid`（create_session 用）。
 2. 删除 `from fastapi.responses import JSONResponse, StreamingResponse` 中的 `StreamingResponse`，改 `from fastapi.responses import JSONResponse`。检查 `JSONResponse` 是否仍用——`chat` 的 slash 分支已删，其它路由是否用 JSONResponse？搜索：仅 chat 用。删后若无人用则改回不导入。保守：保留 `JSONResponse` import（truncate 等返回 dict，FastAPI 自动转 JSON；JSONResponse 可能无引用→移除）。
@@ -764,7 +764,7 @@ git commit -m "test: overrides 用例迁移到 WS（thinking/usage/fallback）"
 4. 删除函数：`chat`、`_start_sse_turn`、`stop_session`、`truncate_session`。
 5. 保留：`list_sessions`、`create_session`、`get_session`、`patch_session`、`delete_session`（delete 内调 `manager.stop`/`clear_queue` 仍合理，保留）。
 
-精确改法：打开 `sophclaw/api/session_routes.py`，删除从 `@router.post("/{session_id}/stop")` 到文件末尾 `_start_sse_turn` 结束的所有内容（即 `stop_session`、`truncate_session`、`chat`、`_start_sse_turn` 四个函数）。保留 `delete_session`（在 `truncate_session` 之前）。
+精确改法：打开 `sophagent/api/session_routes.py`，删除从 `@router.post("/{session_id}/stop")` 到文件末尾 `_start_sse_turn` 结束的所有内容（即 `stop_session`、`truncate_session`、`chat`、`_start_sse_turn` 四个函数）。保留 `delete_session`（在 `truncate_session` 之前）。
 
 修改后的 import 块：
 
@@ -781,7 +781,7 @@ from ..perms import can_access_group, can_manage_group
 router = APIRouter()
 ```
 
-（确认 `JSONResponse` 仍被 `delete_session` 等用？`delete_session` 返回 `{"ok": True}` dict。无 JSONResponse 引用则改为不导入。运行时 import 未用不报错，保守保留 `JSONResponse` 若无引用则删。以 `grep JSONResponse sophclaw/api/session_routes.py` 确认：若仅 import 行，删之。）
+（确认 `JSONResponse` 仍被 `delete_session` 等用？`delete_session` 返回 `{"ok": True}` dict。无 JSONResponse 引用则改为不导入。运行时 import 未用不报错，保守保留 `JSONResponse` 若无引用则删。以 `grep JSONResponse sophagent/api/session_routes.py` 确认：若仅 import 行，删之。）
 
 - [ ] **步骤 2：前端重新编辑走 `message.edit`**
 
@@ -848,7 +848,7 @@ async function restoreFrom(mid) {
 
 运行：
 ```bash
-grep -rn "StreamingResponse\|text/event-stream\|/chat\b\|sse_events" sophclaw/ tests/ web/ | grep -v ".pyc"
+grep -rn "StreamingResponse\|text/event-stream\|/chat\b\|sse_events" sophagent/ tests/ web/ | grep -v ".pyc"
 ```
 预期：无输出（或仅注释/无关）。
 
@@ -863,10 +863,10 @@ grep -rn "StreamingResponse\|text/event-stream\|/chat\b\|sse_events" sophclaw/ t
 ```bash
 uv run --extra dev python -c "
 from fastapi.testclient import TestClient
-from sophclaw.main import create_app
+from sophagent.main import create_app
 import tempfile, os
-os.environ['SOPHCLAW_DATA_DIR']=tempfile.mkdtemp()+'/data'
-from sophclaw.main import create_app
+os.environ['SOPHAGENT_DATA_DIR']=tempfile.mkdtemp()+'/data'
+from sophagent.main import create_app
 with TestClient(create_app()) as c:
     tok=c.post('/api/auth/login',json={'username':'admin','password':'adminpw'}).json()['token']
     h={'Authorization':f'Bearer {tok}'}
@@ -881,7 +881,7 @@ with TestClient(create_app()) as c:
 - [ ] **步骤 9：Commit**
 
 ```bash
-git add sophclaw/api/session_routes.py web/index.html tests/conftest.py
+git add sophagent/api/session_routes.py web/index.html tests/conftest.py
 git commit -m "feat: 完全移除 SSE（删 /chat·/stop·/truncate，前端重编辑走 message.edit、恢复走 session.truncate）"
 ```
 
@@ -899,7 +899,7 @@ git commit -m "feat: 完全移除 SSE（删 /chat·/stop·/truncate，前端重�
 - [ ] **步骤 2：docker 重建冒烟**
 
 ```bash
-docker compose -p sophclaw-sse-im up --build -d
+docker compose -p sophagent-sse-im up --build -d
 for i in $(seq 1 25); do curl -sf http://127.0.0.1:8000/healthz >/dev/null 2>&1 && break; sleep 1; done
 ```
 

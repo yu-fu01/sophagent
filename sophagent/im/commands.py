@@ -1,6 +1,6 @@
 """IM 斜杠命令：/pair /new /stop /help。
 
-仅这 4 条在 IM 暴露；sophclaw 现有 /compact /model 等不在 IM 暴露（避免冲突）。
+仅这 4 条在 IM 暴露；sophagent 现有 /compact /model 等不在 IM 暴露（避免冲突）。
 """
 
 from __future__ import annotations

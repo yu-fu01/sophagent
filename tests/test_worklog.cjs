@@ -5,7 +5,7 @@ const assert = require("node:assert");
 const { toolKind, worklogSummary } = require("../web/worklog.js");
 
 // ---- toolKind：工具名 -> kind 映射 ------------------------------------------
-test("toolKind maps sophclaw tools to kinds", () => {
+test("toolKind maps sophagent tools to kinds", () => {
   assert.equal(toolKind("terminal"), "shell");
   assert.equal(toolKind("python_exec"), "shell");
   assert.equal(toolKind("read_file"), "read");

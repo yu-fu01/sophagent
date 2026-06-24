@@ -3,7 +3,7 @@
 import asyncio
 import threading
 
-from sophclaw.models import AssistantTurn, StreamEvent, ToolCall
+from sophagent.models import AssistantTurn, StreamEvent, ToolCall
 
 from conftest import ws_token, ws_send, ws_recv_frame, ws_response, ws_events_until  # noqa: F401
 

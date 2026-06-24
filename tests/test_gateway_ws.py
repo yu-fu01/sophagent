@@ -14,9 +14,9 @@ import json
 import pytest
 from starlette.websockets import WebSocketDisconnect
 
-from sophclaw.config import ProviderConfig
-import sophclaw.providers as providers_mod
-from sophclaw.models import AssistantTurn, StreamEvent
+from sophagent.config import ProviderConfig
+import sophagent.providers as providers_mod
+from sophagent.models import AssistantTurn, StreamEvent
 
 
 def _ws_url(client, token: str, **extra) -> str:

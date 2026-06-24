@@ -12,7 +12,7 @@ import logging
 import shutil
 from pathlib import Path
 
-log = logging.getLogger("sophclaw.skills.seed")
+log = logging.getLogger("sophagent.skills.seed")
 
 
 def builtin_dir() -> Path:

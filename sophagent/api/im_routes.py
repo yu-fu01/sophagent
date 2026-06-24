@@ -1,4 +1,4 @@
-"""IM 绑定 REST：sophclaw 用户签发配对码（供 Telegram 端 /pair 用）。"""
+"""IM 绑定 REST：sophagent 用户签发配对码（供 Telegram 端 /pair 用）。"""
 
 from __future__ import annotations
 

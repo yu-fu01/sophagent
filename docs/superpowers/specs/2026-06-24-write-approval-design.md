@@ -8,13 +8,13 @@
 
 hermes 的 `write_approval`：开启后 agent 的记忆写入不直接落库，而是 stage 为
 pending，用户用 `/memory pending|approve|reject` 审批。这能挡住"agent 把对我的错误
-假设写进了画像"。sophclaw 已有①记忆、③后台 review 自动写入——审批门控给用户对自动
+假设写进了画像"。sophagent 已有①记忆、③后台 review 自动写入——审批门控给用户对自动
 写入的最终控制权。
 
 ## 决策（已确认）
 
 - **范围**：只做记忆审批（memory）。skill 审批（diff UX 更复杂）本期不做。
-- **门控粒度**：**全局 admin 开关**，复用 sophclaw 现有 settings / `effective_*`
+- **门控粒度**：**全局 admin 开关**，复用 sophagent 现有 settings / `effective_*`
   模式（与 `compress_threshold`、`max_upload_bytes` 一致）。pending 队列**按用户隔离**。
 
 ### 非目标（YAGNI）
@@ -100,13 +100,13 @@ stage 时标记 origin=review（便于审批列表区分 `[auto]`）。门控开
 
 | 文件 | 改动 |
 |---|---|
-| `sophclaw/db.py` | `pending_writes` 表 + pending_* 方法 |
-| `sophclaw/config.py` | `effective_write_approval` |
-| `sophclaw/tools/memory.py` | add/replace/remove 门控分支 + stage |
-| `sophclaw/agent/review.py` | 注入 `write_origin=review` |
-| `sophclaw/agent/commands/builtin/memory.py` | 新增 `/memory` 审批命令 + `_apply_pending` |
-| `sophclaw/agent/commands/__init__.py` | 注册 `/memory` |
-| `sophclaw/api/settings_routes.py` | write_approval GET/PUT |
+| `sophagent/db.py` | `pending_writes` 表 + pending_* 方法 |
+| `sophagent/config.py` | `effective_write_approval` |
+| `sophagent/tools/memory.py` | add/replace/remove 门控分支 + stage |
+| `sophagent/agent/review.py` | 注入 `write_origin=review` |
+| `sophagent/agent/commands/builtin/memory.py` | 新增 `/memory` 审批命令 + `_apply_pending` |
+| `sophagent/agent/commands/__init__.py` | 注册 `/memory` |
+| `sophagent/api/settings_routes.py` | write_approval GET/PUT |
 | `tests/test_write_approval.py` | 新增 |
 
 前端可后续加 pending 审批卡片；本期保证 slash 命令通路可用。

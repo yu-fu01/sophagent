@@ -865,7 +865,7 @@ wheels = [
 ]
 
 [[package]]
-name = "sophclaw-agent"
+name = "sophagent"
 version = "0.1.0"
 source = { editable = "." }
 dependencies = [

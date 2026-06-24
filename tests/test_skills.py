@@ -1,7 +1,7 @@
 import pytest
 
-from sophclaw.skills.seed import builtin_dir, seed_builtin_skills
-from sophclaw.skills.store import SkillError, SkillStore, parse_frontmatter
+from sophagent.skills.seed import builtin_dir, seed_builtin_skills
+from sophagent.skills.store import SkillError, SkillStore, parse_frontmatter
 
 SKILL_MD = """---
 name: deploy-checklist
@@ -87,9 +87,9 @@ def test_delete(store):
 
 async def test_skill_manage_tool_self_evolution(ctx, tmp_path):
     """Agent-side flow: create via tool -> appears in index -> visible in prompt."""
-    from sophclaw.agent.prompt import build_system_prompt
-    from sophclaw.tools import load_all
-    from sophclaw.tools import registry
+    from sophagent.agent.prompt import build_system_prompt
+    from sophagent.tools import load_all
+    from sophagent.tools import registry
 
     load_all()
     ctx.skill_store = SkillStore(tmp_path / "skills2")

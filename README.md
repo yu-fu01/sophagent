@@ -1,4 +1,4 @@
-# sophclaw-agent
+# sophagent
 
 轻量级多用户、多 agent 服务，带 hermes 式自进化 skill 系统。
 单进程 asyncio + FastAPI + SQLite，约 4000 行 Python，8 个直接依赖，镜像 ~200MB。
@@ -21,7 +21,7 @@ docker compose up -d --build
 # 浏览器打开 http://localhost:8000 ，用 admin 登录
 ```
 
-首次启动自动创建 admin 账号（密码取 `ADMIN_PASSWORD`；未设置则生成随机密码打印在日志里：`docker compose logs sophclaw`）。
+首次启动自动创建 admin 账号（密码取 `ADMIN_PASSWORD`；未设置则生成随机密码打印在日志里：`docker compose logs sophagent`）。
 
 ### 上手流程
 
@@ -36,13 +36,13 @@ docker compose up -d --build
 ```bash
 uv venv --python 3.12 .venv && uv pip install -p .venv/bin/python -e ".[dev]"
 .venv/bin/python -m pytest          # 45+ 测试，全部使用 fake provider，无需真实 API key
-ADMIN_PASSWORD=dev .venv/bin/uvicorn sophclaw.main:app --reload
+ADMIN_PASSWORD=dev .venv/bin/uvicorn sophagent.main:app --reload
 ```
 
 ## Provider 配置
 
 **推荐方式**：在数据目录放 `providers.yaml`（本地为 `./data/providers.yaml`，容器为 `/data/providers.yaml`）。
-也可用环境变量 `SOPHCLAW_PROVIDERS` 内联 JSON，但注意：在 shell 里 `source .env` 会剥掉 JSON 的双引号导致解析失败——内联方式只适合 docker compose 的 `environment:`（不经过 shell）。
+也可用环境变量 `SOPHAGENT_PROVIDERS` 内联 JSON，但注意：在 shell 里 `source .env` 会剥掉 JSON 的双引号导致解析失败——内联方式只适合 docker compose 的 `environment:`（不经过 shell）。
 
 ```yaml
 providers:
@@ -91,7 +91,7 @@ print(client.chat.completions.create(model="helper",
 /data/skills/<name>/references/  # 可选支持文件（另有 scripts/ templates/ assets/）
 ```
 
-**内置 skill 库**：`sophclaw/skills/builtin/` 随项目提交了一批从 hermes 精选、压平的开箱即用技能（28 个，覆盖 software-development / github / productivity / research / devops / data-science）。服务启动时自动播种进 `/data/skills`——**仅补缺失项，不覆盖**已存在的同名目录，因此用户/agent 对内置 skill 的改动会在重启后保留。想增删内置技能，直接增删 `builtin/` 下的目录即可，无需改代码。
+**内置 skill 库**：`sophagent/skills/builtin/` 随项目提交了一批从 hermes 精选、压平的开箱即用技能（28 个，覆盖 software-development / github / productivity / research / devops / data-science）。服务启动时自动播种进 `/data/skills`——**仅补缺失项，不覆盖**已存在的同名目录，因此用户/agent 对内置 skill 的改动会在重启后保留。想增删内置技能，直接增删 `builtin/` 下的目录即可，无需改代码。
 
 ## 安全边界（务必阅读）
 
@@ -108,7 +108,7 @@ FastAPI (单进程 asyncio)
        └─ AgentRunner  模型↔工具循环, 两层上下文压缩
             ├─ providers/   openai | anthropic 适配器（流式, 工具调用）
             └─ tools/       files terminal python web memory skills delegate
-数据: /data/sophclaw.db (SQLite WAL) + /data/skills/ + /data/workspaces/<uid>/
+数据: /data/sophagent.db (SQLite WAL) + /data/skills/ + /data/workspaces/<uid>/
 ```
 
 每个 turn 从 DB 加载历史 → 运行 → 释放，无常驻 agent 实例；常驻内存极小。

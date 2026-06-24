@@ -2,13 +2,13 @@
 
 The detach / buffer / replay / grace / reap lifecycle lives here. The turn
 itself (agent loop, persistence, message queue) is shared with the REST SSE
-path via :mod:`sophclaw.agent.turn`; this module only owns *how events leave
+path via :mod:`sophagent.agent.turn`; this module only owns *how events leave
 the running turn*:
 
 * the current turn's events are buffered unconditionally (``deque(maxlen=500)``)
   so a client that disconnects mid-turn and reconnects within the grace window
   sees everything it missed — hermes' original detach dropped intermediate
-  tokens and relied on the final DB write; sophclaw replays instead;
+  tokens and relied on the final DB write; sophagent replays instead;
 * only the *current in-flight turn* is buffered; once a turn is persisted it is
   cleared and the client recovers it from the DB on resume (no replay of past
   turns);
@@ -212,7 +212,7 @@ class SessionState:
 
 
 class SessionRegistry:
-    """Process-global map of live session run-state (single-process sophclaw)."""
+    """Process-global map of live session run-state (single-process sophagent)."""
 
     def __init__(self, grace_seconds: float = DEFAULT_GRACE_SECONDS) -> None:
         self._states: dict[str, SessionState] = {}

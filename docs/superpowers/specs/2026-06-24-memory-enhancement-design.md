@@ -4,12 +4,12 @@
 
 ## 背景与目标
 
-用户要求「参考 `hermes-agent` 实现自进化和记忆功能」。sophclaw 当前已有：
+用户要求「参考 `hermes-agent` 实现自进化和记忆功能」。sophagent 当前已有：
 
 - **记忆**：`memory` 工具（read/add/replace/remove），按用户存 DB，开局冻结快照注入 system prompt，有单条字符上限 + 条数上限。
 - **自进化**：`skill_manage`（create/patch/delete）+ skill 索引注入，全靠 agent 在前台对话里自己决定。
 
-hermes 比 sophclaw 多出的能力被拆为四个子项目，按依赖排序：
+hermes 比 sophagent 多出的能力被拆为四个子项目，按依赖排序：
 
 | 顺序 | 子项目 | 状态 |
 |---|---|---|
@@ -18,7 +18,7 @@ hermes 比 sophclaw 多出的能力被拆为四个子项目，按依赖排序：
 | ③ | 后台自改进 review（turn 后异步重放，自动写记忆/改 skill + WebUI 通知；**含记忆安全扫描**） | 待办 |
 | ④ | 写入审批门控（`write_approval` 开关 + pending 审批队列） | 待办 |
 
-**架构约束**：sophclaw 是无常驻 agent 的多用户服务器（每 turn 从 DB 加载历史 → 跑 → 释放）。记忆按用户隔离，只注入该用户自己的 session，不存在跨用户注入路径——因此**安全扫描推迟到 ③**（后台自动写入时风险更高，届时统一把关）。
+**架构约束**：sophagent 是无常驻 agent 的多用户服务器（每 turn 从 DB 加载历史 → 跑 → 释放）。记忆按用户隔离，只注入该用户自己的 session，不存在跨用户注入路径——因此**安全扫描推迟到 ③**（后台自动写入时风险更高，届时统一把关）。
 
 ### 本子项目目标
 
@@ -32,8 +32,8 @@ hermes 比 sophclaw 多出的能力被拆为四个子项目，按依赖排序：
 ### 非目标（YAGNI）
 
 - 安全扫描（→ ③）、写入审批（→ ④）、会话搜索（→ ②）、后台自动写入（→ ③）。
-- 外部记忆 provider 插件（hermes 有 8 个，sophclaw 不引入）。
-- 子串匹配的 replace/remove（hermes 用 `old_text` 子串；sophclaw 已用稳定的 `memory_id`，保持不变，更简单可靠）。
+- 外部记忆 provider 插件（hermes 有 8 个，sophagent 不引入）。
+- 子串匹配的 replace/remove（hermes 用 `old_text` 子串；sophagent 已用稳定的 `memory_id`，保持不变，更简单可靠）。
 
 ## 设计
 
@@ -141,11 +141,11 @@ What you know about this user — identity, preferences, communication style:
 
 | 文件 | 改动 |
 |---|---|
-| `sophclaw/db.py` | SCHEMA 加 target 列；`_migrate_structure` 加迁移；`memory_list/add` 签名 |
-| `sophclaw/config.py` | 容量配置项调整 |
-| `sophclaw/tools/memory.py` | target 参数、容量/去重纯函数、整合提示文案 |
-| `sophclaw/agent/prompt.py` | 双段注入 + usage 头 |
-| `sophclaw/agent/runtime.py`（或注入调用处） | 按 target 分组传入 |
+| `sophagent/db.py` | SCHEMA 加 target 列；`_migrate_structure` 加迁移；`memory_list/add` 签名 |
+| `sophagent/config.py` | 容量配置项调整 |
+| `sophagent/tools/memory.py` | target 参数、容量/去重纯函数、整合提示文案 |
+| `sophagent/agent/prompt.py` | 双段注入 + usage 头 |
+| `sophagent/agent/runtime.py`（或注入调用处） | 按 target 分组传入 |
 | `tests/` | 新增/扩展记忆测试 |
 
 无 API 路由变更，无前端变更（记忆对前端透明）。

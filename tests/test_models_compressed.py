@@ -1,6 +1,6 @@
 """Message.compressed 标志位的序列化往返测试。"""
 
-from sophclaw.models import Message
+from sophagent.models import Message
 
 
 def test_compressed_defaults_false_and_omitted():

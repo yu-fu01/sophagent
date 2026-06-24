@@ -55,7 +55,7 @@
 
 ## 5. 后端改动
 
-### 5.1 `sophclaw/db.py`
+### 5.1 `sophagent/db.py`
 
 新增两个方法：
 
@@ -78,7 +78,7 @@ async def truncate_from(self, session_id: str, message_id: int) -> int:
 
 `load_messages`（无 id）保持不变，供 chat worker 使用。
 
-### 5.2 `sophclaw/api/session_routes.py`
+### 5.2 `sophagent/api/session_routes.py`
 
 `get_session` 改用 `load_messages_with_ids`，回传 `id`：
 

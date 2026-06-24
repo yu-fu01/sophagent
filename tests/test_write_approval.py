@@ -5,12 +5,12 @@ from __future__ import annotations
 
 import pytest
 
-from sophclaw import config as config_mod
-from sophclaw.db import Database
+from sophagent import config as config_mod
+from sophagent.db import Database
 
 
 async def _db(tmp_path, monkeypatch) -> Database:
-    monkeypatch.setenv("SOPHCLAW_DATA_DIR", str(tmp_path / "data"))
+    monkeypatch.setenv("SOPHAGENT_DATA_DIR", str(tmp_path / "data"))
     config_mod.reset_config()
     db = Database(tmp_path / "w.db")
     await db.connect()
@@ -78,8 +78,8 @@ async def test_pending_clear(tmp_path, monkeypatch):
 
 
 def _ctx(db, user_id=1, origin=None):
-    from sophclaw.models import AgentDef
-    from sophclaw.tools.registry import ToolContext
+    from sophagent.models import AgentDef
+    from sophagent.tools.registry import ToolContext
     from pathlib import Path
 
     agent = AgentDef(id=1, name="t", description="", system_prompt="p",
@@ -93,7 +93,7 @@ def _ctx(db, user_id=1, origin=None):
 
 @pytest.mark.asyncio
 async def test_gate_off_writes_directly(tmp_path, monkeypatch):
-    from sophclaw.tools.memory import memory
+    from sophagent.tools.memory import memory
 
     db = await _db(tmp_path, monkeypatch)
     try:
@@ -108,7 +108,7 @@ async def test_gate_off_writes_directly(tmp_path, monkeypatch):
 
 @pytest.mark.asyncio
 async def test_gate_on_stages_add(tmp_path, monkeypatch):
-    from sophclaw.tools.memory import memory
+    from sophagent.tools.memory import memory
 
     db = await _db(tmp_path, monkeypatch)
     await db.set_setting("write_approval", "true", 1)
@@ -125,7 +125,7 @@ async def test_gate_on_stages_add(tmp_path, monkeypatch):
 
 @pytest.mark.asyncio
 async def test_gate_on_stages_remove(tmp_path, monkeypatch):
-    from sophclaw.tools.memory import memory
+    from sophagent.tools.memory import memory
 
     db = await _db(tmp_path, monkeypatch)
     mid = await db.memory_add(1, "existing", target="memory")
@@ -144,7 +144,7 @@ async def test_gate_on_stages_remove(tmp_path, monkeypatch):
 
 @pytest.mark.asyncio
 async def test_gate_on_scan_rejects_before_staging(tmp_path, monkeypatch):
-    from sophclaw.tools.memory import memory
+    from sophagent.tools.memory import memory
 
     db = await _db(tmp_path, monkeypatch)
     await db.set_setting("write_approval", "true", 1)
@@ -160,7 +160,7 @@ async def test_gate_on_scan_rejects_before_staging(tmp_path, monkeypatch):
 
 @pytest.mark.asyncio
 async def test_gate_on_review_origin_tagged(tmp_path, monkeypatch):
-    from sophclaw.tools.memory import memory
+    from sophagent.tools.memory import memory
 
     db = await _db(tmp_path, monkeypatch)
     await db.set_setting("write_approval", "true", 1)
@@ -178,11 +178,11 @@ async def test_gate_on_review_origin_tagged(tmp_path, monkeypatch):
 
 @pytest.mark.asyncio
 async def test_review_stages_with_review_origin_when_gated(tmp_path, monkeypatch):
-    from sophclaw import providers as providers_mod
-    from sophclaw.config import ProviderConfig
-    from sophclaw.models import AgentDef, AssistantTurn, Message, StreamEvent, ToolCall
-    from sophclaw.tools import load_all
-    from sophclaw.agent.review import run_review
+    from sophagent import providers as providers_mod
+    from sophagent.config import ProviderConfig
+    from sophagent.models import AgentDef, AssistantTurn, Message, StreamEvent, ToolCall
+    from sophagent.tools import load_all
+    from sophagent.agent.review import run_review
 
     class SP:
         def __init__(s, script): s.script = list(script)
@@ -224,7 +224,7 @@ async def test_review_stages_with_review_origin_when_gated(tmp_path, monkeypatch
 
 
 async def _cmd(db, args, user_id=1):
-    from sophclaw.agent.commands import dispatch_command
+    from sophagent.agent.commands import dispatch_command
 
     return await dispatch_command(
         f"/memory {args}".strip(), db, {"id": "s1"}, {"id": user_id}, manager=None,

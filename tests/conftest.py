@@ -4,17 +4,17 @@ from typing import AsyncIterator
 
 import pytest
 
-from sophclaw import config as config_mod
+from sophagent import config as config_mod
 
 
 @pytest.fixture
 def ctx(tmp_path, monkeypatch):
     """A ToolContext with an isolated workspace and data dir."""
-    monkeypatch.setenv("SOPHCLAW_DATA_DIR", str(tmp_path / "data"))
+    monkeypatch.setenv("SOPHAGENT_DATA_DIR", str(tmp_path / "data"))
     config_mod.reset_config()
-    from sophclaw.models import AgentDef
-    from sophclaw.tools import load_all
-    from sophclaw.tools.registry import ToolContext, all_tool_names
+    from sophagent.models import AgentDef
+    from sophagent.tools import load_all
+    from sophagent.tools.registry import ToolContext, all_tool_names
 
     load_all()  # populate the registry so all_tool_names() isn't order-dependent
     agent = AgentDef(
@@ -36,7 +36,7 @@ class EchoProvider:
     """Echoes the last user message; runs scripted turns first if provided."""
 
     def __init__(self):
-        from sophclaw.models import AssistantTurn
+        from sophagent.models import AssistantTurn
 
         self._AssistantTurn = AssistantTurn
         self.script: list = []
@@ -44,7 +44,7 @@ class EchoProvider:
     async def chat(self, *, model, system, messages, tools=None,
                    temperature=None, max_tokens=None, thinking=None) -> AsyncIterator:
         self.last_kwargs = {"model": model, "thinking": thinking, "temperature": temperature}
-        from sophclaw.models import StreamEvent
+        from sophagent.models import StreamEvent
 
         if self.script:
             turn = self.script.pop(0)
@@ -63,10 +63,10 @@ class EchoProvider:
 def client(tmp_path, monkeypatch):
     from fastapi.testclient import TestClient
 
-    import sophclaw.providers as providers_mod
-    from sophclaw.config import ProviderConfig
+    import sophagent.providers as providers_mod
+    from sophagent.config import ProviderConfig
 
-    monkeypatch.setenv("SOPHCLAW_DATA_DIR", str(tmp_path / "data"))
+    monkeypatch.setenv("SOPHAGENT_DATA_DIR", str(tmp_path / "data"))
     monkeypatch.setenv("ADMIN_USERNAME", "admin")
     monkeypatch.setenv("ADMIN_PASSWORD", "adminpw")
     config_mod.reset_config()
@@ -80,8 +80,8 @@ def client(tmp_path, monkeypatch):
     provider = EchoProvider()
     providers_mod._cache["test"] = provider
 
-    from sophclaw.main import create_app
-    from sophclaw.providers.registry import reset_registry
+    from sophagent.main import create_app
+    from sophagent.providers.registry import reset_registry
 
     app = create_app()
     with TestClient(app) as c:

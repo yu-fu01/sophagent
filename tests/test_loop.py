@@ -4,10 +4,10 @@ from typing import AsyncIterator
 
 import pytest
 
-import sophclaw.providers as providers_mod
-from sophclaw.agent.loop import AgentRunner, history_tokens, truncate_old_tool_messages
-from sophclaw.config import ProviderConfig, get_config
-from sophclaw.models import AssistantTurn, Message, StreamEvent, ToolCall
+import sophagent.providers as providers_mod
+from sophagent.agent.loop import AgentRunner, history_tokens, truncate_old_tool_messages
+from sophagent.config import ProviderConfig, get_config
+from sophagent.models import AssistantTurn, Message, StreamEvent, ToolCall
 
 
 class FakeProvider:
@@ -46,7 +46,7 @@ async def collect(runner, user_input):
 def test_system_prompt_includes_model_identity(ctx):
     """The agent must know its own model name (BUG3.1): the system prompt injects
     the effective model/provider so it can answer "what model are you?"."""
-    from sophclaw.agent.prompt import build_system_prompt
+    from sophagent.agent.prompt import build_system_prompt
 
     prompt = build_system_prompt(ctx.agent)
     assert "test-model" in prompt   # ctx.agent.model
@@ -145,12 +145,12 @@ async def test_compression_triggers_summary(ctx, fake_provider):
     assert history_tokens("", runner.history) < 1000
 
 
-from sophclaw.agent.compaction import (
+from sophagent.agent.compaction import (
     SUMMARY_PREFIX,
     is_summary_message,
     make_summary_message,
 )
-from sophclaw.config import DEFAULT_COMPRESS_THRESHOLD
+from sophagent.config import DEFAULT_COMPRESS_THRESHOLD
 
 
 def test_agentrunner_default_threshold(ctx, fake_provider):
@@ -185,7 +185,7 @@ async def test_compaction_fallback_keeps_prev_summary_on_failure(ctx, fake_provi
     """summarize 失败返回 None 时，应保留上一份摘要并保住尾部消息。"""
     async def _fail(*a, **k):
         return None
-    monkeypatch.setattr("sophclaw.agent.loop.summarize", _fail)
+    monkeypatch.setattr("sophagent.agent.loop.summarize", _fail)
 
     big = "字" * 1500
     history = [make_summary_message("旧摘要正文")] + [

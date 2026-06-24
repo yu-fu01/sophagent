@@ -1,6 +1,6 @@
 """配对码签发/消费、IM 绑定 CRUD。
 
-db 方法在 sophclaw/db.py；本模块是薄封装，集中 IM 语义（platform 常量、
+db 方法在 sophagent/db.py；本模块是薄封装，集中 IM 语义（platform 常量、
 session 创建）供 driver/commands 调用。
 """
 
@@ -21,7 +21,7 @@ async def consume_code(db, code: str) -> Optional[tuple[int, int]]:
 
 
 async def bind(db, chat_id: str, user_id: int, agent_id: int) -> str:
-    """为 (chat_id, user, agent) 建新 sophclaw session 并写绑定。返回 session_id。
+    """为 (chat_id, user, agent) 建新 sophagent session 并写绑定。返回 session_id。
     若已有绑定则覆盖（换 agent 时新建 session）。"""
     agent = await db.get_agent(agent_id)
     group_id = agent["group_id"] if agent else None

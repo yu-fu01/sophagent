@@ -38,7 +38,7 @@ async def list_models(request: Request, user=Depends(require_user)):
     rows = await _visible_agents(request.app.state.db, user)
     return {
         "object": "list",
-        "data": [{"id": r["name"], "object": "model", "owned_by": "sophclaw"} for r in rows],
+        "data": [{"id": r["name"], "object": "model", "owned_by": "sophagent"} for r in rows],
     }
 
 

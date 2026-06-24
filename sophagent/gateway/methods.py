@@ -5,7 +5,7 @@ returns a plain result dict; the dispatcher wraps it in a JSON-RPC response.
 Slow methods (``prompt.submit`` etc.) start a background task that streams
 events onto the session's transport, then return an immediate ack.
 
-The turn itself runs through the shared :mod:`sophclaw.agent.turn` core —
+The turn itself runs through the shared :mod:`sophagent.agent.turn` core —
 identical to the REST SSE path — so behaviour stays in lock-step between
 transports.
 """

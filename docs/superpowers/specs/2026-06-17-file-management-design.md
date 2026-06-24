@@ -6,14 +6,14 @@
 
 ## 背景
 
-sophclaw-agent 现有架构已具备文件管理的基础：
+sophagent 现有架构已具备文件管理的基础：
 
 - **每用户工作目录** `data/workspaces/<user_id>`（`config.py: workspace_for()`），跨该用户所有会话共享。
 - **文件工具** `read_file / write_file / edit_file / list_dir`（`tools/files.py`），全部经 `safe_path()` 收敛在工作目录内，拒绝 `..`、绝对路径、符号链接逃逸。
 - **前端** 单文件原生 JS（`web/index.html`），Chat/Agents/Groups/Admin 标签页，底部 `#composer` 为输入框 + 发送。
 - **消息** 为纯文本（`messages.content TEXT`），模型纯文本、无多模态。
 
-参考 hermes-agent（`hermes_cli/web_server.py`）的 `/api/files/*` 一套 REST 接口（list / read / upload / mkdir / delete，操作一个「托管根目录」）。其「加入上下文」的本质是：文件上传进工作目录后，agent 通过自己的文件工具按需读取——文件与 agent 共享同一工作目录。该模型可 1:1 套到 sophclaw 现有的「每用户工作目录 + 文件工具」上。
+参考 hermes-agent（`hermes_cli/web_server.py`）的 `/api/files/*` 一套 REST 接口（list / read / upload / mkdir / delete，操作一个「托管根目录」）。其「加入上下文」的本质是：文件上传进工作目录后，agent 通过自己的文件工具按需读取——文件与 agent 共享同一工作目录。该模型可 1:1 套到 sophagent 现有的「每用户工作目录 + 文件工具」上。
 
 ## 需求
 
@@ -32,13 +32,13 @@ sophclaw-agent 现有架构已具备文件管理的基础：
 
 ## 架构
 
-新建 `sophclaw/api/file_routes.py`，挂载到 `/api/files`，操作 `cfg.workspace_for(user_id)`，复用 `tools/files.py: safe_path()` 做安全收敛。与 hermes 的 `/api/files/*` 对应，且与 `read_file/list_dir` 工具共享同一工作目录——上传的文件 agent 立刻能读到。
+新建 `sophagent/api/file_routes.py`，挂载到 `/api/files`，操作 `cfg.workspace_for(user_id)`，复用 `tools/files.py: safe_path()` 做安全收敛。与 hermes 的 `/api/files/*` 对应，且与 `read_file/list_dir` 工具共享同一工作目录——上传的文件 agent 立刻能读到。
 
 （替代方案：塞进 `session_routes.py`。否决——文件属用户级而非会话级，且会让会话路由臃肿。）
 
 ## 后端 API
 
-新文件 `sophclaw/api/file_routes.py`，前缀 `/api/files`，在 `api/__init__.py: mount_routes()` 注册。全部 `Depends(require_user)`，作用域恒为调用者自己的工作目录。
+新文件 `sophagent/api/file_routes.py`，前缀 `/api/files`，在 `api/__init__.py: mount_routes()` 注册。全部 `Depends(require_user)`，作用域恒为调用者自己的工作目录。
 
 | 方法 | 路径 | 请求 | 响应 |
 |---|---|---|---|
@@ -54,7 +54,7 @@ sophclaw-agent 现有架构已具备文件管理的基础：
 - **上传**：解码 data_url（仅接受 base64 data URL，否则 400），大小超 `max_upload_bytes` 返回 413。落地到工作目录根（`path` 即目标文件名）。名字冲突且 `overwrite` 非真时，自动改名为 `name (1).ext`、`name (2).ext`…。
 - **不实现** mkdir / delete / rename（只读范围）。
 
-配置新增（`config.py: Config`）：`max_upload_bytes: int = 10 * 1024 * 1024`（10MB），可由环境变量 `SOPHCLAW_MAX_UPLOAD_BYTES` 覆盖。
+配置新增（`config.py: Config`）：`max_upload_bytes: int = 10 * 1024 * 1024`（10MB），可由环境变量 `SOPHAGENT_MAX_UPLOAD_BYTES` 覆盖。
 
 ## 前端（`web/index.html`）
 

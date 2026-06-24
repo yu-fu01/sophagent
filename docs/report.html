@@ -3,7 +3,7 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<title>sophclaw-agent · 架构与使用方式</title>
+<title>sophagent · 架构与使用方式</title>
 <style>
 :root{--ink:#1c2533;--dim:#5b6b7d;--line:#dde4ec;--bg:#f5f7fa;--card:#fff;--blue:#2563eb;--blue-bg:#eff4ff;--green:#16a34a;--green-bg:#effaf2;--orange:#d97706;--orange-bg:#fef6e7;--purple:#7c3aed;--purple-bg:#f5f0ff;--mono:ui-monospace,"SF Mono",Consolas,monospace}
 *{box-sizing:border-box}
@@ -55,7 +55,7 @@ footer{margin-top:60px;text-align:center;color:var(--dim);font-size:13px}
 <div class="wrap">
 
 <header class="hero">
-  <h1>sophclaw-agent</h1>
+  <h1>sophagent</h1>
   <div class="sub">轻量级多用户 · 多 Agent 服务，具备 Hermes 式自进化 Skill 能力</div>
   <div class="badges">
     <span class="badge">Python 3.12 + FastAPI + asyncio</span>
@@ -123,7 +123,7 @@ footer{margin-top:60px;text-align:center;color:var(--dim);font-size:13px}
   <div class="arrow">▼</div>
   <div class="layer"><span class="tag">数据层 · /data 卷</span>
     <div class="boxes">
-      <div class="box b-blue">sophclaw.db<small>SQLite WAL：用户 / Agent / 会话 / 消息 / 记忆</small></div>
+      <div class="box b-blue">sophagent.db<small>SQLite WAL：用户 / Agent / 会话 / 消息 / 记忆</small></div>
       <div class="box b-blue">skills/&lt;name&gt;/SKILL.md<small>自进化知识库（hermes 兼容）</small></div>
       <div class="box b-blue">workspaces/&lt;uid&gt;/<small>每用户隔离工作目录</small></div>
     </div>
@@ -198,7 +198,7 @@ docker compose up -d --build
   <tr><td>SQLite 写上限</td><td>WAL 支撑数十并发会话；更重负载时数据层已收口，可平移 Postgres</td></tr>
 </table>
 
-<footer>sophclaw-agent · 2026-06 · 设计参考 hermes-agent</footer>
+<footer>sophagent · 2026-06 · 设计参考 hermes-agent</footer>
 </div>
 </body>
 </html>

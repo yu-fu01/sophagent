@@ -9,7 +9,7 @@ hermes 在每个 turn 后 fork 一个后台线程（`spawn_background_review_thr
 review 提示词重放对话，让一个工具受限的 review agent 决定是否写记忆 / 改 skill，
 没东西就回 "Nothing to save."。默认主模型（暖缓存），通知事后推送到聊天。
 
-sophclaw 已具备前台 `memory` / `skill_manage` 工具与无常驻 agent 的 turn 模型
+sophagent 已具备前台 `memory` / `skill_manage` 工具与无常驻 agent 的 turn 模型
 （WS-only 网关，`SessionState` 驱动 turn、`transport` 长驻绑定）。本子项目补上
 **自动化引擎**：把"前台靠 agent 自己想起来写"升级为"每轮后台自动 review"。
 
@@ -40,7 +40,7 @@ sophclaw 已具备前台 `memory` / `skill_manage` 工具与无常驻 agent 的 
 
 ## 设计
 
-### A. review 执行核心（`sophclaw/agent/review.py`，transport 无关、可单测）
+### A. review 执行核心（`sophagent/agent/review.py`，transport 无关、可单测）
 
 ```python
 @dataclass
@@ -80,7 +80,7 @@ async def run_review(*, db, skill_store, agent, user_id, history) -> ReviewResul
 > 并发安全：review 与用户下一轮可能交叠。记忆是冻结快照语义（下一轮开局才载入），
 > 写入是按用户独立行 / 文件，交叠只影响"何时可见"，不破坏正确性——与 hermes 同等。
 
-### C. 记忆安全扫描（`sophclaw/agent/memory_guard.py` + 接进 `tools/memory.py`）
+### C. 记忆安全扫描（`sophagent/agent/memory_guard.py` + 接进 `tools/memory.py`）
 
 `scan_memory(content) -> str | None`（命中返回拒绝原因，否则 None）：
 - **prompt 注入**：`ignore (previous|above) instructions`、`disregard ... system`、
@@ -98,7 +98,7 @@ async def run_review(*, db, skill_store, agent, user_id, history) -> ReviewResul
 self_improve_enabled: bool = True       # 后台 review 总开关
 review_max_iterations: int = 6          # review runner 迭代上限
 ```
-环境变量 `SOPHCLAW_SELF_IMPROVE`（`0`/`false` 关）。
+环境变量 `SOPHAGENT_SELF_IMPROVE`（`0`/`false` 关）。
 
 ### E. 测试
 
@@ -122,13 +122,13 @@ review_max_iterations: int = 6          # review runner 迭代上限
 
 | 文件 | 改动 |
 |---|---|
-| `sophclaw/agent/review.py` | 新增：`run_review` + `ReviewResult` + COMBINED_REVIEW_PROMPT |
-| `sophclaw/agent/memory_guard.py` | 新增：`scan_memory` 安全扫描 |
-| `sophclaw/tools/memory.py` | add/replace 接入 `scan_memory` |
-| `sophclaw/gateway/session_state.py` | `review_running` 标志 + `push_review_notice` |
-| `sophclaw/gateway/methods.py` | `_start_turn` 挂 `on_done` review hook |
-| `sophclaw/gateway/protocol.py` | `review` 事件类型映射（如需要） |
-| `sophclaw/config.py` | `self_improve_enabled` / `review_max_iterations` |
+| `sophagent/agent/review.py` | 新增：`run_review` + `ReviewResult` + COMBINED_REVIEW_PROMPT |
+| `sophagent/agent/memory_guard.py` | 新增：`scan_memory` 安全扫描 |
+| `sophagent/tools/memory.py` | add/replace 接入 `scan_memory` |
+| `sophagent/gateway/session_state.py` | `review_running` 标志 + `push_review_notice` |
+| `sophagent/gateway/methods.py` | `_start_turn` 挂 `on_done` review hook |
+| `sophagent/gateway/protocol.py` | `review` 事件类型映射（如需要） |
+| `sophagent/config.py` | `self_improve_enabled` / `review_max_iterations` |
 | `tests/` | `test_review.py` 新增 + `test_memory.py` 扩展 |
 
 前端可后续加通知卡片渲染（本子项目只保证事件投递，渲染留给前端迭代）。

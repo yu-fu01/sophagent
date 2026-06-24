@@ -8,7 +8,7 @@ sessions, or the agent loop — that keeps the protocol layer trivially testable
 
 Event name remap
 ----------------
-sophclaw's :class:`AgentRunner` yields UI events under its historical names
+sophagent's :class:`AgentRunner` yields UI events under its historical names
 (``text_delta`` / ``tool_call`` / ``done`` …). On the WebSocket wire we expose
 the spec's public event names (``message.delta`` / ``tool.call`` /
 ``message.complete`` …) so the RPC contract isn't coupled to internal names.
@@ -46,7 +46,7 @@ _ERROR_MESSAGES = {
 }
 
 
-# Internal sophclaw event type → wire event type.
+# Internal sophagent event type → wire event type.
 _EVENT_REMAP: dict[str, str] = {
     "text_delta": "message.delta",
     "reasoning_delta": "reasoning.delta",

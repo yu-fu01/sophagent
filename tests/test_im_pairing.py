@@ -1,7 +1,7 @@
 """IM pairing + binding DB ops."""
 import pytest
 from datetime import datetime, timezone, timedelta
-from sophclaw.db import Database
+from sophagent.db import Database
 
 
 @pytest.fixture

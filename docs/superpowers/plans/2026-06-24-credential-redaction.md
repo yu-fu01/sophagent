@@ -4,7 +4,7 @@
 
 **目标：** 用确定性正则脱敏替代「靠 LLM 自觉」的凭据脱敏，在上下文压缩流程的输入与输出双向拦截凭据，确保摘要中不含明文凭据。
 
-**架构：** 新增 `sophclaw/agent/redact.py` 提供纯函数 `redact_sensitive_text(text)`，用一组正则把厂商 API key / env 赋值 / JSON 字段 / Auth header / DB 连接串密码 / JWT / 私钥块替换为 `[REDACTED]`，由 `SOPHCLAW_REDACT_SECRETS` 环境变量开关（默认开）。在 `compaction.py` 的 `serialize_turns`（入口，喂给摘要器前）与 `summarize`（出口，摘要产出后）双道调用它。
+**架构：** 新增 `sophagent/agent/redact.py` 提供纯函数 `redact_sensitive_text(text)`，用一组正则把厂商 API key / env 赋值 / JSON 字段 / Auth header / DB 连接串密码 / JWT / 私钥块替换为 `[REDACTED]`，由 `SOPHAGENT_REDACT_SECRETS` 环境变量开关（默认开）。在 `compaction.py` 的 `serialize_turns`（入口，喂给摘要器前）与 `summarize`（出口，摘要产出后）双道调用它。
 
 **技术栈：** Python 3.12、uv、pytest + pytest-asyncio、标准库 `re`/`os`。
 
@@ -13,7 +13,7 @@
 **关键事实（实现前必读）：**
 - 本仓库 pytest 在 `dev` extra，运行测试**必须**用 `uv run --extra dev pytest ...`（`uv run pytest` 会失败）。
 - 参考实现：`/home/fuyu/workspace/hermes-agent/agent/redact.py`（hermes 用 `_mask_token` 部分遮罩；本计划改用统一 `[REDACTED]` 占位，更简单且对压缩场景足够）。
-- 接入点已确认：`sophclaw/agent/compaction.py`
+- 接入点已确认：`sophagent/agent/compaction.py`
   - `serialize_turns(turns)`（约 141-159 行）：把消息序列化为摘要器输入。`_clip(text, limit=2000)` 辅助函数在第 137 行。
   - `summarize(provider, model, turns, prev_summary, focus)`（约 228-252 行）：调 LLM，`summary = "".join(parts).strip()`，`return summary or None`。
 - docker 实测的三个真实泄漏样本（回归测试必须复现）：`sk-test-DO-NOT-COMMIT-9f8a7b6c5d4e3f2a1b0c`、DB 连接串含 `Pa55w0rd!2026`（形如 `postgres://admin:Pa55w0rd!2026@db.internal:5432/x`）、`AKIA1234567890SOPHNET`。
@@ -22,9 +22,9 @@
 
 ## 文件结构
 
-- **创建** `sophclaw/agent/redact.py` — 脱敏模块，单一职责：`redact_sensitive_text(text) -> str` + 模块级正则常量 + `SOPHCLAW_REDACT_SECRETS` 开关。
+- **创建** `sophagent/agent/redact.py` — 脱敏模块，单一职责：`redact_sensitive_text(text) -> str` + 模块级正则常量 + `SOPHAGENT_REDACT_SECRETS` 开关。
 - **创建** `tests/test_redact.py` — 脱敏函数的单元测试（逐类凭据、不误伤、开关）。
-- **修改** `sophclaw/agent/compaction.py` — `serialize_turns` 入口脱敏 + `summarize` 出口脱敏。
+- **修改** `sophagent/agent/compaction.py` — `serialize_turns` 入口脱敏 + `summarize` 出口脱敏。
 - **修改** `tests/test_compaction.py` — 扩展：入口/出口脱敏 + 回归样本。
 
 ---
@@ -32,7 +32,7 @@
 ## 任务 1：脱敏模块 `redact.py`
 
 **文件：**
-- 创建：`sophclaw/agent/redact.py`
+- 创建：`sophagent/agent/redact.py`
 - 测试：`tests/test_redact.py`
 
 - [ ] **步骤 1：编写失败的测试**
@@ -46,7 +46,7 @@ import importlib
 
 import pytest
 
-from sophclaw.agent import redact as R
+from sophagent.agent import redact as R
 
 
 # -- 逐类凭据被替换为 [REDACTED] --------------------------------------------
@@ -105,7 +105,7 @@ def test_api_key_header():
 
 
 def test_db_connection_string_password():
-    out = R.redact_sensitive_text("postgres://admin:Pa55w0rd!2026@db.internal:5432/sophclaw")
+    out = R.redact_sensitive_text("postgres://admin:Pa55w0rd!2026@db.internal:5432/sophagent")
     assert "Pa55w0rd!2026" not in out
     assert "[REDACTED]" in out
     assert "admin" in out          # 用户名保留
@@ -131,7 +131,7 @@ def test_private_key_block():
 # -- 不误伤正常文本 ---------------------------------------------------------
 
 def test_normal_text_untouched():
-    txt = "这是一段正常的中文说明，包含代码 foo() 和路径 sophclaw/agent/loop.py:42。"
+    txt = "这是一段正常的中文说明，包含代码 foo() 和路径 sophagent/agent/loop.py:42。"
     assert R.redact_sensitive_text(txt) == txt
 
 
@@ -143,13 +143,13 @@ def test_plain_numbers_and_urls_untouched():
 # -- 开关 -------------------------------------------------------------------
 
 def test_disabled_returns_original(monkeypatch):
-    monkeypatch.setenv("SOPHCLAW_REDACT_SECRETS", "0")
+    monkeypatch.setenv("SOPHAGENT_REDACT_SECRETS", "0")
     importlib.reload(R)
     try:
         secret = "sk-test-DO-NOT-COMMIT-9f8a7b6c5d4e3f2a1b0c"
         assert R.redact_sensitive_text(f"key {secret}") == f"key {secret}"
     finally:
-        monkeypatch.setenv("SOPHCLAW_REDACT_SECRETS", "1")
+        monkeypatch.setenv("SOPHAGENT_REDACT_SECRETS", "1")
         importlib.reload(R)
 
 
@@ -161,20 +161,20 @@ def test_empty_and_none():
 - [ ] **步骤 2：运行测试验证失败**
 
 运行：`uv run --extra dev pytest tests/test_redact.py -v`
-预期：FAIL，`ModuleNotFoundError: No module named 'sophclaw.agent.redact'`
+预期：FAIL，`ModuleNotFoundError: No module named 'sophagent.agent.redact'`
 
 - [ ] **步骤 3：编写最少实现代码**
 
-创建 `sophclaw/agent/redact.py`：
+创建 `sophagent/agent/redact.py`：
 
 ```python
 """确定性凭据脱敏——把文本中的密钥/令牌/密码替换为 [REDACTED]。
 
-移植自 hermes-agent/agent/redact.py 的核心思路，精简到 sophclaw 压缩场景够用：
+移植自 hermes-agent/agent/redact.py 的核心思路，精简到 sophagent 压缩场景够用：
 用一组正则匹配常见凭据形态，统一替换为 [REDACTED]。每条正则前用廉价的子串
 预检 gate（如 "=" in text）以降低无凭据文本的扫描开销。
 
-默认开启；设环境变量 SOPHCLAW_REDACT_SECRETS=0/false/no/off 可关闭（调试用）。
+默认开启；设环境变量 SOPHAGENT_REDACT_SECRETS=0/false/no/off 可关闭（调试用）。
 """
 
 from __future__ import annotations
@@ -184,7 +184,7 @@ import re
 
 PLACEHOLDER = "[REDACTED]"
 
-_REDACT_ENABLED = os.getenv("SOPHCLAW_REDACT_SECRETS", "true").lower() in {"1", "true", "yes", "on"}
+_REDACT_ENABLED = os.getenv("SOPHAGENT_REDACT_SECRETS", "true").lower() in {"1", "true", "yes", "on"}
 
 # 厂商 API key 前缀（前缀 + 连续 token 字符，长度下限防误伤）
 _PREFIX_PATTERNS = [
@@ -256,7 +256,7 @@ def redact_sensitive_text(text):
     """把 ``text`` 中的凭据替换为 [REDACTED]。非字符串原样返回；空/None 直接返回。
 
     对任意字符串安全调用——不含凭据的文本原样通过。默认启用，可由
-    SOPHCLAW_REDACT_SECRETS 环境变量关闭。每条正则前有廉价子串预检。
+    SOPHAGENT_REDACT_SECRETS 环境变量关闭。每条正则前有廉价子串预检。
     """
     if text is None:
         return None
@@ -312,7 +312,7 @@ def redact_sensitive_text(text):
 - [ ] **步骤 5：Commit**
 
 ```bash
-git add sophclaw/agent/redact.py tests/test_redact.py
+git add sophagent/agent/redact.py tests/test_redact.py
 git commit -m "feat(redact): 新增确定性凭据脱敏模块 redact_sensitive_text"
 ```
 
@@ -321,7 +321,7 @@ git commit -m "feat(redact): 新增确定性凭据脱敏模块 redact_sensitive_
 ## 任务 2：接入压缩流程（入口 + 出口双道脱敏）
 
 **文件：**
-- 修改：`sophclaw/agent/compaction.py`
+- 修改：`sophagent/agent/compaction.py`
 - 测试：`tests/test_compaction.py`
 
 - [ ] **步骤 1：编写失败的测试**
@@ -372,7 +372,7 @@ async def test_summarize_redacts_leaked_credentials_in_output():
     assert "[REDACTED]" in out
 ```
 
-> 注：`Message`/`AssistantTurn`/`StreamEvent` 已在 `tests/test_compaction.py` 顶部导入；`C` 是 `from sophclaw.agent import compaction as C`。若顶部导入缺 `AssistantTurn`/`StreamEvent`，按文件现有导入补齐（参考文件中已有的 `_FakeProvider`）。
+> 注：`Message`/`AssistantTurn`/`StreamEvent` 已在 `tests/test_compaction.py` 顶部导入；`C` 是 `from sophagent.agent import compaction as C`。若顶部导入缺 `AssistantTurn`/`StreamEvent`，按文件现有导入补齐（参考文件中已有的 `_FakeProvider`）。
 
 - [ ] **步骤 2：运行测试验证失败**
 
@@ -381,7 +381,7 @@ async def test_summarize_redacts_leaked_credentials_in_output():
 
 - [ ] **步骤 3：编写最少实现代码**
 
-修改 `sophclaw/agent/compaction.py`：
+修改 `sophagent/agent/compaction.py`：
 
 (a) 顶部 import 区（与现有 `from ..models import Message` 等放一起）新增：
 
@@ -432,7 +432,7 @@ def serialize_turns(turns: list[Message]) -> str:
 - [ ] **步骤 5：Commit**
 
 ```bash
-git add sophclaw/agent/compaction.py tests/test_compaction.py
+git add sophagent/agent/compaction.py tests/test_compaction.py
 git commit -m "feat(compaction): 压缩流程入口+出口双道凭据脱敏"
 ```
 
@@ -453,10 +453,10 @@ git commit -m "feat(compaction): 压缩流程入口+出口双道凭据脱敏"
 
 ```bash
 uv run --extra dev python -c "
-from sophclaw.agent.redact import redact_sensitive_text as r
+from sophagent.agent.redact import redact_sensitive_text as r
 samples = [
     'sk-test-DO-NOT-COMMIT-9f8a7b6c5d4e3f2a1b0c',
-    'postgres://admin:Pa55w0rd!2026@db.internal:5432/sophclaw',
+    'postgres://admin:Pa55w0rd!2026@db.internal:5432/sophagent',
     'AKIA1234567890SOPHNET',
 ]
 for s in samples:
@@ -481,7 +481,7 @@ git add -A && git commit -m "test(redact): 回归确认三个真实泄漏样本�
 **规格覆盖度：**
 - 新增 `redact.py` + `redact_sensitive_text` → 任务 1
 - 覆盖模式（厂商前缀/env/JSON/Auth header/api-key header/DB 连接串/JWT/私钥）→ 任务 1 正则 + 测试逐类覆盖
-- `SOPHCLAW_REDACT_SECRETS` 开关默认开 → 任务 1（`_REDACT_ENABLED` + `test_disabled_returns_original`）
+- `SOPHAGENT_REDACT_SECRETS` 开关默认开 → 任务 1（`_REDACT_ENABLED` + `test_disabled_returns_original`）
 - 入口脱敏（serialize_turns）→ 任务 2(b) + `test_serialize_turns_redacts_credentials`
 - 出口脱敏（summarize）→ 任务 2(c) + `test_summarize_redacts_leaked_credentials_in_output`
 - 保留 prompt 软提示不依赖它 → 未改 `SUMMARIZER_SYSTEM`，自动满足

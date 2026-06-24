@@ -1,8 +1,8 @@
 """IMDriver: 入站消息 -> 命令 or run_turns(TelegramTransport) with mock client."""
 import pytest
-from sophclaw.im.driver import IMDriver
-from sophclaw.im import pairing
-from sophclaw.im.adapter import MessageEvent
+from sophagent.im.driver import IMDriver
+from sophagent.im import pairing
+from sophagent.im.adapter import MessageEvent
 
 
 class FakeTelegramClient:

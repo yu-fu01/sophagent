@@ -66,7 +66,7 @@ class Config:
 
     @property
     def db_path(self) -> Path:
-        return self.data_dir / "sophclaw.db"
+        return self.data_dir / "sophagent.db"
 
     @property
     def skills_dir(self) -> Path:
@@ -83,7 +83,7 @@ class Config:
 
 
 def _load_providers(data_dir: Path) -> dict[str, ProviderConfig]:
-    """Providers come from $SOPHCLAW_PROVIDERS (inline YAML/JSON) or
+    """Providers come from $SOPHAGENT_PROVIDERS (inline YAML/JSON) or
     providers.yaml in the data dir. Format:
 
         providers:
@@ -93,9 +93,9 @@ def _load_providers(data_dir: Path) -> dict[str, ProviderConfig]:
             api_key: sk-...
             context_limit: 128000
     """
-    raw = os.environ.get("SOPHCLAW_PROVIDERS", "")
+    raw = os.environ.get("SOPHAGENT_PROVIDERS", "")
     if not raw:
-        path = Path(os.environ.get("SOPHCLAW_PROVIDERS_FILE", data_dir / "providers.yaml"))
+        path = Path(os.environ.get("SOPHAGENT_PROVIDERS_FILE", data_dir / "providers.yaml"))
         if path.is_file():
             raw = path.read_text(encoding="utf-8")
     if not raw:
@@ -123,7 +123,7 @@ def _load_providers(data_dir: Path) -> dict[str, ProviderConfig]:
 
 
 def _load_secret(data_dir: Path) -> str:
-    secret = os.environ.get("SOPHCLAW_SECRET", "")
+    secret = os.environ.get("SOPHAGENT_SECRET", "")
     if secret:
         return secret
     secret_file = data_dir / ".secret"
@@ -137,7 +137,7 @@ def _load_secret(data_dir: Path) -> str:
 
 
 def load_config() -> Config:
-    data_dir = Path(os.environ.get("SOPHCLAW_DATA_DIR", "./data")).resolve()
+    data_dir = Path(os.environ.get("SOPHAGENT_DATA_DIR", "./data")).resolve()
     data_dir.mkdir(parents=True, exist_ok=True)
     cfg = Config(
         data_dir=data_dir,
@@ -145,21 +145,21 @@ def load_config() -> Config:
         admin_username=os.environ.get("ADMIN_USERNAME", "admin"),
         admin_password=os.environ.get("ADMIN_PASSWORD") or None,
         providers=_load_providers(data_dir),
-        token_ttl_hours=int(os.environ.get("SOPHCLAW_TOKEN_TTL_HOURS", "24")),
-        max_concurrent_turns=int(os.environ.get("SOPHCLAW_MAX_CONCURRENT_TURNS", "32")),
-        max_upload_bytes=int(os.environ.get("SOPHCLAW_MAX_UPLOAD_BYTES", str(10 * 1024 * 1024))),
-        delegate_concurrency=int(os.environ.get("SOPHCLAW_DELEGATE_CONCURRENCY", "4")),
+        token_ttl_hours=int(os.environ.get("SOPHAGENT_TOKEN_TTL_HOURS", "24")),
+        max_concurrent_turns=int(os.environ.get("SOPHAGENT_MAX_CONCURRENT_TURNS", "32")),
+        max_upload_bytes=int(os.environ.get("SOPHAGENT_MAX_UPLOAD_BYTES", str(10 * 1024 * 1024))),
+        delegate_concurrency=int(os.environ.get("SOPHAGENT_DELEGATE_CONCURRENCY", "4")),
         allowed_hosts=tuple(
             h for h in
-            (os.environ.get("SOPHCLAW_ALLOWED_HOSTS") or "").split(",") if h
+            (os.environ.get("SOPHAGENT_ALLOWED_HOSTS") or "").split(",") if h
         ),
-        ws_grace_seconds=float(os.environ.get("SOPHCLAW_WS_GRACE_SECONDS", "60")),
-        telegram_bot_token=os.environ.get("SOPHCLAW_TELEGRAM_BOT_TOKEN", ""),
+        ws_grace_seconds=float(os.environ.get("SOPHAGENT_WS_GRACE_SECONDS", "60")),
+        telegram_bot_token=os.environ.get("SOPHAGENT_TELEGRAM_BOT_TOKEN", ""),
         telegram_allowed_user_ids=tuple(
             int(u) for u in
-            (os.environ.get("SOPHCLAW_TELEGRAM_ALLOWED_USER_IDS") or "").split(",") if u
+            (os.environ.get("SOPHAGENT_TELEGRAM_ALLOWED_USER_IDS") or "").split(",") if u
         ),
-        self_improve_enabled=os.environ.get("SOPHCLAW_SELF_IMPROVE", "true").lower()
+        self_improve_enabled=os.environ.get("SOPHAGENT_SELF_IMPROVE", "true").lower()
         not in {"0", "false", "no", "off"},
     )
     cfg.skills_dir.mkdir(parents=True, exist_ok=True)

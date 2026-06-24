@@ -1,4 +1,4 @@
-"""Slash commands for sophclaw-agent.
+"""Slash commands for sophagent.
 
 Provides a command registry + dispatch layer inspired by hermes-agent's
 ``hermes_cli/commands.py``. Commands are registered centrally and dispatched

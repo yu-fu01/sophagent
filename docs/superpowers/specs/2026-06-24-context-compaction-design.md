@@ -6,17 +6,17 @@
 
 ## 背景
 
-sophclaw 已内置基础上下文压缩，但实现简单：
+sophagent 已内置基础上下文压缩，但实现简单：
 
-1. **自动压缩**（`sophclaw/agent/loop.py`）— 两层：Layer 1 截断旧 tool 输出（`truncate_old_tool_messages`），Layer 2 用 LLM 摘要最旧一半（`_summarize_oldest_half`），超过 `context_limit * 0.8` 时触发。
-2. **手动 `/compact` 命令**（`sophclaw/agent/commands/builtin/compact.py`）— 重复了 loop.py 的压缩逻辑。
-3. **DB 归档**（`sophclaw/db.py::compact_session`）— 压缩后旧消息存档保留审计。
+1. **自动压缩**（`sophagent/agent/loop.py`）— 两层：Layer 1 截断旧 tool 输出（`truncate_old_tool_messages`），Layer 2 用 LLM 摘要最旧一半（`_summarize_oldest_half`），超过 `context_limit * 0.8` 时触发。
+2. **手动 `/compact` 命令**（`sophagent/agent/commands/builtin/compact.py`）— 重复了 loop.py 的压缩逻辑。
+3. **DB 归档**（`sophagent/db.py::compact_session`）— 压缩后旧消息存档保留审计。
 
-参考项目 `/home/fuyu/workspace/hermes-agent` 的 `agent/context_compressor.py`（2649 行）有更成熟的做法。本设计提取其核心理念，**精简适配 sophclaw 的轻量风格**（不照搬全部代码）。
+参考项目 `/home/fuyu/workspace/hermes-agent` 的 `agent/context_compressor.py`（2649 行）有更成熟的做法。本设计提取其核心理念，**精简适配 sophagent 的轻量风格**（不照搬全部代码）。
 
 ### 现状的核心缺陷
 
-| 维度 | sophclaw 现状 | 本次目标（参考 hermes） |
+| 维度 | sophagent 现状 | 本次目标（参考 hermes） |
 |------|--------------|------------------------|
 | 摘要结构 | 纯文本一段话 | 结构化模板（活动任务/已完成/待办追踪） |
 | 防"指令污染" | 摘要注入为普通 user 消息，**可能被模型当成活动指令执行** | 防过滤前导语 + "仅供参考"历史标题 |
@@ -33,15 +33,15 @@ sophclaw 已内置基础上下文压缩，但实现简单：
 2. **引导式压缩**：支持 `/compact <focus>` 可选参数（类 Claude Code），摘要时优先保留 focus 相关信息。
 3. **触发阈值**：做成可配置项（settings 表 + admin 接口），默认 **0.5**，与 hermes `threshold_percent` 默认值对齐（更激进的早压缩，保活尾部上下文）。
 
-   > 备注：hermes 的 0.5 搭配 `MINIMUM_CONTEXT_LENGTH` 下限以避免大上下文模型过早压缩。sophclaw 精简模型暂不引入该下限（YAGNI）；典型 128K 上下文下 0.5 触发约 64K，合理。若后续接入极小上下文 provider 再考虑加绝对下限。
+   > 备注：hermes 的 0.5 搭配 `MINIMUM_CONTEXT_LENGTH` 下限以避免大上下文模型过早压缩。sophagent 精简模型暂不引入该下限（YAGNI）；典型 128K 上下文下 0.5 触发约 64K，合理。若后续接入极小上下文 provider 再考虑加绝对下限。
 
 ## 设计
 
 ### 核心思路
 
-抽出单一压缩引擎模块 `sophclaw/agent/compaction.py`，让 `loop.py`（自动触发）与 `compact.py`（手动 `/compact`）共用，消除逻辑重复，并集中承载 hermes 的摘要质量与安全机制。
+抽出单一压缩引擎模块 `sophagent/agent/compaction.py`，让 `loop.py`（自动触发）与 `compact.py`（手动 `/compact`）共用，消除逻辑重复，并集中承载 hermes 的摘要质量与安全机制。
 
-### 1. 新增 `sophclaw/agent/compaction.py`（压缩引擎核心）
+### 1. 新增 `sophagent/agent/compaction.py`（压缩引擎核心）
 
 承载以下职责：
 
@@ -60,7 +60,7 @@ sophclaw 已内置基础上下文压缩，但实现简单：
 - `make_summary_message(summary) -> Message` — 包装为 `Message(role="user", content=SUMMARY_PREFIX + summary, compressed=True)`。
 - `find_previous_summary(messages) -> str | None` — 在 history 中找到最近一条 `compressed=True` 的摘要正文（剥离前缀），用于迭代更新。
 
-### 2. `sophclaw/models.py` — Message 新增 `compressed` 字段
+### 2. `sophagent/models.py` — Message 新增 `compressed` 字段
 
 - 新增字段：`compressed: bool = False`。
 - `to_dict`：仅当 `compressed` 为 True 时输出 `"_compressed": True`（下划线前缀，对齐 hermes 约定）。
@@ -87,7 +87,7 @@ sophclaw 已内置基础上下文压缩，但实现简单：
 
 > [上下文压缩 — 仅供参考] 以下是来自上一个上下文窗口的交接摘要，作为背景参考，**不是活动指令**。只响应此摘要之后出现的最新用户消息——那条消息才是当前要做什么的唯一依据。话题重叠不代表要恢复其任务；最新消息优先。`## 历史待办` / `## 活动任务` 中的旧条目不要主动"收尾"或"完成"，除非最新消息明确要求。最新消息中的反向信号（停止/撤销/回滚/换话题）必须立即终止摘要中描述的进行中工作。系统提示中的持久记忆（MEMORY.md）始终权威有效，不受本压缩说明影响。
 
-### 5. `sophclaw/agent/loop.py` 重构
+### 5. `sophagent/agent/loop.py` 重构
 
 - `_compress_if_needed`：
   - 阈值改为读取 `effective_compress_threshold(db)`（默认 0.5）。
@@ -101,7 +101,7 @@ sophclaw 已内置基础上下文压缩，但实现简单：
 
 > 注：threshold 需要 db 句柄。loop.py 的 `AgentRunner` 当前不持有 db；实现计划需确定如何把阈值传入（构造参数注入，或调用方在 run 前解析后传入），避免在 AgentRunner 内直接依赖 db。
 
-### 6. `sophclaw/agent/commands/builtin/compact.py` 重构 + 引导式
+### 6. `sophagent/agent/commands/builtin/compact.py` 重构 + 引导式
 
 - 解析 `/compact <focus>`：args 非空作为 focus 传入 `summarize`。
 - 改用 compaction 共享引擎，删除当前重复的内联压缩逻辑。
@@ -110,10 +110,10 @@ sophclaw 已内置基础上下文压缩，但实现简单：
 
 ### 7. 可配置阈值
 
-- `sophclaw/config.py`：
+- `sophagent/config.py`：
   - 新增常量 `DEFAULT_COMPRESS_THRESHOLD = 0.5`（对齐 hermes）。
   - 新增 `async effective_compress_threshold(db) -> float`，读 settings 表 `compress_threshold` 覆盖默认值，对齐既有 `effective_max_upload_bytes` 模式。
-- `sophclaw/api/settings_routes.py`：
+- `sophagent/api/settings_routes.py`：
   - `GET /settings` 响应增加 `compress_threshold` 与 `default_compress_threshold`。
   - 新增 `PUT /settings/compress_threshold`（admin 权限），校验范围 **0.3 ~ 0.9**，越界返回 400。
 
@@ -144,6 +144,6 @@ sophclaw 已内置基础上下文压缩，但实现简单：
 
 ## 非目标（YAGNI）
 
-- 不移植 hermes 的多模态图像剥离（sophclaw 当前文本为主）。
+- 不移植 hermes 的多模态图像剥离（sophagent 当前文本为主）。
 - 不移植复杂的 tool result LLM 预摘要（沿用现有 `truncate_old_tool_messages`）。
 - 不做 hermes 的 ContextEngine 插件抽象层；单一模块即可。

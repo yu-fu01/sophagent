@@ -1,20 +1,20 @@
 services:
-  sophclaw:
+  sophagent:
     build: .
     ports:
-      - "${SOPHCLAW_PORT:-8000}:8000"
+      - "${SOPHAGENT_PORT:-8000}:8000"
     volumes:
-      - sophclaw-data:/data
+      - sophagent-data:/data
       # recommended way to configure model providers (see README); comment out
-      # this line if you pass SOPHCLAW_PROVIDERS via environment instead
+      # this line if you pass SOPHAGENT_PROVIDERS via environment instead
       - ./data/providers.yaml:/data/providers.yaml:ro
     environment:
       # see .env.example; all variables are optional except a provider config
-      - SOPHCLAW_SECRET=${SOPHCLAW_SECRET:-}
-      - SOPHCLAW_NO_LOGIN=${SOPHCLAW_NO_LOGIN:-}
+      - SOPHAGENT_SECRET=${SOPHAGENT_SECRET:-}
+      - SOPHAGENT_NO_LOGIN=${SOPHAGENT_NO_LOGIN:-}
       - ADMIN_USERNAME=${ADMIN_USERNAME:-admin}
       - ADMIN_PASSWORD=${ADMIN_PASSWORD:-}
-      - SOPHCLAW_PROVIDERS=${SOPHCLAW_PROVIDERS:-}
+      - SOPHAGENT_PROVIDERS=${SOPHAGENT_PROVIDERS:-}
       - TAVILY_API_KEY=${TAVILY_API_KEY:-}
       - OPENAI_API_KEY=${OPENAI_API_KEY:-}
       - ANTHROPIC_API_KEY=${ANTHROPIC_API_KEY:-}
@@ -22,4 +22,4 @@ services:
     mem_limit: 1g
 
 volumes:
-  sophclaw-data:
+  sophagent-data:

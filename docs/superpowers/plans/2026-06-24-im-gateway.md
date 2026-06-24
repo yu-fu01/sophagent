@@ -2,9 +2,9 @@
 
 > **面向 AI 代理的工作者：** 必需子技能：使用 superpowers:subagent-driven-development（推荐）或 superpowers:executing-plans 逐任务实现此计划。步骤使用复选框（`- [ ]`）语法来跟踪进度。
 
-**目标：** 新增 sophclaw IM 网关：用户在 Telegram 给 bot 发消息 → 网关路由到 sophclaw agent（经配对码绑定）→ 流式回复（edit-in-place）推回该 Telegram chat。
+**目标：** 新增 sophagent IM 网关：用户在 Telegram 给 bot 发消息 → 网关路由到 sophagent agent（经配对码绑定）→ 流式回复（edit-in-place）推回该 Telegram chat。
 
-**架构：** in-process——Telegram `getUpdates` 轮询作为 lifespan 后台 asyncio task（配 `SOPHCLAW_TELEGRAM_BOT_TOKEN` 才起）。复用共享 turn 核心 `run_turns` + `SessionManager` + `db`。新建 `sophclaw/im/` 包：adapter（httpx 直连 Bot API）/ transport（agent 事件→edit-in-place 流式）/ pairing（配对码+绑定）/ commands（/pair /new /stop /help）/ driver（入站调度→run_turns）。`TelegramTransport` 暴露 `on_event(内部事件)`，不走 WS 的 wire 帧。
+**架构：** in-process——Telegram `getUpdates` 轮询作为 lifespan 后台 asyncio task（配 `SOPHAGENT_TELEGRAM_BOT_TOKEN` 才起）。复用共享 turn 核心 `run_turns` + `SessionManager` + `db`。新建 `sophagent/im/` 包：adapter（httpx 直连 Bot API）/ transport（agent 事件→edit-in-place 流式）/ pairing（配对码+绑定）/ commands（/pair /new /stop /help）/ driver（入站调度→run_turns）。`TelegramTransport` 暴露 `on_event(内部事件)`，不走 WS 的 wire 帧。
 
 **技术栈：** FastAPI、httpx（直连 Telegram Bot API，无 SDK）、aiosqlite、pytest。
 
@@ -14,17 +14,17 @@
 
 ## 文件结构
 
-- 创建：`sophclaw/im/__init__.py`（空）
-- 创建：`sophclaw/im/transport.py` — `TelegramTransport`：内部事件→edit-in-place 流式（限频）
-- 创建：`sophclaw/im/adapter.py` — `TelegramClient`（httpx：get_updates/send_message/edit_message）+ `run_polling`
-- 创建：`sophclaw/im/pairing.py` — 配对码签发/消费、绑定 CRUD（db 操作）
-- 创建：`sophclaw/im/commands.py` — `/pair /new /stop /help` 解析与分发
-- 创建：`sophclaw/im/driver.py` — `IMDriver.handle_inbound`：命令 or 跑 run_turns(TelegramTransport)
-- 创建：`sophclaw/api/im_routes.py` — `POST /api/im/pair-code`（签发配对码）
-- 修改：`sophclaw/db.py` — SCHEMA 加 `im_pair_codes`/`im_bindings` 两表 + 方法
-- 修改：`sophclaw/config.py` — `telegram_bot_token`、`telegram_allowed_user_ids`
-- 修改：`sophclaw/api/__init__.py` — 挂载 `im_routes`
-- 修改：`sophclaw/main.py` — lifespan 启动轮询 task
+- 创建：`sophagent/im/__init__.py`（空）
+- 创建：`sophagent/im/transport.py` — `TelegramTransport`：内部事件→edit-in-place 流式（限频）
+- 创建：`sophagent/im/adapter.py` — `TelegramClient`（httpx：get_updates/send_message/edit_message）+ `run_polling`
+- 创建：`sophagent/im/pairing.py` — 配对码签发/消费、绑定 CRUD（db 操作）
+- 创建：`sophagent/im/commands.py` — `/pair /new /stop /help` 解析与分发
+- 创建：`sophagent/im/driver.py` — `IMDriver.handle_inbound`：命令 or 跑 run_turns(TelegramTransport)
+- 创建：`sophagent/api/im_routes.py` — `POST /api/im/pair-code`（签发配对码）
+- 修改：`sophagent/db.py` — SCHEMA 加 `im_pair_codes`/`im_bindings` 两表 + 方法
+- 修改：`sophagent/config.py` — `telegram_bot_token`、`telegram_allowed_user_ids`
+- 修改：`sophagent/api/__init__.py` — 挂载 `im_routes`
+- 修改：`sophagent/main.py` — lifespan 启动轮询 task
 - 修改：`web/index.html` — 「IM 绑定」入口（选 agent + 生成码）
 - 修改：`pyproject.toml` — `httpx` 加主依赖
 - 测试：`tests/test_im_pairing.py`、`tests/test_im_transport.py`、`tests/test_im_driver.py`
@@ -33,11 +33,11 @@
 
 ## 任务 1：config + pyproject httpx
 
-**文件：** 修改 `sophclaw/config.py`、`pyproject.toml`
+**文件：** 修改 `sophagent/config.py`、`pyproject.toml`
 
 - [ ] **步骤 1：config 加两个字段**
 
-`sophclaw/config.py` 的 `Config` dataclass，在 `ws_grace_seconds` 之后加：
+`sophagent/config.py` 的 `Config` dataclass，在 `ws_grace_seconds` 之后加：
 
 ```python
     # IM 网关（Telegram）：配了 bot token 才启用 in-process 轮询。
@@ -49,10 +49,10 @@
 `load_config()` 的 `Config(...)` 调用，在 `ws_grace_seconds=...` 之后加：
 
 ```python
-        telegram_bot_token=os.environ.get("SOPHCLAW_TELEGRAM_BOT_TOKEN", ""),
+        telegram_bot_token=os.environ.get("SOPHAGENT_TELEGRAM_BOT_TOKEN", ""),
         telegram_allowed_user_ids=tuple(
             int(u) for u in
-            (os.environ.get("SOPHCLAW_TELEGRAM_ALLOWED_USER_IDS") or "").split(",") if u
+            (os.environ.get("SOPHAGENT_TELEGRAM_ALLOWED_USER_IDS") or "").split(",") if u
         ),
 ```
 
@@ -66,13 +66,13 @@
 
 - [ ] **步骤 3：验证导入**
 
-运行：`uv sync --extra dev && uv run python -c "from sophclaw.config import get_config; c=get_config(); print(c.telegram_bot_token, c.telegram_allowed_user_ids)"`
+运行：`uv sync --extra dev && uv run python -c "from sophagent.config import get_config; c=get_config(); print(c.telegram_bot_token, c.telegram_allowed_user_ids)"`
 预期：打印空串和空 tuple，无报错。
 
 - [ ] **步骤 4：Commit**
 
 ```bash
-git add sophclaw/config.py pyproject.toml
+git add sophagent/config.py pyproject.toml
 git commit -m "feat(im): config 加 telegram_bot_token/allowed_user_ids；httpx 入主依赖"
 ```
 
@@ -80,11 +80,11 @@ git commit -m "feat(im): config 加 telegram_bot_token/allowed_user_ids；httpx 
 
 ## 任务 2：db 两表 + 方法
 
-**文件：** 修改 `sophclaw/db.py`；测试 `tests/test_im_pairing.py`（本任务先建空文件，方法测试在任务 4）
+**文件：** 修改 `sophagent/db.py`；测试 `tests/test_im_pairing.py`（本任务先建空文件，方法测试在任务 4）
 
 - [ ] **步骤 1：SCHEMA 加两表**
 
-`sophclaw/db.py` 的 `SCHEMA` 字符串，在 `settings` 表之后、闭合 `"""` 之前加：
+`sophagent/db.py` 的 `SCHEMA` 字符串，在 `settings` 表之后、闭合 `"""` 之前加：
 
 ```sql
 CREATE TABLE IF NOT EXISTS im_pair_codes (
@@ -107,7 +107,7 @@ CREATE TABLE IF NOT EXISTS im_bindings (
 
 - [ ] **步骤 2：加 db 方法**
 
-`sophclaw/db.py` 的 `Database` 类，在 `effective_` 系列之前（或类末尾）加：
+`sophagent/db.py` 的 `Database` 类，在 `effective_` 系列之前（或类末尾）加：
 
 ```python
     # -- IM pairing / bindings ---------------------------------------------
@@ -169,7 +169,7 @@ CREATE TABLE IF NOT EXISTS im_bindings (
 - [ ] **步骤 5：Commit**
 
 ```bash
-git add sophclaw/db.py tests/test_im_pairing.py
+git add sophagent/db.py tests/test_im_pairing.py
 git commit -m "feat(im): db 加 im_pair_codes/im_bindings 两表 + 方法"
 ```
 
@@ -177,9 +177,9 @@ git commit -m "feat(im): db 加 im_pair_codes/im_bindings 两表 + 方法"
 
 ## 任务 3：TelegramTransport
 
-**文件：** 创建 `sophclaw/im/transport.py`、`sophclaw/im/__init__.py`；测试 `tests/test_im_transport.py`
+**文件：** 创建 `sophagent/im/transport.py`、`sophagent/im/__init__.py`；测试 `tests/test_im_transport.py`
 
-`TelegramTransport` 消费 sophclaw 内部事件（`text_delta`/`done`/`error`），edit-in-place 流式推到 Telegram。依赖一个 `client`（任务 5 的 `TelegramClient`）提供 `send_message(chat_id, text) -> int` 和 `edit_message(chat_id, message_id, text)`。测试用 fake client。
+`TelegramTransport` 消费 sophagent 内部事件（`text_delta`/`done`/`error`），edit-in-place 流式推到 Telegram。依赖一个 `client`（任务 5 的 `TelegramClient`）提供 `send_message(chat_id, text) -> int` 和 `edit_message(chat_id, message_id, text)`。测试用 fake client。
 
 - [ ] **步骤 1：写失败测试**
 
@@ -189,7 +189,7 @@ git commit -m "feat(im): db 加 im_pair_codes/im_bindings 两表 + 方法"
 """TelegramTransport: 内部事件 -> edit-in-place 流式（限频）。"""
 import asyncio
 import pytest
-from sophclaw.im.transport import TelegramTransport
+from sophagent.im.transport import TelegramTransport
 
 
 class FakeClient:
@@ -251,14 +251,14 @@ async def test_chained_turn_starts_new_message():
 
 - [ ] **步骤 3：实现 transport**
 
-`sophclaw/im/__init__.py`：空文件。
+`sophagent/im/__init__.py`：空文件。
 
-`sophclaw/im/transport.py`：
+`sophagent/im/transport.py`：
 
 ```python
 """TelegramTransport: 内部 agent 事件 -> Telegram edit-in-place 流式。
 
-消费 sophclaw 内部事件（text_delta/done/error/...），不使用 WS 的 wire 帧。
+消费 sophagent 内部事件（text_delta/done/error/...），不使用 WS 的 wire 帧。
 首轮首帧 sendMessage 记 message_id；后续累积文本 editMessageText（限频）；
 done 落最终全文并清 message_id（下一轮首帧重发新消息）。
 reasoning/tool/turn_usage/session.info/queued_next 忽略。
@@ -332,7 +332,7 @@ class TelegramTransport:
 - [ ] **步骤 5：Commit**
 
 ```bash
-git add sophclaw/im/__init__.py sophclaw/im/transport.py tests/test_im_transport.py
+git add sophagent/im/__init__.py sophagent/im/transport.py tests/test_im_transport.py
 git commit -m "feat(im): TelegramTransport（内部事件->edit-in-place 流式，限频）"
 ```
 
@@ -340,7 +340,7 @@ git commit -m "feat(im): TelegramTransport（内部事件->edit-in-place 流式�
 
 ## 任务 4：pairing
 
-**文件：** 创建 `sophclaw/im/pairing.py`；测试 `tests/test_im_pairing.py`
+**文件：** 创建 `sophagent/im/pairing.py`；测试 `tests/test_im_pairing.py`
 
 - [ ] **步骤 1：写测试**
 
@@ -350,7 +350,7 @@ git commit -m "feat(im): TelegramTransport（内部事件->edit-in-place 流式�
 """IM pairing + binding DB ops."""
 import pytest
 from datetime import datetime, timezone, timedelta
-from sophclaw.db import Database
+from sophagent.db import Database
 
 
 @pytest.fixture
@@ -407,12 +407,12 @@ async def test_get_binding_missing(db):
 
 - [ ] **步骤 3：实现 pairing**
 
-`sophclaw/im/pairing.py`：
+`sophagent/im/pairing.py`：
 
 ```python
 """配对码签发/消费、IM 绑定 CRUD。
 
-db 方法在 sophclaw/db.py；本模块是薄封装，集中 IM 语义（platform 常量、
+db 方法在 sophagent/db.py；本模块是薄封装，集中 IM 语义（platform 常量、
 session 创建）供 driver/commands 调用。
 """
 
@@ -433,7 +433,7 @@ async def consume_code(db, code: str) -> Optional[tuple[int, int]]:
 
 
 async def bind(db, chat_id: str, user_id: int, agent_id: int) -> str:
-    """为 (chat_id, user, agent) 建新 sophclaw session 并写绑定。返回 session_id。
+    """为 (chat_id, user, agent) 建新 sophagent session 并写绑定。返回 session_id。
     若已有绑定则覆盖（换 agent 时新建 session）。"""
     agent = await db.get_agent(agent_id)
     group_id = agent["group_id"] if agent else None
@@ -464,7 +464,7 @@ async def lookup(db, chat_id: str):
 - [ ] **步骤 5：Commit**
 
 ```bash
-git add sophclaw/im/pairing.py tests/test_im_pairing.py pyproject.toml
+git add sophagent/im/pairing.py tests/test_im_pairing.py pyproject.toml
 git commit -m "feat(im): pairing（配对码签发/消费、绑定 CRUD、session 创建）"
 ```
 
@@ -472,13 +472,13 @@ git commit -m "feat(im): pairing（配对码签发/消费、绑定 CRUD、sessio
 
 ## 任务 5：adapter（httpx Telegram Bot API）
 
-**文件：** 创建 `sophclaw/im/adapter.py`；测试 `tests/test_im_driver.py` 占位（任务 7 填）
+**文件：** 创建 `sophagent/im/adapter.py`；测试 `tests/test_im_driver.py` 占位（任务 7 填）
 
 `TelegramClient` 封装三个 Bot API 调用。`run_polling` 长轮询 `getUpdates`，把每条消息交给 driver。
 
 - [ ] **步骤 1：实现 adapter**
 
-`sophclaw/im/adapter.py`：
+`sophagent/im/adapter.py`：
 
 ```python
 """Telegram Bot API client (httpx, no SDK) + long-poll loop.
@@ -590,13 +590,13 @@ async def run_polling(client: TelegramClient, driver, *, allowed_user_ids: tuple
 
 - [ ] **步骤 3：导入冒烟**
 
-运行：`uv run python -c "from sophclaw.im.adapter import TelegramClient, run_polling, MessageEvent; print('ok')"`
+运行：`uv run python -c "from sophagent.im.adapter import TelegramClient, run_polling, MessageEvent; print('ok')"`
 预期：打印 ok。
 
 - [ ] **步骤 4：Commit**
 
 ```bash
-git add sophclaw/im/adapter.py tests/test_im_driver.py
+git add sophagent/im/adapter.py tests/test_im_driver.py
 git commit -m "feat(im): adapter（httpx Telegram Bot API + getUpdates 长轮询）"
 ```
 
@@ -604,16 +604,16 @@ git commit -m "feat(im): adapter（httpx Telegram Bot API + getUpdates 长轮询
 
 ## 任务 6：commands
 
-**文件：** 创建 `sophclaw/im/commands.py`；测试并入 `tests/test_im_driver.py`（任务 7）
+**文件：** 创建 `sophagent/im/commands.py`；测试并入 `tests/test_im_driver.py`（任务 7）
 
 - [ ] **步骤 1：实现 commands**
 
-`sophclaw/im/commands.py`：
+`sophagent/im/commands.py`：
 
 ```python
 """IM 斜杠命令：/pair /new /stop /help。
 
-仅这 4 条在 IM 暴露；sophclaw 现有 /compact /model 等不在 IM 暴露（避免冲突）。
+仅这 4 条在 IM 暴露；sophagent 现有 /compact /model 等不在 IM 暴露（避免冲突）。
 """
 
 from __future__ import annotations
@@ -642,13 +642,13 @@ def parse(text: str) -> tuple[str, str]:
 
 - [ ] **步骤 2：导入冒烟**
 
-运行：`uv run python -c "from sophclaw.im.commands import parse; print(parse('/pair abc123'), parse('hi'), parse('/new'))"`
+运行：`uv run python -c "from sophagent.im.commands import parse; print(parse('/pair abc123'), parse('hi'), parse('/new'))"`
 预期：`('pair', 'abc123') ('', '') ('new', '')`
 
 - [ ] **步骤 3：Commit**
 
 ```bash
-git add sophclaw/im/commands.py
+git add sophagent/im/commands.py
 git commit -m "feat(im): commands 解析（/pair /new /stop /help）"
 ```
 
@@ -656,7 +656,7 @@ git commit -m "feat(im): commands 解析（/pair /new /stop /help）"
 
 ## 任务 7：driver
 
-**文件：** 创建 `sophclaw/im/driver.py`；测试 `tests/test_im_driver.py`
+**文件：** 创建 `sophagent/im/driver.py`；测试 `tests/test_im_driver.py`
 
 `IMDriver.handle_inbound`：解析命令（/pair→绑定、/new→新会话、/stop→中断、/help→提示），否则查绑定→跑 `run_turns(TelegramTransport)`。单 chat 串行复用 `manager.lock_for(session_id)`。
 
@@ -667,9 +667,9 @@ git commit -m "feat(im): commands 解析（/pair /new /stop /help）"
 ```python
 """IMDriver: 入站消息 -> 命令 or run_turns(TelegramTransport) with mock client."""
 import pytest
-from sophclaw.im.driver import IMDriver
-from sophclaw.im import pairing
-from sophclaw.im.adapter import MessageEvent
+from sophagent.im.driver import IMDriver
+from sophagent.im import pairing
+from sophagent.im.adapter import MessageEvent
 
 
 class FakeTelegramClient:
@@ -739,7 +739,7 @@ async def test_bound_chat_runs_turn_and_edits(client, bob, agent_id):
 
 - [ ] **步骤 3：实现 driver**
 
-`sophclaw/im/driver.py`：
+`sophagent/im/driver.py`：
 
 ```python
 """IM inbound driver: 命令分发 + run_turns(TelegramTransport)。
@@ -863,7 +863,7 @@ class IMDriver:
 - [ ] **步骤 5：Commit**
 
 ```bash
-git add sophclaw/im/driver.py tests/test_im_driver.py
+git add sophagent/im/driver.py tests/test_im_driver.py
 git commit -m "feat(im): driver（入站调度：命令分发 + run_turns(TelegramTransport)）"
 ```
 
@@ -871,14 +871,14 @@ git commit -m "feat(im): driver（入站调度：命令分发 + run_turns(Telegr
 
 ## 任务 8：REST 配对码路由 + 前端入口
 
-**文件：** 创建 `sophclaw/api/im_routes.py`；修改 `sophclaw/api/__init__.py`、`web/index.html`
+**文件：** 创建 `sophagent/api/im_routes.py`；修改 `sophagent/api/__init__.py`、`web/index.html`
 
 - [ ] **步骤 1：REST 路由**
 
-`sophclaw/api/im_routes.py`：
+`sophagent/api/im_routes.py`：
 
 ```python
-"""IM 绑定 REST：sophclaw 用户签发配对码（供 Telegram 端 /pair 用）。"""
+"""IM 绑定 REST：sophagent 用户签发配对码（供 Telegram 端 /pair 用）。"""
 
 from __future__ import annotations
 
@@ -912,7 +912,7 @@ async def issue_pair_code(req: PairCodeRequest, request: Request, user=Depends(r
 
 - [ ] **步骤 2：挂载路由**
 
-`sophclaw/api/__init__.py`：在 import 块加 `im_routes,`；`mount_routes` 加：
+`sophagent/api/__init__.py`：在 import 块加 `im_routes,`；`mount_routes` 加：
 
 ```python
     app.include_router(im_routes.router, prefix="/api/im", tags=["im"])
@@ -1001,7 +1001,7 @@ node --check /tmp/ui_im.js && echo "JS OK"
 - [ ] **步骤 6：Commit**
 
 ```bash
-git add sophclaw/api/im_routes.py sophclaw/api/__init__.py web/index.html tests/test_im_routes.py
+git add sophagent/api/im_routes.py sophagent/api/__init__.py web/index.html tests/test_im_routes.py
 git commit -m "feat(im): REST /api/im/pair-code + 前端「IM 绑定」入口"
 ```
 
@@ -1009,11 +1009,11 @@ git commit -m "feat(im): REST /api/im/pair-code + 前端「IM 绑定」入口"
 
 ## 任务 9：main.py lifespan 启动轮询
 
-**文件：** 修改 `sophclaw/main.py`
+**文件：** 修改 `sophagent/main.py`
 
 - [ ] **步骤 1：lifespan 启动轮询 task**
 
-`sophclaw/main.py` 的 `lifespan`，在 `yield` 之前（registry refresh 之后）加：
+`sophagent/main.py` 的 `lifespan`，在 `yield` 之前（registry refresh 之后）加：
 
 ```python
     # IM 网关（Telegram）：配了 token 才起 in-process 轮询
@@ -1042,13 +1042,13 @@ git commit -m "feat(im): REST /api/im/pair-code + 前端「IM 绑定」入口"
 
 - [ ] **步骤 2：导入冒烟**
 
-运行：`uv run python -c "from sophclaw.main import create_app; create_app(); print('ok')"`
+运行：`uv run python -c "from sophagent.main import create_app; create_app(); print('ok')"`
 预期：打印 ok（未配 token，不启轮询）。
 
 - [ ] **步骤 3：Commit**
 
 ```bash
-git add sophclaw/main.py
+git add sophagent/main.py
 git commit -m "feat(im): lifespan 启动 Telegram 轮询（配 token 才起）"
 ```
 
@@ -1066,7 +1066,7 @@ git commit -m "feat(im): lifespan 启动 Telegram 轮询（配 token 才起）"
 - [ ] **步骤 2：docker 重建冒烟（不配 token，IM 不起，确认无破坏）**
 
 ```bash
-SOPHCLAW_PORT=8849 docker compose -p sophclaw-sse-im up --build -d
+SOPHAGENT_PORT=8849 docker compose -p sophagent-sse-im up --build -d
 for i in $(seq 1 25); do curl -sf http://127.0.0.1:8849/healthz >/dev/null 2>&1 && break; sleep 1; done
 ```
 
@@ -1074,9 +1074,9 @@ for i in $(seq 1 25); do curl -sf http://127.0.0.1:8849/healthz >/dev/null 2>&1 
 
 - [ ] **步骤 3：真机 Telegram 冒烟（可选，需用户提供 bot token）**
 
-若用户提供 `SOPHCLAW_TELEGRAM_BOT_TOKEN`：
+若用户提供 `SOPHAGENT_TELEGRAM_BOT_TOKEN`：
 ```bash
-SOPHCLAW_PORT=8849 SOPHCLAW_TELEGRAM_BOT_TOKEN=<token> docker compose -p sophclaw-sse-im up --build -d
+SOPHAGENT_PORT=8849 SOPHAGENT_TELEGRAM_BOT_TOKEN=<token> docker compose -p sophagent-sse-im up --build -d
 ```
 在 web UI「IM 绑定」生成码 → Telegram bot 发 `/pair <码>` → 发消息 → 看流式 edit 回复。
 

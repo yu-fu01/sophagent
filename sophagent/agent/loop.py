@@ -25,7 +25,7 @@ from .compaction import (
 )
 
 # Re-export compaction primitives so existing import paths
-# (e.g. `from sophclaw.agent.loop import history_tokens`) keep working.
+# (e.g. `from sophagent.agent.loop import history_tokens`) keep working.
 __all__ = [
     "AgentRunner",
     "estimate_tokens",

@@ -1,7 +1,7 @@
 import pytest
 from cryptography.fernet import InvalidToken
 
-from sophclaw.crypto import encrypt, decrypt, mask_key
+from sophagent.crypto import encrypt, decrypt, mask_key
 
 SECRET = "0" * 64
 

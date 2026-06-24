@@ -5,11 +5,11 @@ from __future__ import annotations
 
 import pytest
 
-from sophclaw import config as config_mod
-from sophclaw import providers as providers_mod
-from sophclaw.config import ProviderConfig
-from sophclaw.db import Database
-from sophclaw.models import AgentDef, AssistantTurn, Message, StreamEvent, ToolCall
+from sophagent import config as config_mod
+from sophagent import providers as providers_mod
+from sophagent.config import ProviderConfig
+from sophagent.db import Database
+from sophagent.models import AgentDef, AssistantTurn, Message, StreamEvent, ToolCall
 
 
 class ScriptedProvider:
@@ -30,10 +30,10 @@ class ScriptedProvider:
 
 
 async def _setup(tmp_path, monkeypatch, script, tools):
-    monkeypatch.setenv("SOPHCLAW_DATA_DIR", str(tmp_path / "data"))
+    monkeypatch.setenv("SOPHAGENT_DATA_DIR", str(tmp_path / "data"))
     config_mod.reset_config()
     providers_mod.reset_providers()
-    from sophclaw.tools import load_all
+    from sophagent.tools import load_all
     load_all()  # populate the tool registry (the server does this at startup)
     cfg = config_mod.get_config()
     cfg.providers["test"] = ProviderConfig(name="test", api_mode="openai", context_limit=100_000)
@@ -58,7 +58,7 @@ async def _setup(tmp_path, monkeypatch, script, tools):
 
 @pytest.mark.asyncio
 async def test_review_saves_memory_returns_changed(tmp_path, monkeypatch):
-    from sophclaw.agent.review import run_review
+    from sophagent.agent.review import run_review
 
     # 第一轮：review agent 调 memory 写一条用户画像；第二轮：收尾无工具
     script = [
@@ -85,7 +85,7 @@ async def test_review_saves_memory_returns_changed(tmp_path, monkeypatch):
 @pytest.mark.asyncio
 async def test_review_read_only_is_not_a_change(tmp_path, monkeypatch):
     """review 只是 read 记忆查看现状、未写入 → changed=False（不能把 read 当变更）。"""
-    from sophclaw.agent.review import run_review
+    from sophagent.agent.review import run_review
 
     script = [
         AssistantTurn(tool_calls=[ToolCall("c1", "memory", {
@@ -107,7 +107,7 @@ async def test_review_read_only_is_not_a_change(tmp_path, monkeypatch):
 
 @pytest.mark.asyncio
 async def test_review_nothing_to_save(tmp_path, monkeypatch):
-    from sophclaw.agent.review import run_review
+    from sophagent.agent.review import run_review
 
     script = [AssistantTurn(content="Nothing to save.", stop_reason="stop",
                             input_tokens=1, output_tokens=1)]
@@ -125,7 +125,7 @@ async def test_review_nothing_to_save(tmp_path, monkeypatch):
 
 @pytest.mark.asyncio
 async def test_review_short_circuits_without_memory_or_skill_tools(tmp_path, monkeypatch):
-    from sophclaw.agent.review import run_review
+    from sophagent.agent.review import run_review
 
     db, agent, provider = await _setup(tmp_path, monkeypatch, [], ["read_file", "terminal"])
     try:
@@ -142,7 +142,7 @@ async def test_review_short_circuits_without_memory_or_skill_tools(tmp_path, mon
 @pytest.mark.asyncio
 async def test_review_does_not_persist_session_messages(tmp_path, monkeypatch):
     """review 重放不应通过 on_persist 写任何 session 消息（on_persist=None）。"""
-    from sophclaw.agent.review import run_review
+    from sophagent.agent.review import run_review
 
     script = [AssistantTurn(content="Nothing to save.", stop_reason="stop",
                             input_tokens=1, output_tokens=1)]
@@ -162,7 +162,7 @@ async def test_review_does_not_persist_session_messages(tmp_path, monkeypatch):
 
 def test_review_tool_whitelist():
     """_review_tools 收窄到 memory/skill 工具与 agent 已开工具的交集。"""
-    from sophclaw.agent.review import _review_tools
+    from sophagent.agent.review import _review_tools
 
     agent = AgentDef(id=1, name="a", description="", system_prompt="p",
                      provider="test", model="m",
@@ -188,7 +188,7 @@ class CaptureTransport:
 
 
 def _state(session_id="s1", user_id=1, transport=None):
-    from sophclaw.gateway.session_state import SessionRegistry, SessionState
+    from sophagent.gateway.session_state import SessionRegistry, SessionState
 
     reg = SessionRegistry()
     st = SessionState(session_id=session_id, user_id=user_id, registry=reg)
@@ -198,8 +198,8 @@ def _state(session_id="s1", user_id=1, transport=None):
 
 
 def _gctx(db, transport, user_id=1):
-    from sophclaw.gateway.methods import GatewayContext
-    from sophclaw.gateway.session_state import SessionRegistry
+    from sophagent.gateway.methods import GatewayContext
+    from sophagent.gateway.session_state import SessionRegistry
 
     return GatewayContext(
         db=db, manager=None, skill_store=None,
@@ -219,7 +219,7 @@ async def test_push_review_notice_emits_review_event(tmp_path, monkeypatch):
 
 @pytest.mark.asyncio
 async def test_push_review_notice_silent_when_detached(tmp_path, monkeypatch):
-    from sophclaw.gateway.transport import DetachedTransport
+    from sophagent.gateway.transport import DetachedTransport
 
     st = _state(transport=DetachedTransport())
     # 不应抛异常
@@ -228,7 +228,7 @@ async def test_push_review_notice_silent_when_detached(tmp_path, monkeypatch):
 
 @pytest.mark.asyncio
 async def test_schedule_review_skipped_when_disabled(tmp_path, monkeypatch):
-    from sophclaw.gateway.methods import schedule_review
+    from sophagent.gateway.methods import schedule_review
 
     db, agent, provider = await _setup(tmp_path, monkeypatch, [], ["memory"])
     config_mod.get_config().self_improve_enabled = False
@@ -245,7 +245,7 @@ async def test_schedule_review_skipped_when_disabled(tmp_path, monkeypatch):
 
 @pytest.mark.asyncio
 async def test_schedule_review_guarded_against_double_spawn(tmp_path, monkeypatch):
-    from sophclaw.gateway.methods import schedule_review
+    from sophagent.gateway.methods import schedule_review
 
     db, agent, provider = await _setup(tmp_path, monkeypatch, [], ["memory"])
     try:
@@ -261,7 +261,7 @@ async def test_schedule_review_guarded_against_double_spawn(tmp_path, monkeypatc
 
 @pytest.mark.asyncio
 async def test_schedule_review_happy_path_writes_and_notifies(tmp_path, monkeypatch):
-    from sophclaw.gateway.methods import schedule_review
+    from sophagent.gateway.methods import schedule_review
 
     script = [
         AssistantTurn(tool_calls=[ToolCall("c1", "memory", {

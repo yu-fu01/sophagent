@@ -1,6 +1,6 @@
 """会话覆盖字段贯通 runner 的集成测试。"""
 
-from sophclaw.usage import cache_hit_percent
+from sophagent.usage import cache_hit_percent
 from conftest import ws_token, ws_send, ws_recv_frame, ws_response, ws_events_until
 
 
@@ -51,7 +51,7 @@ def test_cache_hit_percent():
 
 
 def test_turn_usage_and_done_usage(client, bob, agent_id):
-    from sophclaw.models import AssistantTurn
+    from sophagent.models import AssistantTurn
     client.provider.script = [AssistantTurn(content="hi", stop_reason="stop",
         input_tokens=100, output_tokens=20, cache_read_tokens=40)]
     s = client.post("/api/sessions", headers=bob, json={"agent_id": agent_id}).json()

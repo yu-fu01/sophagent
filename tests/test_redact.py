@@ -4,7 +4,7 @@ import importlib
 
 import pytest
 
-from sophclaw.agent import redact as R
+from sophagent.agent import redact as R
 
 
 # -- 逐类凭据被替换为 [REDACTED] --------------------------------------------
@@ -63,7 +63,7 @@ def test_api_key_header():
 
 
 def test_db_connection_string_password():
-    out = R.redact_sensitive_text("postgres://admin:Pa55w0rd!2026@db.internal:5432/sophclaw")
+    out = R.redact_sensitive_text("postgres://admin:Pa55w0rd!2026@db.internal:5432/sophagent")
     assert "Pa55w0rd!2026" not in out
     assert "[REDACTED]" in out
     assert "admin" in out          # 用户名保留
@@ -89,7 +89,7 @@ def test_private_key_block():
 # -- 不误伤正常文本 ---------------------------------------------------------
 
 def test_normal_text_untouched():
-    txt = "这是一段正常的中文说明，包含代码 foo() 和路径 sophclaw/agent/loop.py:42。"
+    txt = "这是一段正常的中文说明，包含代码 foo() 和路径 sophagent/agent/loop.py:42。"
     assert R.redact_sensitive_text(txt) == txt
 
 
@@ -101,13 +101,13 @@ def test_plain_numbers_and_urls_untouched():
 # -- 开关 -------------------------------------------------------------------
 
 def test_disabled_returns_original(monkeypatch):
-    monkeypatch.setenv("SOPHCLAW_REDACT_SECRETS", "0")
+    monkeypatch.setenv("SOPHAGENT_REDACT_SECRETS", "0")
     importlib.reload(R)
     try:
         secret = "sk-test-DO-NOT-COMMIT-9f8a7b6c5d4e3f2a1b0c"
         assert R.redact_sensitive_text(f"key {secret}") == f"key {secret}"
     finally:
-        monkeypatch.setenv("SOPHCLAW_REDACT_SECRETS", "1")
+        monkeypatch.setenv("SOPHAGENT_REDACT_SECRETS", "1")
         importlib.reload(R)
 
 

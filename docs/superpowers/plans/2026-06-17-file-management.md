@@ -2,9 +2,9 @@
 
 > **面向 AI 代理的工作者：** 必需子技能：使用 superpowers:subagent-driven-development（推荐）或 superpowers:executing-plans 逐任务实现此计划。步骤使用复选框（`- [ ]`）语法来跟踪进度。
 
-**目标：** 给 sophclaw web 端加只读目录树 + 对话框上传按钮，上传文件落入用户工作目录并以引用形式加入对话上下文，agent 用 `read_file` 读取。
+**目标：** 给 sophagent web 端加只读目录树 + 对话框上传按钮，上传文件落入用户工作目录并以引用形式加入对话上下文，agent 用 `read_file` 读取。
 
-**架构：** 新增 `sophclaw/api/file_routes.py`（`/api/files` 的 list/read/upload），作用域恒为调用者的 `workspace_for(user_id)`，复用 `tools.files.safe_path()` 收敛路径。前端 `web/index.html` 加右侧可折叠目录树面板与 composer 左侧 📎/📁 按钮；上传后显示附件 chip，发送时把 `[附加文件: <path>]` 前置进消息。后端 chat 接口零改动。
+**架构：** 新增 `sophagent/api/file_routes.py`（`/api/files` 的 list/read/upload），作用域恒为调用者的 `workspace_for(user_id)`，复用 `tools.files.safe_path()` 收敛路径。前端 `web/index.html` 加右侧可折叠目录树面板与 composer 左侧 📎/📁 按钮；上传后显示附件 chip，发送时把 `[附加文件: <path>]` 前置进消息。后端 chat 接口零改动。
 
 **技术栈：** FastAPI + pydantic、aiosqlite、pytest + TestClient（fake provider）、单文件原生 JS 前端。
 
@@ -14,10 +14,10 @@
 
 ## 文件结构
 
-- **创建** `sophclaw/api/file_routes.py` — `/api/files` 三个端点（list/read/upload），仅依赖 `require_user` + `safe_path`，无新权限。
+- **创建** `sophagent/api/file_routes.py` — `/api/files` 三个端点（list/read/upload），仅依赖 `require_user` + `safe_path`，无新权限。
 - **创建** `tests/test_files_api.py` — 端到端测试，沿用 `conftest.py` 的 `client`/`bob` 夹具。
-- **修改** `sophclaw/config.py` — `Config` 加 `max_upload_bytes` 字段 + `load_config()` 读环境变量。
-- **修改** `sophclaw/api/__init__.py` — 注册 `file_routes` 到 `/api/files`。
+- **修改** `sophagent/config.py` — `Config` 加 `max_upload_bytes` 字段 + `load_config()` 读环境变量。
+- **修改** `sophagent/api/__init__.py` — 注册 `file_routes` 到 `/api/files`。
 - **修改** `web/index.html` — 目录树面板（REQ2.1）、上传按钮 + 附件 chip + 引用前置 + tooltip（REQ2.2）。
 - **修改** `README.md` — 特性列表补一句文件管理。
 
@@ -26,11 +26,11 @@
 ## 任务 1：config 增加上传上限
 
 **文件：**
-- 修改：`sophclaw/config.py`（`Config` 数据类 + `load_config()`）
+- 修改：`sophagent/config.py`（`Config` 数据类 + `load_config()`）
 
 - [ ] **步骤 1：给 `Config` 加字段**
 
-在 `sophclaw/config.py` 的 `Config` 数据类里，`tool_output_limit` 一行之后加：
+在 `sophagent/config.py` 的 `Config` 数据类里，`tool_output_limit` 一行之后加：
 
 ```python
     max_upload_bytes: int = 10 * 1024 * 1024  # 上传/下载单文件上限 (10MB)
@@ -41,18 +41,18 @@
 在 `load_config()` 构造 `Config(...)` 的关键字参数里（`max_concurrent_turns=...` 之后）加一行：
 
 ```python
-        max_upload_bytes=int(os.environ.get("SOPHCLAW_MAX_UPLOAD_BYTES", str(10 * 1024 * 1024))),
+        max_upload_bytes=int(os.environ.get("SOPHAGENT_MAX_UPLOAD_BYTES", str(10 * 1024 * 1024))),
 ```
 
 - [ ] **步骤 3：验证导入无误**
 
-运行：`.venv/bin/python -c "from sophclaw.config import load_config"`
+运行：`.venv/bin/python -c "from sophagent.config import load_config"`
 预期：无报错（无输出）。
 
 - [ ] **步骤 4：Commit**
 
 ```bash
-git add sophclaw/config.py
+git add sophagent/config.py
 git commit -m "feat(M-files): config 增加 max_upload_bytes (默认 10MB)"
 ```
 
@@ -61,9 +61,9 @@ git commit -m "feat(M-files): config 增加 max_upload_bytes (默认 10MB)"
 ## 任务 2：后端 `/api/files` 路由（TDD）
 
 **文件：**
-- 创建：`sophclaw/api/file_routes.py`
+- 创建：`sophagent/api/file_routes.py`
 - 创建：`tests/test_files_api.py`
-- 修改：`sophclaw/api/__init__.py`
+- 修改：`sophagent/api/__init__.py`
 
 - [ ] **步骤 1：编写失败的测试**
 
@@ -74,7 +74,7 @@ git commit -m "feat(M-files): config 增加 max_upload_bytes (默认 10MB)"
 
 import base64
 
-from sophclaw.config import get_config
+from sophagent.config import get_config
 
 
 def data_url(content: bytes, mime: str = "text/plain") -> str:
@@ -144,7 +144,7 @@ def test_unauthenticated(client):
 运行：`.venv/bin/python -m pytest tests/test_files_api.py -q`
 预期：FAIL/ERROR（`/api/files` 端点不存在，返回 404 或路由未注册）。
 
-- [ ] **步骤 3：创建 `sophclaw/api/file_routes.py`**
+- [ ] **步骤 3：创建 `sophagent/api/file_routes.py`**
 
 ```python
 """文件管理 REST API，作用域恒为调用者的每用户工作目录。
@@ -288,7 +288,7 @@ async def upload_file_api(body: UploadBody, request: Request, user=Depends(requi
 
 - [ ] **步骤 4：注册路由**
 
-修改 `sophclaw/api/__init__.py`：import 列表里加 `file_routes`，并在 `mount_routes()` 里加一行（放在 `session_routes` 之后）：
+修改 `sophagent/api/__init__.py`：import 列表里加 `file_routes`，并在 `mount_routes()` 里加一行（放在 `session_routes` 之后）：
 
 ```python
     app.include_router(file_routes.router, prefix="/api/files", tags=["files"])
@@ -323,7 +323,7 @@ from . import (
 - [ ] **步骤 7：Commit**
 
 ```bash
-git add sophclaw/api/file_routes.py sophclaw/api/__init__.py tests/test_files_api.py
+git add sophagent/api/file_routes.py sophagent/api/__init__.py tests/test_files_api.py
 git commit -m "feat(M-files): /api/files 列目录/读/上传 (REQ2.1-2.3)"
 ```
 
@@ -465,7 +465,7 @@ function downloadBlob(blob, name) {
 
 - [ ] **步骤 4：跑服务手动验证目录树**
 
-运行：`ADMIN_PASSWORD=dev .venv/bin/uvicorn sophclaw.main:app --port 8011 &` 然后浏览器开 `http://localhost:8011`，admin/dev 登录。
+运行：`ADMIN_PASSWORD=dev .venv/bin/uvicorn sophagent.main:app --port 8011 &` 然后浏览器开 `http://localhost:8011`，admin/dev 登录。
 预期：进入某会话后底部出现 📎/📁 按钮；点 📁 右侧出现 Files 面板；空目录显示 (empty)。停服务：`kill %1`。
 
 （若当前无 agent，先在 Agents 页签建一个再开会话。）
@@ -574,7 +574,7 @@ async function sendMsg() {
 
 - [ ] **步骤 4：跑服务手动验证上传+引用**
 
-运行：`ADMIN_PASSWORD=dev .venv/bin/uvicorn sophclaw.main:app --port 8012 &`，浏览器 `http://localhost:8012` 登录，进入一个**启用了 read_file 工具**的 agent 会话。
+运行：`ADMIN_PASSWORD=dev .venv/bin/uvicorn sophagent.main:app --port 8012 &`，浏览器 `http://localhost:8012` 登录，进入一个**启用了 read_file 工具**的 agent 会话。
 预期：
 1. 点 📎 选一个 .txt 文件 → 输入框上方出现 chip（显示文件名）；右侧 Files 面板（若开着）出现该文件。
 2. 输入一句话点 Send → 用户气泡顶部含 `[附加文件: <name>]`；若 agent 真会调用 read_file，可见 🔧 read_file 工具调用。
@@ -608,7 +608,7 @@ git commit -m "feat(M-files): 上传按钮+附件引用进上下文+read_file �
 运行：`.venv/bin/python -m pytest -q`
 预期：全部 PASS。
 
-运行：`ADMIN_PASSWORD=dev .venv/bin/python -c "from sophclaw.main import create_app; create_app()"`
+运行：`ADMIN_PASSWORD=dev .venv/bin/python -c "from sophagent.main import create_app; create_app()"`
 预期：无异常（app 工厂可正常构建）。
 
 - [ ] **步骤 3：Commit**

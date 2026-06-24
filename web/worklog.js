@@ -1,6 +1,6 @@
 "use strict";
 // 活动折叠（worklog）的纯逻辑：工具名 -> kind 映射 + 摘要文案生成。
-// 移植自 hermes-webui 的 worklog 摘要算法，文案中文化、按 sophclaw 工具适配。
+// 移植自 hermes-webui 的 worklog 摘要算法，文案中文化、按 sophagent 工具适配。
 // 既可被浏览器 <script> 加载（挂到 window），也可被 node require（测试）。
 (function (root) {
   // 工具名 -> kind。显式名表优先，子串兜底（顺序：先 search 再 web，避免 web_search 误判）。

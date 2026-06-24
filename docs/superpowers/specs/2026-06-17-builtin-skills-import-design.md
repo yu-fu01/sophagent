@@ -5,12 +5,12 @@
 
 ## 背景
 
-本项目（sophclaw）已具备**完整且已接入运行**的 skill 能力：
+本项目（sophagent）已具备**完整且已接入运行**的 skill 能力：
 
-- `sophclaw/skills/store.py` — `SkillStore`，扁平布局 `<skills_dir>/<name>/SKILL.md`，增删改查、原子写、索引缓存。
-- `sophclaw/tools/skills.py` — agent 工具 `skills_list` / `skill_view` / `skill_manage`。
-- `sophclaw/api/skill_routes.py` — HTTP 列表/查看/管理员写入/删除。
-- `sophclaw/agent/prompt.py` + `loop.py` — 把 skill 索引注入 system prompt。
+- `sophagent/skills/store.py` — `SkillStore`，扁平布局 `<skills_dir>/<name>/SKILL.md`，增删改查、原子写、索引缓存。
+- `sophagent/tools/skills.py` — agent 工具 `skills_list` / `skill_view` / `skill_manage`。
+- `sophagent/api/skill_routes.py` — HTTP 列表/查看/管理员写入/删除。
+- `sophagent/agent/prompt.py` + `loop.py` — 把 skill 索引注入 system prompt。
 - `config.py` — `skills_dir = data_dir/skills`，大小上限。
 
 因此本需求**不新增 skill 能力**，只解决一件事：把 hermes 的内置 skill 内容灌进本项目，作为开箱即用的预置技能库。
@@ -31,12 +31,12 @@
 
 ### 障碍 1：目录布局不一致
 - hermes：`skills/<分类>/<技能>/SKILL.md`（两级）。
-- sophclaw `SkillStore`：`skills/<技能>/SKILL.md`（一级扁平，硬约束）。
+- sophagent `SkillStore`：`skills/<技能>/SKILL.md`（一级扁平，硬约束）。
 - **决策**：压平。`skills/<分类>/<技能>/` → `builtin/<技能>/`，去掉分类层。叶子技能名全局唯一，无碰撞。整目录拷贝（含 `references/`、`scripts/`、`templates/` 等支撑文件——经核对全部落在 `SkillStore.ALLOWED_SUBDIRS` 白名单内）。
 
 ### 障碍 2：存储位置是运行时数据，不进 git
 - `skills_dir = data_dir/skills`，而 `data/` 在 `.gitignore`。
-- **决策**：内置技能放在随项目提交的 `sophclaw/skills/builtin/`；启动时播种进 `data_dir/skills`。内置与用户自建分离，可干净升级。
+- **决策**：内置技能放在随项目提交的 `sophagent/skills/builtin/`；启动时播种进 `data_dir/skills`。内置与用户自建分离，可干净升级。
 
 ### 障碍 3：tags 字段位置不同
 - hermes 把 tags 放 `metadata.hermes.tags`，而 `SkillStore._scan` 只读 `metadata.tags`。
@@ -62,7 +62,7 @@
 ## 架构
 
 ```
-sophclaw/skills/
+sophagent/skills/
 ├── store.py            # 现有，改 _scan 一处（tags fallback）
 ├── seed.py             # 新增：seed_builtin_skills(dest)
 └── builtin/            # 新增：随 git 提交的内置技能 bundle（压平后 28 个）

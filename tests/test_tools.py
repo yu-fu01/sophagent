@@ -1,8 +1,8 @@
 import pytest
 
-import sophclaw.tools  # noqa: F401  (registers file/terminal/web tools)
-from sophclaw.tools import registry
-from sophclaw.tools.files import safe_path
+import sophagent.tools  # noqa: F401  (registers file/terminal/web tools)
+from sophagent.tools import registry
+from sophagent.tools.files import safe_path
 
 
 async def test_dispatch_unknown_tool(ctx):
@@ -88,7 +88,7 @@ async def test_web_fetch_ssrf_blocked(ctx):
 
 
 def test_extract_text():
-    from sophclaw.tools.web import extract_text
+    from sophagent.tools.web import extract_text
 
     html = "<html><head><script>bad()</script></head><body><h1>Title</h1><p>Body text</p></body></html>"
     text = extract_text(html)
@@ -96,7 +96,7 @@ def test_extract_text():
 
 
 async def test_delegate_depth_guard(ctx):
-    from sophclaw.tools import load_all
+    from sophagent.tools import load_all
 
     load_all()
     ctx.agent.tools = ["delegate_task"]

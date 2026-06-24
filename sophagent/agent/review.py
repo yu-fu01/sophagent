@@ -1,9 +1,9 @@
-"""Background self-improvement review (sophclaw's self-evolution engine).
+"""Background self-improvement review (sophagent's self-evolution engine).
 
 After a turn's user-visible reply has streamed, a decoupled background task
 replays the conversation through a tool-restricted review agent that decides
 whether to save memory or patch a skill — hermes' background review, adapted to
-sophclaw's stateless-per-turn server.
+sophagent's stateless-per-turn server.
 
 The review never writes to the session message log (``on_persist=None``); only
 the memory / skill side effects of its tool calls land. It runs the agent loop

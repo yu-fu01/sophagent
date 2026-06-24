@@ -18,7 +18,7 @@
 
 **根因**：脱敏依赖较小/快的模型自觉执行，不可靠。摘要会落库（`messages` 表）、经 API 返回前端、并作为上下文重新喂给后续模型轮次——凭据被持久化并二次传播。
 
-**参考**：hermes-agent 的 `agent/redact.py`（521 行）提供确定性正则脱敏 `redact_sensitive_text`，并在压缩器里**入口和出口双向调用**（`context_compressor.py:1182` 序列化输入脱敏、`:1413` 摘要输出脱敏），不依赖 LLM 自觉。本设计移植其核心思路，精简到 sophclaw 够用的量。
+**参考**：hermes-agent 的 `agent/redact.py`（521 行）提供确定性正则脱敏 `redact_sensitive_text`，并在压缩器里**入口和出口双向调用**（`context_compressor.py:1182` 序列化输入脱敏、`:1413` 摘要输出脱敏），不依赖 LLM 自觉。本设计移植其核心思路，精简到 sophagent 够用的量。
 
 ## 目标
 
@@ -26,7 +26,7 @@
 
 ## 设计
 
-### 1. 新增 `sophclaw/agent/redact.py`（脱敏模块）
+### 1. 新增 `sophagent/agent/redact.py`（脱敏模块）
 
 单一职责模块，唯一公开入口：
 
@@ -46,13 +46,13 @@ def redact_sensitive_text(text: str) -> str
 - **JWT**：`eyJ` 开头的 1~3 段 base64
 - **私钥块**：`-----BEGIN ... PRIVATE KEY----- ... -----END ... PRIVATE KEY-----`
 
-**不移植**（YAGNI）：电话号码、URL query 参数、表单 body、HTTP 请求行 query、`mask_secret` 显示截断助手——这些 sophclaw 当前压缩场景用不到。
+**不移植**（YAGNI）：电话号码、URL query 参数、表单 body、HTTP 请求行 query、`mask_secret` 显示截断助手——这些 sophagent 当前压缩场景用不到。
 
 **替换占位符**：统一用 `[REDACTED]`，与现有 `SUMMARIZER_SYSTEM` prompt 中的措辞一致。
 
 ### 2. 接入压缩流程（双道脱敏）
 
-在 `sophclaw/agent/compaction.py` 接两道，对齐 hermes：
+在 `sophagent/agent/compaction.py` 接两道，对齐 hermes：
 
 **入口脱敏** —— `serialize_turns(turns)` 把对话序列化为摘要器输入时，对每条消息内容与 tool call 参数先过 `redact_sensitive_text`。效果：凭据不进入摘要 LLM 的 prompt。
 
@@ -62,10 +62,10 @@ def redact_sensitive_text(text: str) -> str
 
 ### 3. 开关与错误处理
 
-**开关** —— 对齐 hermes 的 `HERMES_REDACT_SECRETS`，加环境变量 `SOPHCLAW_REDACT_SECRETS`：
+**开关** —— 对齐 hermes 的 `HERMES_REDACT_SECRETS`，加环境变量 `SOPHAGENT_REDACT_SECRETS`：
 
 ```python
-_REDACT_ENABLED = os.getenv("SOPHCLAW_REDACT_SECRETS", "true").lower() in {"1", "true", "yes", "on"}
+_REDACT_ENABLED = os.getenv("SOPHAGENT_REDACT_SECRETS", "true").lower() in {"1", "true", "yes", "on"}
 ```
 
 默认开启。设为 `0`/`false`/`no`/`off` 时 `redact_sensitive_text` 直接返回原文，给本地调试留逃生口。
@@ -77,7 +77,7 @@ _REDACT_ENABLED = os.getenv("SOPHCLAW_REDACT_SECRETS", "true").lower() in {"1", 
 **新增 `tests/test_redact.py`**：
 - 逐类凭据被替换为 `[REDACTED]`：各厂商前缀（sk-/AKIA/ghp_/xai-/tvly- 等）、env 赋值、JSON 字段、Authorization header、x-api-key header、DB 连接串密码、JWT、私钥块
 - 正常文本不误伤（普通中英文、代码、不含凭据的 URL/数字）
-- 开关关闭（`SOPHCLAW_REDACT_SECRETS=0`）时原样返回
+- 开关关闭（`SOPHAGENT_REDACT_SECRETS=0`）时原样返回
 
 **扩展 `tests/test_compaction.py`**：
 - `serialize_turns` 入口脱敏：含凭据的消息序列化后不含原值

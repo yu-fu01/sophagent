@@ -16,7 +16,7 @@ from .registry import ToolContext, tool
 
 MAX_FETCH_BYTES = 2 * 1024 * 1024
 FETCH_TIMEOUT = 30.0
-UA = "Mozilla/5.0 (compatible; sophclaw-agent/0.1)"
+UA = "Mozilla/5.0 (compatible; sophagent/0.1)"
 
 
 def _assert_public_host(url: str) -> None:

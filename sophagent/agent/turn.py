@@ -6,7 +6,7 @@ Both transports consume this:
 * the REST SSE route (``api/session_routes.py``) pumps yielded events into an
   :class:`asyncio.Queue` that a ``StreamingResponse`` drains;
 * the WebSocket ``prompt.submit`` method pumps them through a session's
-  :class:`~sophclaw.gateway.session_state.SessionState` (buffer + transport).
+  :class:`~sophagent.gateway.session_state.SessionState` (buffer + transport).
 
 The agent loop, two-layer context compression, persistence, message queue and
 queued-next chaining all live here so both transports stay in lock-step.

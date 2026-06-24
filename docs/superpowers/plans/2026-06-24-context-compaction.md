@@ -2,9 +2,9 @@
 
 > **面向 AI 代理的工作者：** 必需子技能：使用 superpowers:subagent-driven-development（推荐）或 superpowers:executing-plans 逐任务实现此计划。步骤使用复选框（`- [ ]`）语法来跟踪进度。
 
-**目标：** 把 sophclaw 现有的简单上下文压缩升级为 hermes 风格的结构化摘要引擎——防指令污染、结构化模板、迭代合并、token 预算尾部保护、`_compressed` 前端标记、凭据脱敏、可配置触发阈值——并抽出单一引擎消除 loop.py/compact.py 的逻辑重复。
+**目标：** 把 sophagent 现有的简单上下文压缩升级为 hermes 风格的结构化摘要引擎——防指令污染、结构化模板、迭代合并、token 预算尾部保护、`_compressed` 前端标记、凭据脱敏、可配置触发阈值——并抽出单一引擎消除 loop.py/compact.py 的逻辑重复。
 
-**架构：** 新增 `sophclaw/agent/compaction.py` 作为唯一压缩引擎。`loop.py`（自动）与 `compact.py`（手动 `/compact <focus>`）共用它。`Message` 新增 `compressed` 标志位经 `to_dict/from_dict` 自动往返 DB 与前端；provider 因手动构造消息 dict 而天然不会泄漏该字段。触发阈值通过 settings 表可配置，默认 0.5，由 `build_runner` 解析后注入 `AgentRunner`。
+**架构：** 新增 `sophagent/agent/compaction.py` 作为唯一压缩引擎。`loop.py`（自动）与 `compact.py`（手动 `/compact <focus>`）共用它。`Message` 新增 `compressed` 标志位经 `to_dict/from_dict` 自动往返 DB 与前端；provider 因手动构造消息 dict 而天然不会泄漏该字段。触发阈值通过 settings 表可配置，默认 0.5，由 `build_runner` 解析后注入 `AgentRunner`。
 
 **技术栈：** Python 3.12、uv、pytest + pytest-asyncio、FastAPI、aiosqlite；前端为单文件 vanilla JS（`web/index.html`）。
 
@@ -15,14 +15,14 @@
 - provider 手动构造请求 dict（`openai_provider.py:22-39` 只读 `m.role`/`m.content`/`m.tool_calls`/`m.tool_call_id`），**不调 `to_dict()`** → `_compressed` 不会发给上游 API，**无需剥离步骤**，仅加回归测试。
 - 前端历史接口 `GET /sessions/{id}`（`session_routes.py:58`）用 `m.to_dict()` → `_compressed` 可达前端。
 - `build_runner`（`runtime.py:18`）持有 `db`，是注入阈值的落点；`AgentRunner.__init__`（`loop.py:64`）签名为 `(agent, ctx, history, on_persist)`。
-- `test_loop.py` 从 `sophclaw.agent.loop` 导入 `history_tokens`、`truncate_old_tool_messages` → loop.py 必须**重新导出**这些名字以保持向后兼容。
+- `test_loop.py` 从 `sophagent.agent.loop` 导入 `history_tokens`、`truncate_old_tool_messages` → loop.py 必须**重新导出**这些名字以保持向后兼容。
 
 ---
 
 ## 任务 1：Message 新增 `compressed` 标志位
 
 **文件：**
-- 修改：`sophclaw/models.py`（`Message` dataclass，约 32-64 行）
+- 修改：`sophagent/models.py`（`Message` dataclass，约 32-64 行）
 - 测试：`tests/test_models_compressed.py`（创建）
 
 - [ ] **步骤 1：编写失败的测试**
@@ -32,7 +32,7 @@
 ```python
 """Message.compressed 标志位的序列化往返测试。"""
 
-from sophclaw.models import Message
+from sophagent.models import Message
 
 
 def test_compressed_defaults_false_and_omitted():
@@ -66,7 +66,7 @@ def test_from_dict_without_flag_is_false():
 
 - [ ] **步骤 3：编写最少实现代码**
 
-在 `sophclaw/models.py` 的 `Message` dataclass 中，`reasoning` 字段之后新增字段：
+在 `sophagent/models.py` 的 `Message` dataclass 中，`reasoning` 字段之后新增字段：
 
 ```python
     reasoning: str | None = None
@@ -108,7 +108,7 @@ def test_from_dict_without_flag_is_false():
 - [ ] **步骤 5：Commit**
 
 ```bash
-git add sophclaw/models.py tests/test_models_compressed.py
+git add sophagent/models.py tests/test_models_compressed.py
 git commit -m "feat(models): Message 新增 compressed 标志位（压缩摘要消息标记）"
 ```
 
@@ -117,7 +117,7 @@ git commit -m "feat(models): Message 新增 compressed 标志位（压缩摘要�
 ## 任务 2：压缩引擎核心 `compaction.py`
 
 **文件：**
-- 创建：`sophclaw/agent/compaction.py`
+- 创建：`sophagent/agent/compaction.py`
 - 测试：`tests/test_compaction.py`（创建）
 
 - [ ] **步骤 1：编写失败的测试**
@@ -131,8 +131,8 @@ from typing import AsyncIterator
 
 import pytest
 
-from sophclaw.agent import compaction as C
-from sophclaw.models import AssistantTurn, Message, StreamEvent, ToolCall
+from sophagent.agent import compaction as C
+from sophagent.models import AssistantTurn, Message, StreamEvent, ToolCall
 
 
 def test_make_summary_message_has_prefix_and_flag():
@@ -224,16 +224,16 @@ async def test_summarize_returns_none_on_error():
 - [ ] **步骤 2：运行测试验证失败**
 
 运行：`uv run pytest tests/test_compaction.py -v`
-预期：FAIL，`ModuleNotFoundError: No module named 'sophclaw.agent.compaction'`
+预期：FAIL，`ModuleNotFoundError: No module named 'sophagent.agent.compaction'`
 
 - [ ] **步骤 3：编写最少实现代码**
 
-创建 `sophclaw/agent/compaction.py`：
+创建 `sophagent/agent/compaction.py`：
 
 ```python
 """上下文压缩引擎——自动压缩循环（loop.py）与手动 /compact 命令共用。
 
-把 hermes-agent 的结构化摘要 + 防指令污染思路移植进 sophclaw 的轻量实现：
+把 hermes-agent 的结构化摘要 + 防指令污染思路移植进 sophagent 的轻量实现：
 - SUMMARY_PREFIX 前导语，把摘要标记为「仅供参考」而非活动指令
 - 结构化中文模板（活动任务 / 已完成 / 历史待办 ...）
 - 迭代式摘要合并（已有上一份摘要时做更新而非从头重摘）
@@ -486,7 +486,7 @@ async def summarize(
 - [ ] **步骤 5：Commit**
 
 ```bash
-git add sophclaw/agent/compaction.py tests/test_compaction.py
+git add sophagent/agent/compaction.py tests/test_compaction.py
 git commit -m "feat(agent): 新增上下文压缩引擎 compaction.py（结构化摘要+防注入+迭代合并）"
 ```
 
@@ -495,7 +495,7 @@ git commit -m "feat(agent): 新增上下文压缩引擎 compaction.py（结构�
 ## 任务 3：可配置触发阈值 `effective_compress_threshold`
 
 **文件：**
-- 修改：`sophclaw/config.py`（在 `effective_max_upload_bytes` 之后，约 163 行后）
+- 修改：`sophagent/config.py`（在 `effective_max_upload_bytes` 之后，约 163 行后）
 - 测试：`tests/test_settings.py`（追加）
 
 - [ ] **步骤 1：编写失败的测试**
@@ -505,12 +505,12 @@ git commit -m "feat(agent): 新增上下文压缩引擎 compaction.py（结构�
 ```python
 # -- 压缩触发阈值 effective_compress_threshold -------------------------------
 
-from sophclaw.config import effective_compress_threshold, DEFAULT_COMPRESS_THRESHOLD
+from sophagent.config import effective_compress_threshold, DEFAULT_COMPRESS_THRESHOLD
 
 
 @pytest.mark.asyncio
 async def test_compress_threshold_default(tmp_path, monkeypatch):
-    monkeypatch.setenv("SOPHCLAW_DATA_DIR", str(tmp_path / "data"))
+    monkeypatch.setenv("SOPHAGENT_DATA_DIR", str(tmp_path / "data"))
     config_mod.reset_config()
     db = Database(tmp_path / "s.db")
     await db.connect()
@@ -522,7 +522,7 @@ async def test_compress_threshold_default(tmp_path, monkeypatch):
 
 @pytest.mark.asyncio
 async def test_compress_threshold_override_and_clamp(tmp_path, monkeypatch):
-    monkeypatch.setenv("SOPHCLAW_DATA_DIR", str(tmp_path / "data"))
+    monkeypatch.setenv("SOPHAGENT_DATA_DIR", str(tmp_path / "data"))
     config_mod.reset_config()
     db = Database(tmp_path / "s.db")
     await db.connect()
@@ -548,7 +548,7 @@ async def test_compress_threshold_override_and_clamp(tmp_path, monkeypatch):
 
 - [ ] **步骤 3：编写最少实现代码**
 
-在 `sophclaw/config.py` 顶部常量区（其它模块级常量附近）新增：
+在 `sophagent/config.py` 顶部常量区（其它模块级常量附近）新增：
 
 ```python
 DEFAULT_COMPRESS_THRESHOLD = 0.5   # 对齐 hermes threshold_percent；超过 context*该值触发压缩
@@ -581,7 +581,7 @@ async def effective_compress_threshold(db) -> float:
 - [ ] **步骤 5：Commit**
 
 ```bash
-git add sophclaw/config.py tests/test_settings.py
+git add sophagent/config.py tests/test_settings.py
 git commit -m "feat(config): 可配置压缩触发阈值 effective_compress_threshold（默认 0.5）"
 ```
 
@@ -590,7 +590,7 @@ git commit -m "feat(config): 可配置压缩触发阈值 effective_compress_thre
 ## 任务 4：阈值管理 API（GET/PUT，admin）
 
 **文件：**
-- 修改：`sophclaw/api/settings_routes.py`
+- 修改：`sophagent/api/settings_routes.py`
 - 测试：`tests/test_settings.py`（追加 API 测试，复用现有 client fixture）
 
 - [ ] **步骤 1：编写失败的测试**
@@ -635,7 +635,7 @@ def test_put_compress_threshold_non_admin_forbidden(client, bob):
 
 - [ ] **步骤 3：编写最少实现代码**
 
-修改 `sophclaw/api/settings_routes.py`：
+修改 `sophagent/api/settings_routes.py`：
 
 导入处补上常量：
 
@@ -692,7 +692,7 @@ async def set_compress_threshold(body: CompressThresholdBody, request: Request,
 - [ ] **步骤 5：Commit**
 
 ```bash
-git add sophclaw/api/settings_routes.py tests/test_settings.py
+git add sophagent/api/settings_routes.py tests/test_settings.py
 git commit -m "feat(api): 压缩阈值 GET/PUT 接口（admin 可运行时调整）"
 ```
 
@@ -701,8 +701,8 @@ git commit -m "feat(api): 压缩阈值 GET/PUT 接口（admin 可运行时调整
 ## 任务 5：loop.py 改用压缩引擎 + 注入阈值 + 迭代/尾部保护
 
 **文件：**
-- 修改：`sophclaw/agent/loop.py`
-- 修改：`sophclaw/agent/runtime.py`（`build_runner` 注入阈值）
+- 修改：`sophagent/agent/loop.py`
+- 修改：`sophagent/agent/runtime.py`（`build_runner` 注入阈值）
 - 测试：`tests/test_loop.py`（追加）
 
 - [ ] **步骤 1：编写失败的测试**
@@ -710,9 +710,9 @@ git commit -m "feat(api): 压缩阈值 GET/PUT 接口（admin 可运行时调整
 在 `tests/test_loop.py` 末尾追加。`ctx` fixture（conftest）提供的 `ToolContext` 自带 `.agent`（一个 `AgentDef`，provider="test"）；`fake_provider` fixture 在文件头部，安装假 provider 到 `_cache["test"]` 并把 `get_config().providers["test"].context_limit` 设为 1000。`AgentRunner.__init__` 会经 `get_provider("test")` 自动拿到该假 provider，无需手动赋值：
 
 ```python
-from sophclaw.agent.compaction import SUMMARY_PREFIX, make_summary_message
-from sophclaw.agent.loop import AgentRunner
-from sophclaw.config import DEFAULT_COMPRESS_THRESHOLD
+from sophagent.agent.compaction import SUMMARY_PREFIX, make_summary_message
+from sophagent.agent.loop import AgentRunner
+from sophagent.config import DEFAULT_COMPRESS_THRESHOLD
 
 
 def test_agentrunner_default_threshold(ctx):
@@ -748,7 +748,7 @@ async def test_iterative_compaction_reuses_previous_summary(ctx, fake_provider):
 
 - [ ] **步骤 3：编写最少实现代码**
 
-修改 `sophclaw/agent/loop.py`：
+修改 `sophagent/agent/loop.py`：
 
 (a) 顶部：删除本地的 `estimate_tokens`、`history_tokens`、`truncate_old_tool_messages`、`KEEP_RECENT_TOOL_MSGS`、`TOOL_TRUNCATE_NOTE` 定义，改为从引擎**重新导出**（保持 `test_loop.py` 的导入路径不变）：
 
@@ -816,7 +816,7 @@ from ..config import DEFAULT_COMPRESS_THRESHOLD
         self.compressed = True
 ```
 
-修改 `sophclaw/agent/runtime.py` 的 `build_runner`，注入阈值。在文件顶部 import 处补：
+修改 `sophagent/agent/runtime.py` 的 `build_runner`，注入阈值。在文件顶部 import 处补：
 
 ```python
 from ..config import get_config, effective_compress_threshold, DEFAULT_COMPRESS_THRESHOLD
@@ -838,7 +838,7 @@ from ..config import get_config, effective_compress_threshold, DEFAULT_COMPRESS_
 - [ ] **步骤 5：Commit**
 
 ```bash
-git add sophclaw/agent/loop.py sophclaw/agent/runtime.py tests/test_loop.py
+git add sophagent/agent/loop.py sophagent/agent/runtime.py tests/test_loop.py
 git commit -m "refactor(agent): loop 改用压缩引擎，阈值可注入，尾部预算保护+迭代摘要"
 ```
 
@@ -847,8 +847,8 @@ git commit -m "refactor(agent): loop 改用压缩引擎，阈值可注入，尾�
 ## 任务 6：`/compact <focus>` 改用引擎 + 引导式压缩
 
 **文件：**
-- 修改：`sophclaw/agent/commands/builtin/compact.py`
-- 修改：`sophclaw/agent/commands/__init__.py`（更新 args_hint，约 40-41 行）
+- 修改：`sophagent/agent/commands/builtin/compact.py`
+- 修改：`sophagent/agent/commands/__init__.py`（更新 args_hint，约 40-41 行）
 - 测试：`tests/test_compact_command.py`（创建）
 
 - [ ] **步骤 1：编写失败的测试**
@@ -862,9 +862,9 @@ from typing import AsyncIterator
 
 import pytest
 
-from sophclaw.agent.commands.builtin import compact as cmd
-from sophclaw.agent.compaction import SUMMARY_PREFIX
-from sophclaw.models import AssistantTurn, Message, StreamEvent
+from sophagent.agent.commands.builtin import compact as cmd
+from sophagent.agent.compaction import SUMMARY_PREFIX
+from sophagent.models import AssistantTurn, Message, StreamEvent
 
 
 class _FakeProvider:
@@ -883,7 +883,7 @@ class _FakeProvider:
 async def test_compact_with_focus_passes_focus_into_prompt(monkeypatch, fake_compact_ctx):
     """/compact 鉴权模块 → 摘要 prompt 含 focus 关键词。"""
     provider = _FakeProvider()
-    monkeypatch.setattr("sophclaw.providers.get_provider", lambda name: provider)
+    monkeypatch.setattr("sophagent.providers.get_provider", lambda name: provider)
     ctx = fake_compact_ctx(num_messages=8)
     res = await cmd.handle("鉴权模块", ctx)
     assert res["action"] == "reload"
@@ -941,7 +941,7 @@ def fake_compact_ctx():
 
 - [ ] **步骤 3：编写最少实现代码**
 
-重写 `sophclaw/agent/commands/builtin/compact.py` 的 `handle`，改用引擎：
+重写 `sophagent/agent/commands/builtin/compact.py` 的 `handle`，改用引擎：
 
 ```python
 """Slash command: /compact [focus] — 手动触发对话压缩（可带引导主题）。"""
@@ -1017,7 +1017,7 @@ async def handle(args: str, ctx: dict[str, Any]) -> dict[str, Any]:
     }
 ```
 
-更新 `sophclaw/agent/commands/__init__.py` 的 compact 注册，补 `args_hint`：
+更新 `sophagent/agent/commands/__init__.py` 的 compact 注册，补 `args_hint`：
 
 ```python
     register(CommandDef("compact", "手动压缩对话以节省上下文", "会话",
@@ -1033,7 +1033,7 @@ async def handle(args: str, ctx: dict[str, Any]) -> dict[str, Any]:
 - [ ] **步骤 5：Commit**
 
 ```bash
-git add sophclaw/agent/commands/builtin/compact.py sophclaw/agent/commands/__init__.py tests/test_compact_command.py
+git add sophagent/agent/commands/builtin/compact.py sophagent/agent/commands/__init__.py tests/test_compact_command.py
 git commit -m "feat(commands): /compact 改用压缩引擎并支持引导式 focus 参数"
 ```
 
@@ -1117,7 +1117,7 @@ function addSummaryBubble(rawContent) {
 
 - [ ] **步骤 4：手动验证**
 
-启动本地 docker 测试环境（见记忆 `sophclaw-docker-test-setup`），开一个会话，多轮对话直到触发自动压缩（或执行 `/compact`），硬刷新页面后：
+启动本地 docker 测试环境（见记忆 `sophagent-docker-test-setup`），开一个会话，多轮对话直到触发自动压缩（或执行 `/compact`），硬刷新页面后：
 - 历史中出现「📦 上下文已压缩」可折叠块，点击可展开结构化摘要正文；
 - 折叠块**不**作为普通用户气泡显示，也不再被完全隐藏。
 
@@ -1141,7 +1141,7 @@ git commit -m "feat(webui): 压缩摘要消息渲染为可折叠卡片（识别 
 
 - [ ] **步骤 2：端到端冒烟（docker）**
 
-按记忆 `sophclaw-docker-test-setup` 启动，验证：
+按记忆 `sophagent-docker-test-setup` 启动，验证：
 - 长对话自动触发压缩，摘要带防注入前缀，后续轮次不把历史待办当活动指令执行；
 - `/compact` 与 `/compact <主题>` 均生效，前端折叠卡片正常；
 - admin 通过 `PUT /api/settings/compress_threshold` 调整阈值后，新会话按新阈值触发。
