@@ -7,8 +7,6 @@
 默认开启；设环境变量 SOPHCLAW_REDACT_SECRETS=0/false/no/off 可关闭（调试用）。
 """
 
-from __future__ import annotations
-
 import os
 import re
 
@@ -108,7 +106,7 @@ def redact_sensitive_text(text):
         text = _JSON_FIELD_RE.sub(lambda m: f'{m.group(1)}{m.group(2)}"{PLACEHOLDER}"', text)
 
     # Authorization header
-    if "uthorization" in text:
+    if "authorization" in text.casefold():
         text = _AUTH_HEADER_RE.sub(
             lambda m: m.group(1) + (m.group(2) or "") + PLACEHOLDER, text
         )

@@ -114,3 +114,31 @@ def test_disabled_returns_original(monkeypatch):
 def test_empty_and_none():
     assert R.redact_sensitive_text("") == ""
     assert R.redact_sensitive_text(None) is None
+
+
+def test_uppercase_authorization_header_redacted():
+    """全大写 AUTHORIZATION header 也必须脱敏（gate 大小写无关回归）。"""
+    out = R.redact_sensitive_text("AUTHORIZATION: Bearer leakedtoken123456789")
+    assert "leakedtoken123456789" not in out
+    assert "[REDACTED]" in out
+
+
+def test_multiple_credentials_in_one_text():
+    """单段文本含多个不同凭据时全部脱敏。"""
+    txt = ("key sk-test-DO-NOT-COMMIT-9f8a7b6c5d4e3f2a1b0c 和 "
+           "AKIA1234567890SOPHNET 还有 "
+           "postgres://admin:Pa55w0rd!2026@db.internal:5432/x")
+    out = R.redact_sensitive_text(txt)
+    assert "sk-test-DO-NOT-COMMIT-9f8a7b6c5d4e3f2a1b0c" not in out
+    assert "AKIA1234567890SOPHNET" not in out
+    assert "Pa55w0rd!2026" not in out
+    assert out.count("[REDACTED]") >= 3
+
+
+def test_redaction_is_idempotent():
+    """对已脱敏文本再跑一次结果不变（占位符不被二次匹配）。"""
+    txt = "key sk-test-DO-NOT-COMMIT-9f8a7b6c5d4e3f2a1b0c done"
+    once = R.redact_sensitive_text(txt)
+    twice = R.redact_sensitive_text(once)
+    assert once == twice
+    assert "[REDACTED]" in once
