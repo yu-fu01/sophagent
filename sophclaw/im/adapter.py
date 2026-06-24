@@ -26,11 +26,17 @@ class MessageEvent:
 
 
 class TelegramClient:
-    """httpx 直连 Bot API。供 TelegramTransport 与 run_polling 共用。"""
+    """httpx 直连 Bot API。长生命周期 client（复用 TLS 连接，减少握手抖动）；
+    trust_env=True 自动尊重 HTTPS_PROXY/HTTP_PROXY（国内访问 Telegram 可走代理）。
+    _call 对网络瞬断（ConnectError/Timeout）重试，避免单次失败杀掉整轮回复。"""
 
     def __init__(self, token: str, *, timeout: float = 35.0) -> None:
         self.token = token
         self.timeout = timeout
+        self._client = httpx.AsyncClient(timeout=timeout, trust_env=True)
+
+    async def aclose(self) -> None:
+        await self._client.aclose()
 
     async def send_message(self, chat_id: str, text: str) -> int:
         r = await self._call("sendMessage", {"chat_id": chat_id, "text": text})
@@ -52,12 +58,23 @@ class TelegramClient:
 
     async def _call(self, method: str, params: dict[str, Any], *, timeout: float | None = None) -> dict:
         url = BASE.format(token=self.token, method=method)
-        async with httpx.AsyncClient(timeout=timeout or 30) as c:
-            resp = await c.post(url, json=params)
-        data = resp.json()
-        if not data.get("ok"):
-            raise TelegramError(data.get("description", "telegram error"))
-        return data
+        delay = 1.0
+        last: Exception | None = None
+        for attempt in range(3):
+            try:
+                resp = await self._client.post(url, json=params, timeout=timeout or 30)
+                data = resp.json()
+                if not data.get("ok"):
+                    raise TelegramError(data.get("description", "telegram error"))
+                return data
+            except (httpx.ConnectError, httpx.TimeoutException, httpx.NetworkError) as e:
+                last = e
+                log.warning("telegram %s network error (attempt %d/3): %s", method, attempt + 1, e)
+                if attempt < 2:
+                    await asyncio.sleep(delay)
+                    delay *= 2
+        assert last is not None
+        raise last   # 3 次都失败；transport 会兜底，不杀 turn
 
 
 class TelegramError(Exception):
@@ -95,3 +112,4 @@ async def run_polling(client: TelegramClient, driver, *, allowed_user_ids: tuple
                     log.exception("handle_inbound failed chat=%s", chat_id)
     finally:
         log.info("telegram polling stopped")
+        await client.aclose()

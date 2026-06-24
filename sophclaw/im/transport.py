@@ -9,8 +9,11 @@ reasoning/tool/turn_usage/session.info/queued_next 忽略。
 from __future__ import annotations
 
 import asyncio
+import logging
 import time
 from typing import Any, Protocol
+
+log = logging.getLogger(__name__)
 
 
 class TelegramLikeClient(Protocol):
@@ -40,12 +43,16 @@ class TelegramTransport:
         elif t == "error":
             msg = ev.get("message", "error")
             if self.message_id is None:
-                await self.client.send_message(self.chat_id, msg)
-                # 不记 message_id：错误是终结，下一轮若来 text_delta 自然新发
-                self.message_id = None
+                try:
+                    await self.client.send_message(self.chat_id, msg)
+                except Exception:
+                    log.warning("telegram send_message(error) failed chat=%s", self.chat_id)
             else:
-                await self.client.edit_message(self.chat_id, self.message_id, msg)
-                self.message_id = None
+                try:
+                    await self.client.edit_message(self.chat_id, self.message_id, msg)
+                except Exception:
+                    log.warning("telegram edit_message(error) failed chat=%s", self.chat_id)
+            self.message_id = None
             self._text = ""
         # reasoning_delta / tool_call / tool_result / turn_usage / session_info / queued_next: 忽略
 
@@ -54,8 +61,12 @@ class TelegramTransport:
             return
         now = time.monotonic()
         if self.message_id is None:
-            self.message_id = await self.client.send_message(self.chat_id, self._text)
-            self._last_edit_at = now
+            try:
+                self.message_id = await self.client.send_message(self.chat_id, self._text)
+                self._last_edit_at = now
+            except Exception:
+                # 发送失败（网络瞬断）：保留 _text，下次事件/done 重试。绝不杀 turn。
+                log.warning("telegram send_message failed chat=%s; will retry next flush", self.chat_id)
             return
         # 限频：非正 min_edit_interval 禁用中间 edit（仅 done/close 强制落）；
         # 否则距上次 edit 不足间隔则等下次或 done。
@@ -64,8 +75,13 @@ class TelegramTransport:
             or now - self._last_edit_at < self.min_edit_interval
         ):
             return
-        await self.client.edit_message(self.chat_id, self.message_id, self._text)
-        self._last_edit_at = now
+        try:
+            await self.client.edit_message(self.chat_id, self.message_id, self._text)
+            self._last_edit_at = now
+        except Exception:
+            # edit 失败：保留 message_id + _text，下次/done 重试。绝不杀 turn。
+            log.warning("telegram edit_message failed chat=%s msg=%s; will retry next flush",
+                        self.chat_id, self.message_id)
 
     async def close(self) -> None:
-        await self._flush(force=True)  # 兜底落全文
+        await self._flush(force=True)  # 兜底落全文（_flush 自身容错）

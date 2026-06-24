@@ -54,3 +54,41 @@ async def test_chained_turn_starts_new_message():
     await t.on_event({"type": "text_delta", "text": "b"})
     await t.on_event({"type": "done", "usage": {}, "context_length": 0, "context_limit": 0})
     assert [s[1] for s in client.sends] == ["a", "b"]  # 两条独立消息
+
+
+class FailingClient:
+    """send/edit always raise — transport must not propagate."""
+    def __init__(self): self.sends, self.edits = 0, 0
+    async def send_message(self, chat_id, text):
+        self.sends += 1; raise RuntimeError("network down")
+    async def edit_message(self, chat_id, message_id, text):
+        self.edits += 1; raise RuntimeError("network down")
+
+
+@pytest.mark.asyncio
+async def test_send_failure_does_not_kill_turn():
+    c = FailingClient()
+    t = TelegramTransport("42", c, min_edit_interval=0)
+    # text_delta + done：send 都失败，但 on_event 绝不抛
+    await t.on_event({"type": "text_delta", "text": "hi"})
+    await t.on_event({"type": "text_delta", "text": "!"})
+    await t.on_event({"type": "done", "usage": {}, "context_length": 0, "context_limit": 0})
+    assert c.sends >= 1           # 重试过
+    # turn 没崩（到这里就证明）
+
+
+@pytest.mark.asyncio
+async def test_edit_failure_does_not_kill_turn():
+    # 先用正常 client 建起 message_id，再换成 failing 测 edit 容错
+    class OkThenFail:
+        def __init__(self): self.mid = 0
+        async def send_message(self, chat_id, text):
+            self.mid += 1; return self.mid
+        async def edit_message(self, chat_id, message_id, text):
+            raise RuntimeError("edit down")
+    c = OkThenFail()
+    t = TelegramTransport("42", c, min_edit_interval=0)
+    await t.on_event({"type": "text_delta", "text": "a"})   # send ok -> message_id=1
+    await t.on_event({"type": "text_delta", "text": "b"})   # edit fails -> 不抛
+    await t.on_event({"type": "done", "usage": {}, "context_length": 0, "context_limit": 0})  # edit fails -> 不抛
+    assert t.message_id is None  # done 清了
