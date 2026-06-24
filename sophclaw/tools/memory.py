@@ -5,6 +5,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 
+from ..agent.memory_guard import scan_memory
 from ..config import get_config
 from .registry import ToolContext, tool
 
@@ -109,6 +110,9 @@ async def memory(
         content = content.strip()
         if not content:
             return "Error: content required"
+        reason = scan_memory(content)
+        if reason:
+            return f"Error: rejected by safety scan ({reason})"
         rows = await db.memory_list(ctx.user_id, target=target)
         used = sum(len(r["content"]) for r in rows)
         chk = check_write(
@@ -131,6 +135,9 @@ async def memory(
         content = content.strip()
         if not content:
             return "Error: content required"
+        reason = scan_memory(content)
+        if reason:
+            return f"Error: rejected by safety scan ({reason})"
         rows = await db.memory_list(ctx.user_id, target=target)
         if not any(r["id"] == memory_id for r in rows):
             return f"Error: {target} memory [{memory_id}] not found"
