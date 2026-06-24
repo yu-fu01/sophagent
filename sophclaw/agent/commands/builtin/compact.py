@@ -9,7 +9,7 @@ from ....agent import compaction as C
 
 log = logging.getLogger(__name__)
 
-PROTECT_TAIL_TOKENS = 200  # 手动压缩保护的尾部 token 预算（手动 /compact 比自动压缩更激进）
+PROTECT_TAIL_TOKENS = 2000  # 手动 /compact 保护的尾部 token 预算（比自动压缩更激进，仅保留近期若干轮）
 
 
 async def handle(args: str, ctx: dict[str, Any]) -> dict[str, Any]:

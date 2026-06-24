@@ -39,7 +39,7 @@ def fake_compact_ctx():
 
     def make(num_messages: int):
         msgs = [Message(role="user" if i % 2 == 0 else "assistant",
-                        content=("内容" * 50) + str(i)) for i in range(num_messages)]
+                        content=("内容" * 1500) + str(i)) for i in range(num_messages)]
         db = FakeDB(msgs)
         session = {"id": "s1", "agent_id": 1,
                    "override_provider": None, "override_model": None}
