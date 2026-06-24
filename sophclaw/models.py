@@ -37,6 +37,11 @@ class Message:
     # some thinking models (e.g. DeepSeek) require reasoning_content to be
     # echoed back on subsequent calls within the same tool-use sequence
     reasoning: str | None = None
+    # set on context-compaction summary messages so frontends can render them
+    # distinctly. Underscore-prefixed in the wire dict ON PURPOSE; providers
+    # build their request dicts manually and never read it, so it stays
+    # DB/API-only and never reaches the upstream model.
+    compressed: bool = False
 
     def to_dict(self) -> dict[str, Any]:
         d: dict[str, Any] = {"role": self.role, "content": self.content}
@@ -46,6 +51,8 @@ class Message:
             d["tool_call_id"] = self.tool_call_id
         if self.reasoning:
             d["reasoning"] = self.reasoning
+        if self.compressed:
+            d["_compressed"] = True
         return d
 
     def to_json(self) -> str:
@@ -59,6 +66,7 @@ class Message:
             tool_calls=[ToolCall.from_dict(tc) for tc in d["tool_calls"]] if d.get("tool_calls") else None,
             tool_call_id=d.get("tool_call_id"),
             reasoning=d.get("reasoning"),
+            compressed=bool(d.get("_compressed", False)),
         )
 
     @classmethod

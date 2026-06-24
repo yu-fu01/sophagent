@@ -3,21 +3,42 @@
 from __future__ import annotations
 
 import asyncio
-import json
 import logging
 from typing import Any, AsyncIterator, Awaitable, Callable, Optional
 
-from ..config import get_config
+from ..config import DEFAULT_COMPRESS_THRESHOLD, get_config
 from ..models import AgentDef, Message, StreamEvent, ToolCall
 from ..providers import get_provider
 from ..tools import registry
 from ..usage import cache_hit_percent
+from .compaction import (
+    KEEP_RECENT_TOOL_MSGS,
+    TOOL_TRUNCATE_NOTE,
+    estimate_tokens,
+    find_previous_summary,
+    history_tokens,
+    is_summary_message,
+    make_summary_message,
+    split_for_summary,
+    summarize,
+    truncate_old_tool_messages,
+)
+
+# Re-export compaction primitives so existing import paths
+# (e.g. `from sophclaw.agent.loop import history_tokens`) keep working.
+__all__ = [
+    "AgentRunner",
+    "estimate_tokens",
+    "history_tokens",
+    "truncate_old_tool_messages",
+    "KEEP_RECENT_TOOL_MSGS",
+    "TOOL_TRUNCATE_NOTE",
+]
 
 log = logging.getLogger(__name__)
 
 RETRYABLE_ATTEMPTS = 3
-KEEP_RECENT_TOOL_MSGS = 8  # tool messages within this tail are never truncated
-TOOL_TRUNCATE_NOTE = "[older tool output truncated: {n} chars]"
+TAIL_BUDGET_RATIO = 0.25  # 每次 LLM 摘要保护的尾部上下文占 context_limit 的比例
 
 
 def _resolve_context_limit(provider_name: str) -> int:
@@ -30,33 +51,6 @@ def _resolve_context_limit(provider_name: str) -> int:
         return get_config().providers[provider_name].context_limit
 
 
-def estimate_tokens(text: str) -> int:
-    """Conservative heuristic for mixed CJK/latin text; avoids tiktoken."""
-    return len(text) // 3 + 1
-
-
-def history_tokens(system: str, messages: list[Message]) -> int:
-    total = estimate_tokens(system)
-    for m in messages:
-        total += estimate_tokens(m.content) + 8
-        for tc in m.tool_calls or []:
-            total += estimate_tokens(json.dumps(tc.arguments, ensure_ascii=False)) + 8
-    return total
-
-
-def truncate_old_tool_messages(messages: list[Message]) -> list[Message]:
-    """Layer 1 (no LLM): blank out tool outputs older than the recent tail."""
-    tool_indexes = [i for i, m in enumerate(messages) if m.role == "tool"]
-    old = set(tool_indexes[:-KEEP_RECENT_TOOL_MSGS]) if len(tool_indexes) > KEEP_RECENT_TOOL_MSGS else set()
-    out = []
-    for i, m in enumerate(messages):
-        if i in old and len(m.content) > 200:
-            m = Message(role="tool", content=TOOL_TRUNCATE_NOTE.format(n=len(m.content)),
-                        tool_call_id=m.tool_call_id)
-        out.append(m)
-    return out
-
-
 class AgentRunner:
     """Runs one conversation turn. Stateless between turns: history is loaded
     from the DB, mutated in memory, and persisted via the on_persist callback."""
@@ -67,6 +61,7 @@ class AgentRunner:
         ctx: registry.ToolContext,
         history: list[Message],
         on_persist: Optional[Callable[[list[Message]], Awaitable[None]]] = None,
+        compress_threshold: float = DEFAULT_COMPRESS_THRESHOLD,
     ):
         self.agent = agent
         self.ctx = ctx
@@ -77,7 +72,10 @@ class AgentRunner:
         self.context_limit = _resolve_context_limit(agent.provider)
         self.usage = {"input_tokens": 0, "output_tokens": 0,
                       "cache_read_tokens": 0, "cache_write_tokens": 0}
-        self.compressed = False  # set when history was rewritten; caller may compact the DB
+        # runner-level flag: history was rewritten this turn → caller may compact the DB.
+        # NOTE: distinct from Message.compressed (which marks a single summary message).
+        self.compressed = False
+        self.compress_threshold = compress_threshold
         self.thinking: str | None = None
 
     async def _persist(self, msg: Message) -> None:
@@ -95,7 +93,7 @@ class AgentRunner:
         return build_system_prompt(self.agent, skill_index, memories, self.ctx.workspace)
 
     async def _compress_if_needed(self, system: str) -> None:
-        budget = int(self.context_limit * 0.8)
+        budget = int(self.context_limit * self.compress_threshold)
         if history_tokens(system, self.history) <= budget:
             return
         before = [m.content for m in self.history]
@@ -108,30 +106,20 @@ class AgentRunner:
             await self._summarize_oldest_half()
 
     async def _summarize_oldest_half(self) -> None:
-        """Layer 2: replace the oldest half of the history with an LLM summary."""
-        if len(self.history) < 4:
+        """Layer 2: replace older turns with a structured LLM summary, protecting
+        a token-budgeted tail and iteratively merging any prior summary."""
+        tail_budget = int(self.context_limit * TAIL_BUDGET_RATIO)
+        old, rest = split_for_summary(self.history, tail_budget)
+        if not old:
             return
-        cut = len(self.history) // 2
-        # never split an assistant tool_call from its tool results
-        while cut < len(self.history) and self.history[cut].role == "tool":
-            cut += 1
-        old, rest = self.history[:cut], self.history[cut:]
-        transcript = "\n".join(f"[{m.role}] {m.content[:1000]}" for m in old if m.content)
-        summary_parts: list[str] = []
-        try:
-            async for ev in self.provider.chat(
-                model=self.agent.model,
-                system="Summarize this conversation excerpt into a compact brief that preserves "
-                       "goals, decisions, key facts, file names and unresolved items. Plain text.",
-                messages=[Message(role="user", content=transcript[:60_000])],
-                max_tokens=1500,
-            ):
-                if ev.type == "turn_done" and ev.turn:
-                    summary_parts.append(ev.turn.content)
-        except Exception:
-            log.exception("summary compression failed; falling back to hard drop")
-        summary = "".join(summary_parts).strip() or "(summary unavailable; older messages dropped)"
-        self.history = [Message(role="user", content=f"[Earlier conversation summary]\n{summary}")] + rest
+        prev = find_previous_summary(self.history)
+        turns = [m for m in old if not is_summary_message(m)]
+        summary = await summarize(self.provider, self.agent.model, turns, prev_summary=prev)
+        if summary:
+            self.history = [make_summary_message(summary)] + rest
+        else:
+            log.warning("summary compression failed; falling back to hard drop")
+            self.history = ([make_summary_message(prev)] if prev else []) + rest
         self.compressed = True
 
     async def _call_model(self, system: str, tool_schemas: list[dict]) -> AsyncIterator[StreamEvent]:
