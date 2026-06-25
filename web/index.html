@@ -27,10 +27,13 @@ label{display:block;margin:10px 0 4px;color:var(--dim);font-size:12px}
 #sidebar header{padding:12px;border-bottom:1px solid var(--border);display:flex;gap:8px;align-items:center}
 #sidebar header b{flex:1}
 #sessions{flex:1;overflow-y:auto}
-.sess{padding:10px 12px;border-bottom:1px solid var(--border);cursor:pointer}
+.sess{padding:10px 12px;border-bottom:1px solid var(--border);cursor:pointer;display:flex;align-items:center;gap:6px}
 .sess:hover,.sess.active{background:var(--panel2)}
+.sess-main{flex:1;min-width:0}
 .sess .t{white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
 .sess .m{font-size:11px;color:var(--dim)}
+.sess .del{flex:none;font-size:13px;padding:2px 7px;opacity:0;cursor:pointer}
+.sess:hover .del,.sess.active .del{opacity:1}
 #userbox{padding:10px 12px;border-top:1px solid var(--border);font-size:12px;color:var(--dim);display:flex;gap:8px;align-items:center}
 #userbox b{flex:1;color:var(--text)}
 /* main */
@@ -293,12 +296,28 @@ async function loadSessions() {
   for (const s of sessions) {
     const div = document.createElement("div");
     div.className = "sess" + (s.id === currentSid ? " active" : "");
-    div.innerHTML = `<div class="t"></div><div class="m"></div>`;
-    div.querySelector(".t").textContent = s.title || "(new session)";
-    div.querySelector(".m").textContent = `${s.agent_name} · ${s.updated_at.slice(0, 16)}`;
-    div.onclick = () => openSession(s.id);
+    const main = document.createElement("div");
+    main.className = "sess-main";
+    main.innerHTML = `<div class="t"></div><div class="m"></div>`;
+    main.querySelector(".t").textContent = s.title || "(new session)";
+    main.querySelector(".m").textContent = `${s.agent_name} · ${s.updated_at.slice(0, 16)}`;
+    main.onclick = () => openSession(s.id);
+    div.appendChild(main);
+    const del = btn(div, "×", "del danger", (ev) => { ev.stopPropagation(); deleteSession(s.id); });
+    del.title = "删除会话";
     box.appendChild(div);
   }
+}
+
+async function deleteSession(sid) {
+  if (!confirm("删除此会话及其所有消息？")) return;
+  await apiJson("/api/sessions/" + sid, {method: "DELETE"}).catch(alertErr);
+  if (currentSid === sid) {
+    currentSid = null;
+    $("msgs").innerHTML = '<div id="empty">Select or create a session to start.</div>';
+    $("composer").classList.add("hidden");
+  }
+  await loadSessions();
 }
 
 async function newSessionDialog() {
@@ -498,6 +517,9 @@ function closeWorklog(wl) {
 // session.interrupt / session.resume plus the streamed event flow. Disconnecting
 // mid-turn detaches server-side (turn keeps running); reconnecting + resume
 // replays the missed events of the in-flight turn.
+// 能「开启一轮可见输出」的事件——服务端发起对话（如定时任务）时据此懒建 turn。
+// 出轮外通知（memory.review / session.info / turn.settled 等）不在此列。
+const TURN_START_EVENTS = new Set(["reasoning.delta", "message.delta", "tool.call"]);
 let ws = null, wsWantOpen = false, wsBackoff = 0;
 let reqSeq = 1, pending = {};        // request id -> {resolve, reject}
 let resuming = false, resumeBuf = []; // buffer events until the resume ack lands
@@ -579,7 +601,15 @@ function freshTurn(content, opts = {}) {
 
 function handleEvent(ev) {
   const type = ev.type, p = ev.payload || {};
-  if (!turn) return;
+  if (!turn) {
+    // 服务端发起的对话（如定时任务到点触发）——本地没有 sendMsg 创建 turn。
+    // 只在「真正开启一轮可见输出」的事件上懒建 turn + 打开流式 UI（历史已在屏上，
+    // deltas 会重建气泡）；其余出轮外通知（memory.review / session.info / 收尾帧等）
+    // 不属于某一轮的开头，直接忽略，否则会把 UI 卡在「正在输出」状态。
+    if (!TURN_START_EVENTS.has(type)) return;
+    startStreamingUI();
+    turn = freshTurn(null, {shown: true});
+  }
   const t = turn;
   if (type === "reasoning.delta") {
     if (t.bubble) return;                       // answer started: lock out late reasoning

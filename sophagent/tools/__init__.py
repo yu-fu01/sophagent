@@ -7,4 +7,4 @@ from . import files, session_search, terminal, web  # noqa: F401
 
 
 def load_all() -> None:
-    from . import delegate, memory, skills  # noqa: F401
+    from . import cron, delegate, memory, skills  # noqa: F401

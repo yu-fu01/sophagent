@@ -73,7 +73,17 @@ async def lifespan(app: FastAPI):
     app.state.im_controller = IMController(im_driver, allowed_user_ids=cfg.telegram_allowed_user_ids)
     await app.state.im_controller.restart(db)
 
+    # 定时任务（cron）：daemon tick 循环，到期在来源 session 产出 output
+    from .cron import CronScheduler
+    app.state.cron_scheduler = CronScheduler(
+        db, app.state.manager, app.state.skill_store, app.state.gateway_registry,
+    )
+    if cfg.cron_enabled:
+        await app.state.cron_scheduler.start()
+
     yield
+    if cfg.cron_enabled:
+        await app.state.cron_scheduler.stop()
     await app.state.im_controller.stop()
     await db.close()
 

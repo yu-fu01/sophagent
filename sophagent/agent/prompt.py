@@ -52,6 +52,22 @@ use session_search to recall it before asking them to repeat themselves. It
 searches only this user's own past conversations."""
 
 
+CRON_GUIDE = """\
+## Scheduled tasks (cron)
+When the user wants something to happen on a schedule — "每天9点提醒我吃饭",
+"每个整点提醒我运动一下", "每周一发周报", "30分钟后叫我" — use the `cron`
+tool to create a job bound to this session. At the scheduled time the job fires
+in this session: `mode=agent` runs a full turn (you can use tools/memory);
+`mode=text` just posts the prompt verbatim without calling the model (cheap,
+good for plain reminders — prefer it when no reasoning is needed).
+
+`schedule` syntax: ① cron `0 9 * * *` (daily 9am) / `0 * * * *` (every hour) /
+`0 9 * * 1-5` (weekdays) / `*/30 * * * *` (every 30min); ② `every 30m` / `every
+2h` / `every 1d`; ③ once: `30m` (in 30 min) or `2026-06-25T14:00`. Translate
+the user's natural-language time into one of these. Confirm the schedule back
+to the user when you create the job."""
+
+
 def build_system_prompt(
     agent: AgentDef,
     skill_index: list[dict] | None = None,
@@ -74,6 +90,9 @@ def build_system_prompt(
 
     if "session_search" in agent.tools:
         parts.append(SESSION_SEARCH_GUIDE)
+
+    if "cron" in agent.tools:
+        parts.append(CRON_GUIDE)
 
     has_skill_tools = any(t in agent.tools for t in ("skills_list", "skill_view", "skill_manage"))
     if has_skill_tools:

@@ -143,6 +143,29 @@ CREATE VIRTUAL TABLE IF NOT EXISTS messages_fts USING fts5(
   role UNINDEXED,
   tokenize = 'unicode61'
 );
+-- 定时任务（cron）。next_run_at 存服务器本地 naive ISO 时间。
+CREATE TABLE IF NOT EXISTS cron_jobs (
+  id TEXT PRIMARY KEY,
+  session_id TEXT NOT NULL REFERENCES sessions(id) ON DELETE CASCADE,
+  user_id INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+  name TEXT NOT NULL,
+  prompt TEXT NOT NULL,
+  mode TEXT NOT NULL DEFAULT 'agent',          -- agent | text
+  schedule TEXT NOT NULL,                       -- JSON: {kind, ...}
+  schedule_display TEXT NOT NULL DEFAULT '',
+  repeat_times INTEGER,                         -- NULL = 无限
+  repeat_completed INTEGER NOT NULL DEFAULT 0,
+  enabled INTEGER NOT NULL DEFAULT 1,
+  state TEXT NOT NULL DEFAULT 'scheduled',      -- scheduled | paused | completed | error
+  last_run_at TEXT,
+  next_run_at TEXT,
+  last_status TEXT,                             -- ok | error
+  last_error TEXT,
+  created_at TEXT NOT NULL,
+  updated_at TEXT NOT NULL
+);
+CREATE INDEX IF NOT EXISTS idx_cron_jobs_due ON cron_jobs(enabled, next_run_at);
+CREATE INDEX IF NOT EXISTS idx_cron_jobs_session ON cron_jobs(session_id);
 """
 
 
@@ -802,3 +825,86 @@ class Database:
             "SELECT * FROM im_bindings WHERE platform=? AND chat_id=?",
             (platform, chat_id),
         )
+
+    # -- cron jobs ----------------------------------------------------------
+    # schedule 以 JSON 文本存；next_run_at / last_run_at 存本地 naive ISO。
+    # 单连接串行写，无需额外锁（与 hermes 的 flock 等价由 aiosqlite 提供）。
+
+    async def create_cron_job(self, job: dict[str, Any]) -> str:
+        ts = now()
+        await self._exec(
+            "INSERT INTO cron_jobs (id, session_id, user_id, name, prompt, mode, schedule,"
+            " schedule_display, repeat_times, repeat_completed, enabled, state,"
+            " last_run_at, next_run_at, last_status, last_error, created_at, updated_at)"
+            " VALUES (?,?,?,?,?,?,?,?,?,0,1,'scheduled',NULL,?,NULL,NULL,?,?)",
+            (
+                job["id"], job["session_id"], job["user_id"], job["name"], job["prompt"],
+                job.get("mode", "agent"), json.dumps(job["schedule"]), job.get("schedule_display", ""),
+                job.get("repeat_times"), job.get("next_run_at"), ts, ts,
+            ),
+        )
+        return job["id"]
+
+    async def get_cron_job(self, job_id: str) -> Optional[aiosqlite.Row]:
+        return await self._one("SELECT * FROM cron_jobs WHERE id=?", (job_id,))
+
+    async def list_cron_jobs(self, user_id: int) -> list[aiosqlite.Row]:
+        return await self._all(
+            "SELECT * FROM cron_jobs WHERE user_id=? ORDER BY enabled DESC, next_run_at ASC",
+            (user_id,),
+        )
+
+    async def list_cron_jobs_by_session(self, session_id: str) -> list[aiosqlite.Row]:
+        return await self._all(
+            "SELECT * FROM cron_jobs WHERE session_id=? ORDER BY enabled DESC, next_run_at ASC",
+            (session_id,),
+        )
+
+    async def list_due_cron_jobs(self, now_iso: str) -> list[aiosqlite.Row]:
+        """enabled=1 且 state!='paused'/'completed' 且 next_run_at<=now。"""
+        return await self._all(
+            "SELECT * FROM cron_jobs WHERE enabled=1 AND state IN ('scheduled','error')"
+            " AND next_run_at IS NOT NULL AND next_run_at<=? ORDER BY next_run_at ASC",
+            (now_iso,),
+        )
+
+    async def advance_cron_next_run(self, job_id: str, next_run_at: Optional[str]) -> None:
+        """at-most-once：执行前先把 next_run_at 推进，崩溃重启不会连发。"""
+        await self._exec(
+            "UPDATE cron_jobs SET next_run_at=?, updated_at=? WHERE id=?",
+            (next_run_at, now(), job_id),
+        )
+
+    async def mark_cron_run(
+        self, job_id: str, *, success: bool, error: Optional[str],
+        next_run_at: Optional[str], completed: bool, repeat_completed: Optional[int] = None,
+    ) -> None:
+        """执行后更新状态。completed=True 则 state='completed'；recurring 的
+        next_run_at 在执行前已 advance，这里只同步状态字段。"""
+        sets = ["last_run_at=?", "last_status=?", "last_error=?", "next_run_at=?", "updated_at=?"]
+        if completed:
+            sets.append("state='completed'")
+        elif not success:
+            sets.append("state='error'")
+        else:
+            sets.append("state='scheduled'")
+        params: list[Any] = [now(), "ok" if success else "error", error, next_run_at, now()]
+        if repeat_completed is not None:
+            sets.append("repeat_completed=?")
+            params.append(repeat_completed)
+        params.append(job_id)
+        await self._exec(f"UPDATE cron_jobs SET {', '.join(sets)} WHERE id=?", tuple(params))
+
+    async def set_cron_job_state(self, job_id: str, state: str, user_id: int) -> bool:
+        """owner-scoped 状态切换（pause/resume）。返回是否命中。"""
+        cur = await self._exec(
+            "UPDATE cron_jobs SET state=?, updated_at=? WHERE id=? AND user_id=?",
+            (state, now(), job_id, user_id),
+        )
+        return cur.rowcount > 0
+
+    async def delete_cron_job(self, job_id: str, user_id: int) -> bool:
+        cur = await self._exec(
+            "DELETE FROM cron_jobs WHERE id=? AND user_id=?", (job_id, user_id)
+        )
+        return cur.rowcount > 0
