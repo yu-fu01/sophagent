@@ -387,7 +387,22 @@ async def test_parallel_pseudo_tool_end_to_end(ctx, fake_provider, monkeypatch):
 
 - [ ] **步骤 3：编写实现代码**
 
-把 `sophagent/agent/loop.py` `run()` 中的工具分发段（当前）：
+> **关键（审查发现）：** 必须在构造 assistant 消息**之前**就地展开 `turn.tool_calls`，否则 history 里 assistant 消息仍带原始 `multi_tool_use.parallel`（id=`p`）这个 tool_call，而 tool 回复却是 `p.0`/`p.1`，id 对不上 → 下一轮调用 API 报"tool_call 无对应回复"。在 `as_message()` 前展开后，assistant 消息与 tool 回复的 id 自然一致；展开为空时回退父调用，dispatch 以相同 id 报错，同样一致。
+
+把 `sophagent/agent/loop.py` `run()` 中、`assistant_msg = turn.as_message()` 这一行**之前**插入展开（即展开后再构造 assistant 消息）：
+
+```python
+            turn.tool_calls = expand_parallel_calls(turn.tool_calls)
+            assistant_msg = turn.as_message()
+            self.history.append(assistant_msg)
+            await self._persist(assistant_msg)
+
+            if not turn.tool_calls:
+                yield self._done_payload(system)
+                return
+```
+
+并把其后的串行工具分发段（当前）：
 
 ```python
             for tc in turn.tool_calls:
@@ -400,19 +415,18 @@ async def test_parallel_pseudo_tool_end_to_end(ctx, fake_provider, monkeypatch):
                        "preview": result[:500] + ("..." if len(result) > 500 else "")}
 ```
 
-替换为：
+替换为并行版本（注意此处 `turn.tool_calls` 已是展开后的列表）：
 
 ```python
-            calls = expand_parallel_calls(turn.tool_calls)
             # 先按原序广播调用事件，让 UI 立刻看到全部调用
-            for tc in calls:
+            for tc in turn.tool_calls:
                 yield {"type": "tool_call", "id": tc.id, "name": tc.name, "arguments": tc.arguments}
             # 并发执行（dispatch 自身吞异常返回文本，gather 不会抛）
             results = await asyncio.gather(
-                *(registry.dispatch(tc.name, tc.arguments, self.ctx) for tc in calls)
+                *(registry.dispatch(tc.name, tc.arguments, self.ctx) for tc in turn.tool_calls)
             )
             # 严格按原序回写 history 并广播结果，保证可复现且每个 tool_call_id 都有回复
-            for tc, result in zip(calls, results):
+            for tc, result in zip(turn.tool_calls, results):
                 tool_msg = Message(role="tool", content=result, tool_call_id=tc.id)
                 self.history.append(tool_msg)
                 await self._persist(tool_msg)
