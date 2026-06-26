@@ -28,6 +28,7 @@ from .compaction import (
 # (e.g. `from sophagent.agent.loop import history_tokens`) keep working.
 __all__ = [
     "AgentRunner",
+    "expand_parallel_calls",
     "estimate_tokens",
     "history_tokens",
     "truncate_old_tool_messages",
@@ -36,6 +37,39 @@ __all__ = [
 ]
 
 log = logging.getLogger(__name__)
+
+PARALLEL_TOOL = "multi_tool_use.parallel"
+
+
+def expand_parallel_calls(tool_calls: list[ToolCall]) -> list[ToolCall]:
+    """Flatten any multi_tool_use.parallel pseudo-call into real ToolCalls.
+
+    GPT-family models sometimes bundle parallel tool calls into a single call
+    named ``multi_tool_use.parallel`` whose arguments carry a ``tool_uses`` list.
+    Each item names a tool (``recipient_name`` or ``name``) and its parameters
+    (``parameters`` or ``arguments``). We expand those into individual ToolCalls
+    so the normal dispatch path runs them. Malformed wrappers are left as-is so
+    dispatch returns an error the model can self-correct.
+    """
+    out: list[ToolCall] = []
+    for tc in tool_calls:
+        if tc.name != PARALLEL_TOOL:
+            out.append(tc)
+            continue
+        uses = tc.arguments.get("tool_uses")
+        if not isinstance(uses, list):
+            out.append(tc)  # malformed → dispatch reports unknown tool
+            continue
+        for i, use in enumerate(uses):
+            if not isinstance(use, dict):
+                continue
+            name = (use.get("recipient_name") or use.get("name") or "").split(".")[-1]
+            args = use.get("parameters")
+            if args is None:
+                args = use.get("arguments")
+            out.append(ToolCall(id=f"{tc.id}.{i}", name=name, arguments=args or {}))
+    return out
+
 
 RETRYABLE_ATTEMPTS = 3
 TAIL_BUDGET_RATIO = 0.25  # 每次 LLM 摘要保护的尾部上下文占 context_limit 的比例

@@ -214,3 +214,39 @@ def test_fast_lookup_guide_injected_with_terminal(ctx):
 
     ctx.agent.tools = ["read_file"]
     assert "Fast lookups" not in build_system_prompt(ctx.agent)
+
+
+def test_expand_parallel_passthrough():
+    """普通工具调用原样返回。"""
+    from sophagent.agent.loop import expand_parallel_calls
+
+    calls = [ToolCall(id="a", name="web_search", arguments={"query": "x"})]
+    assert expand_parallel_calls(calls) == calls
+
+
+def test_expand_parallel_unwraps_both_key_forms():
+    """multi_tool_use.parallel 展开为真实调用，兼容 recipient_name/name 两种键，
+    剥离命名空间前缀，生成稳定派生 id。"""
+    from sophagent.agent.loop import expand_parallel_calls
+
+    parent = ToolCall(
+        id="p",
+        name="multi_tool_use.parallel",
+        arguments={"tool_uses": [
+            {"recipient_name": "functions.web_search", "parameters": {"query": "a"}},
+            {"name": "web_fetch", "arguments": {"url": "u"}},
+        ]},
+    )
+    out = expand_parallel_calls([parent])
+    assert [c.name for c in out] == ["web_search", "web_fetch"]
+    assert [c.id for c in out] == ["p.0", "p.1"]
+    assert out[0].arguments == {"query": "a"}
+    assert out[1].arguments == {"url": "u"}
+
+
+def test_expand_parallel_malformed_passthrough():
+    """tool_uses 缺失/非数组时保留原调用，交给 dispatch 报未知工具。"""
+    from sophagent.agent.loop import expand_parallel_calls
+
+    bad = ToolCall(id="p", name="multi_tool_use.parallel", arguments={})
+    assert expand_parallel_calls([bad]) == [bad]
