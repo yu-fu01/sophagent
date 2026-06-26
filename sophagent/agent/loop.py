@@ -232,6 +232,7 @@ class AgentRunner:
                    "cache_read_tokens": turn.cache_read_tokens,
                    "cache_write_tokens": turn.cache_write_tokens,
                    "cache_hit": cache_hit_percent(turn.cache_read_tokens, turn_total)}
+            turn.tool_calls = expand_parallel_calls(turn.tool_calls)
             assistant_msg = turn.as_message()
             self.history.append(assistant_msg)
             await self._persist(assistant_msg)
@@ -240,9 +241,17 @@ class AgentRunner:
                 yield self._done_payload(system)
                 return
 
+            # 先按原序广播全部调用事件，让 UI 立刻看到
             for tc in turn.tool_calls:
                 yield {"type": "tool_call", "id": tc.id, "name": tc.name, "arguments": tc.arguments}
-                result = await registry.dispatch(tc.name, tc.arguments, self.ctx)
+            # 并发执行（dispatch 自身吞异常返回文本，gather 不会抛）。并行主要利好只读类
+            # 工具；写类工具（files/memory/skills）若同 turn 并发改同一资源需自行负责冲突，
+            # 本期不强制串行（见设计文档"并发边界"）。结果回写严格有序，history 不会错乱。
+            results = await asyncio.gather(
+                *(registry.dispatch(tc.name, tc.arguments, self.ctx) for tc in turn.tool_calls)
+            )
+            # 严格按原序回写 history 并广播结果，保证可复现且每个 tool_call_id 都有回复
+            for tc, result in zip(turn.tool_calls, results):
                 tool_msg = Message(role="tool", content=result, tool_call_id=tc.id)
                 self.history.append(tool_msg)
                 await self._persist(tool_msg)
