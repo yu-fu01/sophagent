@@ -14,6 +14,9 @@ from sophagent.cron import jobs as cron_jobs
 from sophagent.cron.scheduler import CronScheduler
 from sophagent.db import Database
 from sophagent.gateway.session_state import SessionRegistry
+from sophagent.models import Message
+from sophagent.tools.cron import cron as cron_tool
+from sophagent.tools.registry import ToolContext
 
 
 # ── 纯逻辑：parse / compute / describe ────────────────────────────────────
@@ -142,6 +145,96 @@ async def test_once_job_completes_after_fire(tmp_path):
     j = cron_jobs.row_to_job(await db.get_cron_job("once1"))
     assert j["state"] == "completed"
     assert j["next_run_at"] is None
+    await db.close()
+
+
+# ── REQ1/REQ2: 独立 session + cron 组 ───────────────────────────────────────
+
+def _ctx(db, sid, uid):
+    return ToolContext(user_id=uid, workspace=db.path.parent, agent=None, db=db, session_id=sid)
+
+
+async def test_get_or_create_cron_group_idempotent(tmp_path):
+    db, sid, uid = await _make_db(tmp_path)
+    g1 = await db.get_or_create_cron_group(uid)
+    g2 = await db.get_or_create_cron_group(uid)
+    assert g1 == g2  # 幂等
+    row = await db.get_group(g1)
+    assert row["is_cron_group"] == 1
+    assert row["owner_id"] == uid
+    await db.close()
+
+
+async def test_cron_create_makes_dedicated_session_in_cron_group(tmp_path):
+    db, sid, uid = await _make_db(tmp_path)
+    out = await cron_tool(_ctx(db, sid, uid), "create", name="提醒",
+                          prompt="该吃饭", schedule="every 30m", mode="text")
+    assert "已创建" in out
+    # 任务不再绑在发起的聊天 session 上
+    assert len(await db.list_cron_jobs_by_session(sid)) == 0
+    jobs = await db.list_cron_jobs(uid)
+    assert len(jobs) == 1
+    job_sid = jobs[0]["session_id"]
+    assert job_sid != sid                       # REQ1：新 session
+    sess = await db.get_session(job_sid)
+    cron_gid = await db.get_or_create_cron_group(uid)
+    assert sess["group_id"] == cron_gid         # REQ2：归 cron 组
+    assert sess["title"] == "提醒"               # 标题=任务名
+    await db.close()
+
+
+async def test_each_cron_job_gets_its_own_session(tmp_path):
+    db, sid, uid = await _make_db(tmp_path)
+    await cron_tool(_ctx(db, sid, uid), "create", name="A", prompt="a", schedule="every 30m", mode="text")
+    await cron_tool(_ctx(db, sid, uid), "create", name="B", prompt="b", schedule="every 1h", mode="text")
+    jobs = await db.list_cron_jobs(uid)
+    sids = {j["session_id"] for j in jobs}
+    assert len(jobs) == 2 and len(sids) == 2    # REQ2：每任务一个独立 session
+    await db.close()
+
+
+async def test_cron_list_aggregates_by_user_across_sessions(tmp_path):
+    db, sid, uid = await _make_db(tmp_path)
+    await cron_tool(_ctx(db, sid, uid), "create", name="A", prompt="a", schedule="every 30m", mode="text")
+    await cron_tool(_ctx(db, sid, uid), "create", name="B", prompt="b", schedule="every 1h", mode="text")
+    # 从任意一个聊天 session 执行 list，应列出该用户全部任务（跨 session）
+    out = await cron_tool(_ctx(db, sid, uid), "list")
+    assert "A" in out and "B" in out
+    await db.close()
+
+
+async def test_cron_delete_removes_job_and_its_session(tmp_path):
+    db, sid, uid = await _make_db(tmp_path)
+    await cron_tool(_ctx(db, sid, uid), "create", name="A", prompt="a", schedule="every 30m", mode="text")
+    job = (await db.list_cron_jobs(uid))[0]
+    jid, job_sid = job["id"], job["session_id"]
+    out = await cron_tool(_ctx(db, sid, uid), "delete", job_id=jid)
+    assert "已删除" in out
+    assert await db.get_cron_job(jid) is None        # 任务没了
+    assert await db.get_session(job_sid) is None      # 其专属 session 也没了
+    await db.close()
+
+
+async def test_list_sessions_marks_cron_sessions(tmp_path):
+    db, sid, uid = await _make_db(tmp_path)
+    await cron_tool(_ctx(db, sid, uid), "create", name="A", prompt="a", schedule="every 30m", mode="text")
+    rows = {r["id"]: r for r in await db.list_sessions(uid)}
+    assert rows[sid]["is_cron"] == 0                  # 普通聊天 session
+    job_sid = (await db.list_cron_jobs(uid))[0]["session_id"]
+    assert rows[job_sid]["is_cron"] == 1              # cron session
+    await db.close()
+
+
+# ── REQ3: 消息时间戳 ─────────────────────────────────────────────────────────
+
+async def test_load_messages_with_ids_returns_created_at(tmp_path):
+    db, sid, uid = await _make_db(tmp_path)
+    await db.append_messages(sid, [Message(role="user", content="hi")])
+    rows = await db.load_messages_with_ids(sid)
+    assert len(rows) == 1
+    mid, msg, created_at = rows[0]                     # 三元组
+    assert msg.content == "hi"
+    assert isinstance(created_at, str) and created_at  # 非空 ISO 时间
     await db.close()
 
 

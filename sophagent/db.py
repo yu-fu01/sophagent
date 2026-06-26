@@ -68,6 +68,7 @@ CREATE TABLE IF NOT EXISTS groups (
   name TEXT NOT NULL,
   owner_id INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
   is_admin_group INTEGER NOT NULL DEFAULT 0,
+  is_cron_group INTEGER NOT NULL DEFAULT 0,
   created_at TEXT NOT NULL
 );
 CREATE TABLE IF NOT EXISTS group_members (
@@ -240,6 +241,9 @@ class Database:
         for col in ("override_provider", "override_model", "thinking_mode"):
             if session_cols and col not in session_cols:
                 await self._exec(f"ALTER TABLE sessions ADD COLUMN {col} TEXT")
+        group_cols = await self._columns("groups")
+        if group_cols and "is_cron_group" not in group_cols:
+            await self._exec("ALTER TABLE groups ADD COLUMN is_cron_group INTEGER NOT NULL DEFAULT 0")
         memory_cols = await self._columns("memory")
         if memory_cols and "target" not in memory_cols:
             # dual-store: legacy single-store rows become agent-notes ('memory')
@@ -366,7 +370,9 @@ class Database:
 
     async def list_sessions(self, user_id: int) -> list[aiosqlite.Row]:
         return await self._all(
-            "SELECT s.*, a.name AS agent_name FROM sessions s JOIN agents a ON a.id=s.agent_id"
+            "SELECT s.*, a.name AS agent_name, COALESCE(g.is_cron_group, 0) AS is_cron"
+            " FROM sessions s JOIN agents a ON a.id=s.agent_id"
+            " LEFT JOIN groups g ON g.id=s.group_id"
             " WHERE s.user_id=? ORDER BY s.updated_at DESC",
             (user_id,),
         )
@@ -431,13 +437,14 @@ class Database:
         )
         return [Message.from_json(r["content"]) for r in rows]
 
-    async def load_messages_with_ids(self, session_id: str) -> list[tuple[int, Message]]:
-        """Same as load_messages but also returns each row's id (for restore/re-edit)."""
+    async def load_messages_with_ids(self, session_id: str) -> list[tuple[int, Message, str]]:
+        """Same as load_messages but also returns each row's id and created_at
+        (id for restore/re-edit；created_at 给前端渲染气泡时间戳)。"""
         rows = await self._all(
-            "SELECT id, content FROM messages WHERE session_id=? AND archived=0 ORDER BY id",
+            "SELECT id, content, created_at FROM messages WHERE session_id=? AND archived=0 ORDER BY id",
             (session_id,),
         )
-        return [(r["id"], Message.from_json(r["content"])) for r in rows]
+        return [(r["id"], Message.from_json(r["content"]), r["created_at"]) for r in rows]
 
     async def truncate_from(self, session_id: str, message_id: int) -> int:
         """Delete the live (archived=0) message with id>=message_id and everything after it.
@@ -642,10 +649,12 @@ class Database:
 
     # -- groups --------------------------------------------------------------
 
-    async def create_group(self, name: str, owner_id: int, is_admin_group: bool = False) -> int:
+    async def create_group(self, name: str, owner_id: int, is_admin_group: bool = False,
+                           is_cron_group: bool = False) -> int:
         cur = await self._exec(
-            "INSERT INTO groups (name, owner_id, is_admin_group, created_at) VALUES (?,?,?,?)",
-            (name, owner_id, 1 if is_admin_group else 0, now()),
+            "INSERT INTO groups (name, owner_id, is_admin_group, is_cron_group, created_at)"
+            " VALUES (?,?,?,?,?)",
+            (name, owner_id, 1 if is_admin_group else 0, 1 if is_cron_group else 0, now()),
         )
         gid = cur.lastrowid
         await self._exec(
@@ -656,6 +665,15 @@ class Database:
 
     async def create_personal_group(self, user_id: int, username: str) -> int:
         return await self.create_group(f"{username} 的组", user_id)
+
+    async def get_or_create_cron_group(self, user_id: int) -> int:
+        """该用户专属的「定时任务」组 id；不存在则建。幂等。"""
+        row = await self._one(
+            "SELECT id FROM groups WHERE owner_id=? AND is_cron_group=1 LIMIT 1", (user_id,)
+        )
+        if row is not None:
+            return row["id"]
+        return await self.create_group("定时任务", user_id, is_cron_group=True)
 
     async def get_group(self, gid: int) -> Optional[aiosqlite.Row]:
         return await self._one("SELECT * FROM groups WHERE id=?", (gid,))

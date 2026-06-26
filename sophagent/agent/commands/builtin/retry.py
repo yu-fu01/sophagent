@@ -21,7 +21,7 @@ async def handle(args: str, ctx: dict) -> dict:
 
     # Find the last user message and retry the response that follows it.
     last_user_idx = None
-    for i, (_mid, m) in reversed(list(enumerate(messages))):
+    for i, (_mid, m, _) in reversed(list(enumerate(messages))):
         if m.role == "user":
             last_user_idx = i
             break

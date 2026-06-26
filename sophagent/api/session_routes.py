@@ -49,7 +49,9 @@ async def get_session(session_id: str, request: Request, user=Depends(require_us
     if session is None:
         raise HTTPException(404, "session not found")
     messages = await db.load_messages_with_ids(session_id)
-    return {**dict(session), "messages": [{"id": mid, **m.to_dict()} for mid, m in messages]}
+    return {**dict(session),
+            "messages": [{"id": mid, "created_at": created_at, **m.to_dict()}
+                         for mid, m, created_at in messages]}
 
 
 @router.patch("/{session_id}")
