@@ -66,6 +66,9 @@ async def cron(
             return "Error: create 需要 name / prompt / schedule"
         if mode not in ("agent", "text"):
             return "Error: mode 必须是 agent 或 text"
+        # repeat<=0 表示"无限重复"（LLM 常用 -1/0 表达），规范化为 None
+        if repeat is not None and repeat <= 0:
+            repeat = None
         try:
             sched = cron_jobs.parse_schedule(schedule)
         except ValueError as e:

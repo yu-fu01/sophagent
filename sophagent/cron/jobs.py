@@ -99,6 +99,20 @@ def compute_next_run(schedule: dict[str, Any], after: datetime) -> Optional[date
     raise ValueError(f"未知 schedule kind: {kind!r}")
 
 
+def next_interval_run(minutes: int, scheduled: datetime, now: datetime) -> datetime:
+    """interval 任务的下次运行：锚定到**计划时刻** scheduled 向前推进 minutes，
+    跳过已错过的周期直到严格晚于 now。
+
+    关键：锚定计划点而非"实际触发时刻"。触发只发生在 tick 上（总比计划晚一点），
+    若每次都用实际触发时刻 +interval，这点延迟会逐周期累积，导致下次运行点漂移、
+    稳定错过目标 tick（表现为"每 2 分钟"实际 ~3 分钟）。锚定计划点即无漂移。
+    """
+    nxt = scheduled + timedelta(minutes=minutes)
+    while nxt <= now:
+        nxt += timedelta(minutes=minutes)
+    return nxt
+
+
 def describe_schedule(schedule: dict[str, Any]) -> str:
     """人话描述，给前端/agent 回显用。"""
     kind = schedule.get("kind")

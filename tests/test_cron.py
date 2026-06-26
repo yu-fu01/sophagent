@@ -238,6 +238,130 @@ async def test_load_messages_with_ids_returns_created_at(tmp_path):
     await db.close()
 
 
+# ── interval 锚定到计划时刻，避免漂移（修复"2分钟变3分钟"）──────────────────
+
+def test_next_interval_run_anchors_to_schedule():
+    # 锚定到 scheduled，而非 now（now 比 scheduled 晚 30s 也不影响结果）
+    scheduled = datetime(2026, 6, 26, 10, 0, 0)
+    now = datetime(2026, 6, 26, 10, 0, 30)
+    assert cron_jobs.next_interval_run(2, scheduled, now) == datetime(2026, 6, 26, 10, 2, 0)
+
+
+def test_next_interval_run_catches_up_past_now():
+    # 落后多个周期时，补齐到严格晚于 now 的下一个计划点
+    scheduled = datetime(2026, 6, 26, 10, 0, 0)
+    now = datetime(2026, 6, 26, 10, 5, 10)
+    assert cron_jobs.next_interval_run(2, scheduled, now) == datetime(2026, 6, 26, 10, 6, 0)
+
+
+async def test_scheduler_interval_next_run_anchored_not_drifting(tmp_path):
+    """触发后 next_run 应等于 计划时刻+interval（锚定），而非 实际触发时刻+interval。"""
+    db, sid, uid = await _make_db(tmp_path)
+    scheduled = datetime.now().replace(microsecond=0) - timedelta(seconds=30)  # 30s 前到期
+    await db.create_cron_job({
+        "id": "drift1", "session_id": sid, "user_id": uid, "name": "喝水",
+        "prompt": "喝水", "mode": "text", "schedule": {"kind": "interval", "minutes": 2},
+        "schedule_display": "每 2 分钟", "repeat_times": None,
+        "next_run_at": scheduled.isoformat(timespec="seconds"),
+    })
+    sch = CronScheduler(db, SessionManager(32), None,
+                        SessionRegistry(grace_seconds=60.0), data_dir=tmp_path)
+    await sch.tick()
+    j = cron_jobs.row_to_job(await db.get_cron_job("drift1"))
+    expected = (scheduled + timedelta(minutes=2)).isoformat(timespec="seconds")
+    assert j["next_run_at"] == expected   # 不含"实际触发比计划晚的那 30s"
+    await db.close()
+
+
+# ── repeat<=0 视为无限（修复"循环任务只触发一次"）─────────────────────────
+
+async def test_recurring_nonpositive_repeat_keeps_firing(tmp_path):
+    """repeat_times=-1（LLM 表达'无限'）不应在首次触发后置 completed。"""
+    db, sid, uid = await _make_db(tmp_path)
+    past = (datetime.now() - timedelta(minutes=5)).isoformat(timespec="seconds")
+    await db.create_cron_job({
+        "id": "neg1", "session_id": sid, "user_id": uid, "name": "喝水",
+        "prompt": "喝水", "mode": "text", "schedule": {"kind": "interval", "minutes": 30},
+        "schedule_display": "每 30 分钟", "repeat_times": -1, "next_run_at": past,
+    })
+    sch = CronScheduler(db, SessionManager(32), None,
+                        SessionRegistry(grace_seconds=60.0), data_dir=tmp_path)
+    await sch.tick()
+    j = cron_jobs.row_to_job(await db.get_cron_job("neg1"))
+    assert j["state"] == "scheduled"      # 不该 completed
+    assert j["next_run_at"] != past        # 已推进，会再触发
+    await db.close()
+
+
+async def test_cron_create_normalizes_nonpositive_repeat(tmp_path):
+    """工具层把 repeat<=0 规范化为无限（None）。"""
+    db, sid, uid = await _make_db(tmp_path)
+    await cron_tool(_ctx(db, sid, uid), "create", name="x", prompt="p",
+                    schedule="every 30m", mode="text", repeat=-1)
+    job = (await db.list_cron_jobs(uid))[0]
+    assert job["repeat_times"] is None
+    await db.close()
+
+
+async def test_agent_overrun_skips_while_busy_then_fires_when_free(tmp_path, monkeypatch):
+    """执行时长 > 间隔：上一轮还在跑时到期的拍被跳过（不并发、不推进、不 mark），
+    会话空闲后才补触发一次，且 next_run 跳到未来（错过的时段合并、不积压）。"""
+    db, sid, uid = await _make_db(tmp_path)
+
+    started = 0  # cron 实际派发 run_turns 的次数
+
+    async def fake_run_turns(*, session_id, user_input, db, manager, skill_store, user_id):
+        nonlocal started
+        started += 1
+        yield {"type": "done"}
+
+    monkeypatch.setattr("sophagent.cron.scheduler.run_turns", fake_run_turns)
+
+    sch = CronScheduler(db, SessionManager(32), None,
+                        SessionRegistry(grace_seconds=60.0), data_dir=tmp_path)
+
+    # 模拟该会话正在跑一个"长 turn"（卡在 gate 上，迟迟不结束）
+    gate = asyncio.Event()
+
+    async def long_turn():
+        await gate.wait()
+        yield {"type": "done"}
+
+    state = sch.registry.get_or_create(sid, uid)
+    busy_task = state.start_turn(lambda: long_turn())
+    sch.manager.register_task(sid, busy_task)
+    await asyncio.sleep(0.02)
+    assert sch.manager.is_busy(sid) is True
+
+    # 一个已到期的 agent 定时任务（绑这个忙碌会话）
+    past = (datetime.now() - timedelta(minutes=1)).isoformat(timespec="seconds")
+    await db.create_cron_job({
+        "id": "ov1", "session_id": sid, "user_id": uid, "name": "长任务",
+        "prompt": "喝水", "mode": "agent", "schedule": {"kind": "interval", "minutes": 1},
+        "schedule_display": "每 1 分钟", "repeat_times": None, "next_run_at": past,
+    })
+
+    # tick：会话忙 → 跳过（不并发、不 fire、不推进 next_run、不 mark）
+    n = await sch.tick()
+    await asyncio.sleep(0.02)
+    assert n == 0 and started == 0
+    j = cron_jobs.row_to_job(await db.get_cron_job("ov1"))
+    assert j["next_run_at"] == past and j["last_run_at"] is None
+
+    # 长 turn 结束 → 会话空闲
+    gate.set()
+    await asyncio.sleep(0.05)
+    assert sch.manager.is_busy(sid) is False
+
+    # 再 tick：空闲 → 补触发一次；next_run 跳到未来（合并掉错过的时段）
+    await sch.tick()
+    await asyncio.sleep(0.05)
+    assert started == 1
+    nxt = cron_jobs.row_to_job(await db.get_cron_job("ov1"))["next_run_at"]
+    assert datetime.fromisoformat(nxt) > datetime.now() - timedelta(seconds=2)
+    await db.close()
+
+
 async def test_agent_mode_fire_runs_turn_and_marks(tmp_path, monkeypatch):
     db, sid, uid = await _make_db(tmp_path)
 

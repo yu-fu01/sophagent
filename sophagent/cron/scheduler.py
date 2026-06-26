@@ -28,7 +28,7 @@ from typing import Any
 from ..agent.turn import run_turns
 from ..config import get_config
 from ..models import Message
-from .jobs import compute_next_run, fmt_local, row_to_job
+from .jobs import compute_next_run, fmt_local, next_interval_run, row_to_job
 
 log = logging.getLogger(__name__)
 
@@ -125,7 +125,13 @@ class CronScheduler:
             next_run = None
         else:
             try:
-                next_run = compute_next_run(schedule, now)
+                if kind == "interval":
+                    # 锚定到计划时刻（job 当前 next_run_at），无漂移；缺失则退回 now
+                    anchor = (datetime.fromisoformat(job["next_run_at"])
+                              if job.get("next_run_at") else now)
+                    next_run = next_interval_run(schedule["minutes"], anchor, now)
+                else:
+                    next_run = compute_next_run(schedule, now)
             except Exception as e:
                 await self._mark(job, success=False, error=f"调度计算失败: {e}", now=now)
                 return True
@@ -137,7 +143,10 @@ class CronScheduler:
             await self.db.advance_cron_next_run(job_id, next_run_iso)
             repeat_new = (job.get("repeat_completed") or 0) + 1
             repeat_times = job.get("repeat_times")
-            completed_after = kind == "once" or (repeat_times is not None and repeat_new >= repeat_times)
+            # repeat_times>0 才是有限次数；None/<=0 视为无限（避免循环任务只触发一次）
+            completed_after = kind == "once" or (
+                repeat_times is not None and repeat_times > 0 and repeat_new >= repeat_times
+            )
             await self._mark(job, success=True, error=None, now=now,
                              next_run_iso=next_run_iso, completed=completed_after,
                              repeat_completed=repeat_new)
@@ -167,7 +176,10 @@ class CronScheduler:
 
         repeat_new = (job.get("repeat_completed") or 0) + 1
         repeat_times = job.get("repeat_times")
-        completed_after = kind == "once" or (repeat_times is not None and repeat_new >= repeat_times)
+        # repeat_times>0 才是有限次数；None/<=0 视为无限（避免循环任务只触发一次）
+        completed_after = kind == "once" or (
+            repeat_times is not None and repeat_times > 0 and repeat_new >= repeat_times
+        )
 
         def _on_done(t: asyncio.Task) -> None:
             success = not t.cancelled() and t.exception() is None
