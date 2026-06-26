@@ -48,8 +48,12 @@ def expand_parallel_calls(tool_calls: list[ToolCall]) -> list[ToolCall]:
     named ``multi_tool_use.parallel`` whose arguments carry a ``tool_uses`` list.
     Each item names a tool (``recipient_name`` or ``name``) and its parameters
     (``parameters`` or ``arguments``). We expand those into individual ToolCalls
-    so the normal dispatch path runs them. Malformed wrappers are left as-is so
-    dispatch returns an error the model can self-correct.
+    so the normal dispatch path runs them.
+
+    Malformed wrappers (missing/invalid ``tool_uses``, or no usable sub-call)
+    are left as the original pseudo-call so dispatch returns an error under the
+    *same* tool_call id the assistant message already carries — keeping history
+    consistent (every tool_call has a matching tool reply).
     """
     out: list[ToolCall] = []
     for tc in tool_calls:
@@ -58,16 +62,22 @@ def expand_parallel_calls(tool_calls: list[ToolCall]) -> list[ToolCall]:
             continue
         uses = tc.arguments.get("tool_uses")
         if not isinstance(uses, list):
-            out.append(tc)  # malformed → dispatch reports unknown tool
+            out.append(tc)  # malformed → dispatch reports the pseudo-tool error
             continue
-        for i, use in enumerate(uses):
+        expanded: list[ToolCall] = []
+        for use in uses:
             if not isinstance(use, dict):
                 continue
-            name = (use.get("recipient_name") or use.get("name") or "").split(".")[-1]
+            name = (use.get("recipient_name") or use.get("name") or "").removeprefix("functions.")
+            if not name:
+                continue
             args = use.get("parameters")
             if args is None:
                 args = use.get("arguments")
-            out.append(ToolCall(id=f"{tc.id}.{i}", name=name, arguments=args or {}))
+            if not isinstance(args, dict):
+                args = {}
+            expanded.append(ToolCall(id=f"{tc.id}.{len(expanded)}", name=name, arguments=args))
+        out.extend(expanded if expanded else [tc])
     return out
 
 

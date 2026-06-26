@@ -250,3 +250,29 @@ def test_expand_parallel_malformed_passthrough():
 
     bad = ToolCall(id="p", name="multi_tool_use.parallel", arguments={})
     assert expand_parallel_calls([bad]) == [bad]
+
+
+def test_expand_parallel_empty_tool_uses_keeps_parent():
+    """tool_uses 为空列表 → 没有有效子调用 → 保留原父调用，保证 id 一致。"""
+    from sophagent.agent.loop import expand_parallel_calls
+
+    parent = ToolCall(id="p", name="multi_tool_use.parallel", arguments={"tool_uses": []})
+    assert expand_parallel_calls([parent]) == [parent]
+
+
+def test_expand_parallel_skips_nameless_use():
+    """缺工具名的子项被跳过；只展开有效的那个，id 连续。"""
+    from sophagent.agent.loop import expand_parallel_calls
+
+    parent = ToolCall(
+        id="p",
+        name="multi_tool_use.parallel",
+        arguments={"tool_uses": [
+            {"parameters": {"x": 1}},  # 无 recipient_name/name → 跳过
+            {"recipient_name": "web_search", "parameters": {"query": "a"}},
+        ]},
+    )
+    out = expand_parallel_calls([parent])
+    assert [c.name for c in out] == ["web_search"]
+    assert out[0].id == "p.0"  # 连续编号，不受被跳过项影响
+    assert out[0].arguments == {"query": "a"}
