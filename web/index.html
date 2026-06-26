@@ -27,10 +27,13 @@ label{display:block;margin:10px 0 4px;color:var(--dim);font-size:12px}
 #sidebar header{padding:12px;border-bottom:1px solid var(--border);display:flex;gap:8px;align-items:center}
 #sidebar header b{flex:1}
 #sessions{flex:1;overflow-y:auto}
-.sess{padding:10px 12px;border-bottom:1px solid var(--border);cursor:pointer}
+.sess{padding:10px 12px;border-bottom:1px solid var(--border);cursor:pointer;display:flex;align-items:center;gap:6px}
 .sess:hover,.sess.active{background:var(--panel2)}
+.sess-main{flex:1;min-width:0}
 .sess .t{white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
 .sess .m{font-size:11px;color:var(--dim)}
+.sess .del{flex:none;font-size:13px;padding:2px 7px;opacity:0;cursor:pointer}
+.sess:hover .del,.sess.active .del{opacity:1}
 #userbox{padding:10px 12px;border-top:1px solid var(--border);font-size:12px;color:var(--dim);display:flex;gap:8px;align-items:center}
 #userbox b{flex:1;color:var(--text)}
 /* main */
@@ -51,6 +54,13 @@ label{display:block;margin:10px 0 4px;color:var(--dim);font-size:12px}
 .msg-user-actions button{font-size:12px;padding:2px 8px}
 /* 流式期间隐藏历史操作按钮 */
 body.streaming .msg-user-actions{display:none!important}
+/* 气泡下方时间戳（MM-DD HH:MM） */
+.msg-ts{font-size:11px;color:var(--dim);margin-top:-6px}
+.msg-ts.user{align-self:flex-end}
+.msg-ts.assistant{align-self:flex-start}
+/* 侧栏「定时任务」分区 */
+.cron-group{margin-top:8px;border-top:1px solid var(--border)}
+.cron-group>summary{cursor:pointer;padding:8px 12px;color:var(--dim);font-size:13px;user-select:none}
 .msg.assistant{align-self:flex-start;background:var(--panel2);white-space:normal}
 /* markdown inside assistant bubbles */
 .msg.assistant p{margin:0 0 8px}.msg.assistant p:last-child{margin-bottom:0}
@@ -287,18 +297,49 @@ async function boot() {
 }
 
 // ---- sessions -------------------------------------------------------------
+function sessItem(s) {
+  const div = document.createElement("div");
+  div.className = "sess" + (s.id === currentSid ? " active" : "");
+  const main = document.createElement("div");
+  main.className = "sess-main";
+  main.innerHTML = `<div class="t"></div><div class="m"></div>`;
+  main.querySelector(".t").textContent = s.title || "(new session)";
+  main.querySelector(".m").textContent = `${s.agent_name} · ${fmtTs(s.updated_at)}`;
+  main.onclick = () => openSession(s.id);
+  div.appendChild(main);
+  const del = btn(div, "×", "del danger", (ev) => { ev.stopPropagation(); deleteSession(s.id); });
+  del.title = "删除会话";
+  return div;
+}
+
 async function loadSessions() {
   sessions = await apiJson("/api/sessions");
   const box = $("sessions"); box.innerHTML = "";
-  for (const s of sessions) {
-    const div = document.createElement("div");
-    div.className = "sess" + (s.id === currentSid ? " active" : "");
-    div.innerHTML = `<div class="t"></div><div class="m"></div>`;
-    div.querySelector(".t").textContent = s.title || "(new session)";
-    div.querySelector(".m").textContent = `${s.agent_name} · ${s.updated_at.slice(0, 16)}`;
-    div.onclick = () => openSession(s.id);
-    box.appendChild(div);
+  const normal = sessions.filter(s => !s.is_cron);
+  const cronSess = sessions.filter(s => s.is_cron);
+  for (const s of normal) box.appendChild(sessItem(s));
+  // 定时任务创建的会话收进可折叠分区，与聊天分开（REQ2）
+  if (cronSess.length) {
+    const det = document.createElement("details");
+    det.className = "cron-group";
+    det.open = true;
+    const sum = document.createElement("summary");
+    sum.textContent = `⏰ 定时任务 (${cronSess.length})`;
+    det.appendChild(sum);
+    for (const s of cronSess) det.appendChild(sessItem(s));
+    box.appendChild(det);
   }
+}
+
+async function deleteSession(sid) {
+  if (!confirm("删除此会话及其所有消息？")) return;
+  await apiJson("/api/sessions/" + sid, {method: "DELETE"}).catch(alertErr);
+  if (currentSid === sid) {
+    currentSid = null;
+    $("msgs").innerHTML = '<div id="empty">Select or create a session to start.</div>';
+    $("composer").classList.add("hidden");
+  }
+  await loadSessions();
 }
 
 async function newSessionDialog() {
@@ -339,7 +380,7 @@ async function openSession(sid) {
       addSummaryBubble(m.content);
     }
     else if (m.role === "user") {
-      addBubble("user", m.content, m.id);
+      addBubble("user", m.content, m.id, m.created_at);
       lastUserMid = m.id; lastUserText = m.content;
     }
     else if (m.role === "assistant") {
@@ -353,7 +394,7 @@ async function openSession(sid) {
         for (const tc of tcs) appendToolRow(wl, tc.name, JSON.stringify(tc.arguments, null, 2), null, true);
         wl.open = false; syncWorklogSummary(wl);
       }
-      if (m.content) addBubble("assistant", m.content);
+      if (m.content) addBubble("assistant", m.content, null, m.created_at);
     }
   }
   // 最新用户气泡的操作行追加「重新编辑」（与「恢复」并排）
@@ -380,13 +421,27 @@ function makeReeditBtn() {
   b.onclick = startReedit;
   return b;
 }
-function addBubble(cls, text, mid) {
+// 时间戳格式化：ISO（或留空=现在）→ "MM-DD HH:MM"（本地时区）
+function fmtTs(ts) {
+  const d = ts ? new Date(ts) : new Date();
+  if (isNaN(d.getTime())) return "";
+  const p = n => String(n).padStart(2, "0");
+  return `${p(d.getMonth() + 1)}-${p(d.getDate())} ${p(d.getHours())}:${p(d.getMinutes())}`;
+}
+function addBubble(cls, text, mid, ts) {
   const d = document.createElement("div");
   d.className = "msg " + cls;
   if (cls === "assistant") { d.dataset.raw = text; d.innerHTML = mdToHtml(text); renderMathInElement(d); }
   else if (cls === "user") renderUserContent(d, text);
   else d.textContent = text;
   $("msgs").appendChild(d);
+  // 气泡下方时间戳（仅 user/assistant；历史用 created_at，实时用当前时间）
+  if (cls === "user" || cls === "assistant") {
+    const t = document.createElement("div");
+    t.className = "msg-ts " + cls;
+    t.textContent = fmtTs(ts);
+    $("msgs").appendChild(t);
+  }
   // 用户气泡下方挂一行操作按钮（恢复；最新用户气泡还会追加「重新编辑」）
   if (cls === "user" && mid != null) {
     d.dataset.mid = mid;
@@ -498,6 +553,9 @@ function closeWorklog(wl) {
 // session.interrupt / session.resume plus the streamed event flow. Disconnecting
 // mid-turn detaches server-side (turn keeps running); reconnecting + resume
 // replays the missed events of the in-flight turn.
+// 能「开启一轮可见输出」的事件——服务端发起对话（如定时任务）时据此懒建 turn。
+// 出轮外通知（memory.review / session.info / turn.settled 等）不在此列。
+const TURN_START_EVENTS = new Set(["reasoning.delta", "message.delta", "tool.call"]);
 let ws = null, wsWantOpen = false, wsBackoff = 0;
 let reqSeq = 1, pending = {};        // request id -> {resolve, reject}
 let resuming = false, resumeBuf = []; // buffer events until the resume ack lands
@@ -579,7 +637,15 @@ function freshTurn(content, opts = {}) {
 
 function handleEvent(ev) {
   const type = ev.type, p = ev.payload || {};
-  if (!turn) return;
+  if (!turn) {
+    // 服务端发起的对话（如定时任务到点触发）——本地没有 sendMsg 创建 turn。
+    // 只在「真正开启一轮可见输出」的事件上懒建 turn + 打开流式 UI（历史已在屏上，
+    // deltas 会重建气泡）；其余出轮外通知（memory.review / session.info / 收尾帧等）
+    // 不属于某一轮的开头，直接忽略，否则会把 UI 卡在「正在输出」状态。
+    if (!TURN_START_EVENTS.has(type)) return;
+    startStreamingUI();
+    turn = freshTurn(null, {shown: true});
+  }
   const t = turn;
   if (type === "reasoning.delta") {
     if (t.bubble) return;                       // answer started: lock out late reasoning

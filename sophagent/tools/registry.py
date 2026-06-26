@@ -38,6 +38,7 @@ class ToolContext:
     db: Any = None  # Database (set when running inside the server)
     skill_store: Any = None  # SkillStore
     services: dict[str, Any] = field(default_factory=dict)
+    session_id: Optional[str] = None  # 当前会话 id；cron 等工具靠它绑定来源 session（非会话路径为 None）
 
 
 _TOOLS: dict[str, ToolSpec] = {}

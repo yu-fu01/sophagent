@@ -157,6 +157,7 @@ async def _run_one_turn(
                 override_provider=session["override_provider"],
                 override_model=session["override_model"],
                 thinking_mode=session["thinking_mode"],
+                session_id=session_id,
             )
             try:
                 async for ev in runner.run(input_text):

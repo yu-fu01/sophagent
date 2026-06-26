@@ -65,6 +65,7 @@ async def delegate_task(ctx: ToolContext, goal: str, agent_name: str = "", conte
         runner = await build_runner(
             db=ctx.db, skill_store=ctx.skill_store, agent=agent,
             user_id=ctx.user_id, history=[], depth=ctx.depth + 1,
+            session_id=ctx.session_id,
         )
         tool_count = 0
         async for ev in runner.run(prompt):

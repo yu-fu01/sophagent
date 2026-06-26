@@ -68,6 +68,7 @@ CREATE TABLE IF NOT EXISTS groups (
   name TEXT NOT NULL,
   owner_id INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
   is_admin_group INTEGER NOT NULL DEFAULT 0,
+  is_cron_group INTEGER NOT NULL DEFAULT 0,
   created_at TEXT NOT NULL
 );
 CREATE TABLE IF NOT EXISTS group_members (
@@ -143,6 +144,29 @@ CREATE VIRTUAL TABLE IF NOT EXISTS messages_fts USING fts5(
   role UNINDEXED,
   tokenize = 'unicode61'
 );
+-- 定时任务（cron）。next_run_at 存服务器本地 naive ISO 时间。
+CREATE TABLE IF NOT EXISTS cron_jobs (
+  id TEXT PRIMARY KEY,
+  session_id TEXT NOT NULL REFERENCES sessions(id) ON DELETE CASCADE,
+  user_id INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+  name TEXT NOT NULL,
+  prompt TEXT NOT NULL,
+  mode TEXT NOT NULL DEFAULT 'agent',          -- agent | text
+  schedule TEXT NOT NULL,                       -- JSON: {kind, ...}
+  schedule_display TEXT NOT NULL DEFAULT '',
+  repeat_times INTEGER,                         -- NULL = 无限
+  repeat_completed INTEGER NOT NULL DEFAULT 0,
+  enabled INTEGER NOT NULL DEFAULT 1,
+  state TEXT NOT NULL DEFAULT 'scheduled',      -- scheduled | paused | completed | error
+  last_run_at TEXT,
+  next_run_at TEXT,
+  last_status TEXT,                             -- ok | error
+  last_error TEXT,
+  created_at TEXT NOT NULL,
+  updated_at TEXT NOT NULL
+);
+CREATE INDEX IF NOT EXISTS idx_cron_jobs_due ON cron_jobs(enabled, next_run_at);
+CREATE INDEX IF NOT EXISTS idx_cron_jobs_session ON cron_jobs(session_id);
 """
 
 
@@ -217,6 +241,9 @@ class Database:
         for col in ("override_provider", "override_model", "thinking_mode"):
             if session_cols and col not in session_cols:
                 await self._exec(f"ALTER TABLE sessions ADD COLUMN {col} TEXT")
+        group_cols = await self._columns("groups")
+        if group_cols and "is_cron_group" not in group_cols:
+            await self._exec("ALTER TABLE groups ADD COLUMN is_cron_group INTEGER NOT NULL DEFAULT 0")
         memory_cols = await self._columns("memory")
         if memory_cols and "target" not in memory_cols:
             # dual-store: legacy single-store rows become agent-notes ('memory')
@@ -343,7 +370,9 @@ class Database:
 
     async def list_sessions(self, user_id: int) -> list[aiosqlite.Row]:
         return await self._all(
-            "SELECT s.*, a.name AS agent_name FROM sessions s JOIN agents a ON a.id=s.agent_id"
+            "SELECT s.*, a.name AS agent_name, COALESCE(g.is_cron_group, 0) AS is_cron"
+            " FROM sessions s JOIN agents a ON a.id=s.agent_id"
+            " LEFT JOIN groups g ON g.id=s.group_id"
             " WHERE s.user_id=? ORDER BY s.updated_at DESC",
             (user_id,),
         )
@@ -408,13 +437,14 @@ class Database:
         )
         return [Message.from_json(r["content"]) for r in rows]
 
-    async def load_messages_with_ids(self, session_id: str) -> list[tuple[int, Message]]:
-        """Same as load_messages but also returns each row's id (for restore/re-edit)."""
+    async def load_messages_with_ids(self, session_id: str) -> list[tuple[int, Message, str]]:
+        """Same as load_messages but also returns each row's id and created_at
+        (id for restore/re-edit；created_at 给前端渲染气泡时间戳)。"""
         rows = await self._all(
-            "SELECT id, content FROM messages WHERE session_id=? AND archived=0 ORDER BY id",
+            "SELECT id, content, created_at FROM messages WHERE session_id=? AND archived=0 ORDER BY id",
             (session_id,),
         )
-        return [(r["id"], Message.from_json(r["content"])) for r in rows]
+        return [(r["id"], Message.from_json(r["content"]), r["created_at"]) for r in rows]
 
     async def truncate_from(self, session_id: str, message_id: int) -> int:
         """Delete the live (archived=0) message with id>=message_id and everything after it.
@@ -619,10 +649,12 @@ class Database:
 
     # -- groups --------------------------------------------------------------
 
-    async def create_group(self, name: str, owner_id: int, is_admin_group: bool = False) -> int:
+    async def create_group(self, name: str, owner_id: int, is_admin_group: bool = False,
+                           is_cron_group: bool = False) -> int:
         cur = await self._exec(
-            "INSERT INTO groups (name, owner_id, is_admin_group, created_at) VALUES (?,?,?,?)",
-            (name, owner_id, 1 if is_admin_group else 0, now()),
+            "INSERT INTO groups (name, owner_id, is_admin_group, is_cron_group, created_at)"
+            " VALUES (?,?,?,?,?)",
+            (name, owner_id, 1 if is_admin_group else 0, 1 if is_cron_group else 0, now()),
         )
         gid = cur.lastrowid
         await self._exec(
@@ -633,6 +665,15 @@ class Database:
 
     async def create_personal_group(self, user_id: int, username: str) -> int:
         return await self.create_group(f"{username} 的组", user_id)
+
+    async def get_or_create_cron_group(self, user_id: int) -> int:
+        """该用户专属的「定时任务」组 id；不存在则建。幂等。"""
+        row = await self._one(
+            "SELECT id FROM groups WHERE owner_id=? AND is_cron_group=1 LIMIT 1", (user_id,)
+        )
+        if row is not None:
+            return row["id"]
+        return await self.create_group("定时任务", user_id, is_cron_group=True)
 
     async def get_group(self, gid: int) -> Optional[aiosqlite.Row]:
         return await self._one("SELECT * FROM groups WHERE id=?", (gid,))
@@ -802,3 +843,86 @@ class Database:
             "SELECT * FROM im_bindings WHERE platform=? AND chat_id=?",
             (platform, chat_id),
         )
+
+    # -- cron jobs ----------------------------------------------------------
+    # schedule 以 JSON 文本存；next_run_at / last_run_at 存本地 naive ISO。
+    # 单连接串行写，无需额外锁（与 hermes 的 flock 等价由 aiosqlite 提供）。
+
+    async def create_cron_job(self, job: dict[str, Any]) -> str:
+        ts = now()
+        await self._exec(
+            "INSERT INTO cron_jobs (id, session_id, user_id, name, prompt, mode, schedule,"
+            " schedule_display, repeat_times, repeat_completed, enabled, state,"
+            " last_run_at, next_run_at, last_status, last_error, created_at, updated_at)"
+            " VALUES (?,?,?,?,?,?,?,?,?,0,1,'scheduled',NULL,?,NULL,NULL,?,?)",
+            (
+                job["id"], job["session_id"], job["user_id"], job["name"], job["prompt"],
+                job.get("mode", "agent"), json.dumps(job["schedule"]), job.get("schedule_display", ""),
+                job.get("repeat_times"), job.get("next_run_at"), ts, ts,
+            ),
+        )
+        return job["id"]
+
+    async def get_cron_job(self, job_id: str) -> Optional[aiosqlite.Row]:
+        return await self._one("SELECT * FROM cron_jobs WHERE id=?", (job_id,))
+
+    async def list_cron_jobs(self, user_id: int) -> list[aiosqlite.Row]:
+        return await self._all(
+            "SELECT * FROM cron_jobs WHERE user_id=? ORDER BY enabled DESC, next_run_at ASC",
+            (user_id,),
+        )
+
+    async def list_cron_jobs_by_session(self, session_id: str) -> list[aiosqlite.Row]:
+        return await self._all(
+            "SELECT * FROM cron_jobs WHERE session_id=? ORDER BY enabled DESC, next_run_at ASC",
+            (session_id,),
+        )
+
+    async def list_due_cron_jobs(self, now_iso: str) -> list[aiosqlite.Row]:
+        """enabled=1 且 state!='paused'/'completed' 且 next_run_at<=now。"""
+        return await self._all(
+            "SELECT * FROM cron_jobs WHERE enabled=1 AND state IN ('scheduled','error')"
+            " AND next_run_at IS NOT NULL AND next_run_at<=? ORDER BY next_run_at ASC",
+            (now_iso,),
+        )
+
+    async def advance_cron_next_run(self, job_id: str, next_run_at: Optional[str]) -> None:
+        """at-most-once：执行前先把 next_run_at 推进，崩溃重启不会连发。"""
+        await self._exec(
+            "UPDATE cron_jobs SET next_run_at=?, updated_at=? WHERE id=?",
+            (next_run_at, now(), job_id),
+        )
+
+    async def mark_cron_run(
+        self, job_id: str, *, success: bool, error: Optional[str],
+        next_run_at: Optional[str], completed: bool, repeat_completed: Optional[int] = None,
+    ) -> None:
+        """执行后更新状态。completed=True 则 state='completed'；recurring 的
+        next_run_at 在执行前已 advance，这里只同步状态字段。"""
+        sets = ["last_run_at=?", "last_status=?", "last_error=?", "next_run_at=?", "updated_at=?"]
+        if completed:
+            sets.append("state='completed'")
+        elif not success:
+            sets.append("state='error'")
+        else:
+            sets.append("state='scheduled'")
+        params: list[Any] = [now(), "ok" if success else "error", error, next_run_at, now()]
+        if repeat_completed is not None:
+            sets.append("repeat_completed=?")
+            params.append(repeat_completed)
+        params.append(job_id)
+        await self._exec(f"UPDATE cron_jobs SET {', '.join(sets)} WHERE id=?", tuple(params))
+
+    async def set_cron_job_state(self, job_id: str, state: str, user_id: int) -> bool:
+        """owner-scoped 状态切换（pause/resume）。返回是否命中。"""
+        cur = await self._exec(
+            "UPDATE cron_jobs SET state=?, updated_at=? WHERE id=? AND user_id=?",
+            (state, now(), job_id, user_id),
+        )
+        return cur.rowcount > 0
+
+    async def delete_cron_job(self, job_id: str, user_id: int) -> bool:
+        cur = await self._exec(
+            "DELETE FROM cron_jobs WHERE id=? AND user_id=?", (job_id, user_id)
+        )
+        return cur.rowcount > 0

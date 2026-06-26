@@ -20,7 +20,7 @@ async def handle(args: str, ctx: dict) -> dict:
 
     # find the last user message (not a summary)
     last_user_id = None
-    for mid, m in reversed(messages):
+    for mid, m, _ in reversed(messages):
         if m.role == "user":
             last_user_id = mid
             break

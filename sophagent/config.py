@@ -68,6 +68,9 @@ class Config:
     telegram_bot_token: str = ""
     # 额外白名单（逗号分隔的 Telegram user id）；空=仅靠配对码控制访问。
     telegram_allowed_user_ids: tuple[int, ...] = ()
+    # 定时任务（cron）：默认启用，60s 一轮 tick。
+    cron_enabled: bool = True
+    cron_tick_interval_seconds: float = 60.0
 
     @property
     def db_path(self) -> Path:
@@ -169,6 +172,9 @@ def load_config() -> Config:
         ),
         self_improve_enabled=os.environ.get("SOPHAGENT_SELF_IMPROVE", "true").lower()
         not in {"0", "false", "no", "off"},
+        cron_enabled=os.environ.get("SOPHAGENT_CRON_ENABLED", "true").lower()
+        not in {"0", "false", "no", "off"},
+        cron_tick_interval_seconds=float(os.environ.get("SOPHAGENT_CRON_TICK_SECONDS", "60")),
     )
     cfg.skills_dir.mkdir(parents=True, exist_ok=True)
     cfg.workspaces_dir.mkdir(parents=True, exist_ok=True)
