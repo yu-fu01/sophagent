@@ -203,3 +203,14 @@ async def test_compaction_fallback_keeps_prev_summary_on_failure(ctx, fake_provi
     # 尾部消息没有全部丢失
     assert len(runner.history) >= 2
     assert runner.compressed is True
+
+
+def test_fast_lookup_guide_injected_with_terminal(ctx):
+    """启用 terminal 时注入快路径引导；未启用则不注入。"""
+    from sophagent.agent.prompt import build_system_prompt
+
+    ctx.agent.tools = ["terminal"]
+    assert "Fast lookups" in build_system_prompt(ctx.agent)
+
+    ctx.agent.tools = ["read_file"]
+    assert "Fast lookups" not in build_system_prompt(ctx.agent)

@@ -68,6 +68,17 @@ the user's natural-language time into one of these. Confirm the schedule back
 to the user when you create the job."""
 
 
+FAST_LOOKUP_GUIDE = """\
+## Fast lookups
+For instant factual queries — weather, current time/date math, exchange rates,
+your public IP, a quick DNS/HTTP check — prefer running ONE lightweight shell
+command via the `terminal` tool instead of `web_search`. Examples:
+- Weather: `curl -s 'wttr.in/深圳?format=3'` (use ?format=4 to add wind speed)
+- Public IP: `curl -s ifconfig.me`
+Pass `--max-time 10` so the command fails fast. Reserve `web_search` for genuine
+multi-source web research that a single command can't answer."""
+
+
 def build_system_prompt(
     agent: AgentDef,
     skill_index: list[dict] | None = None,
@@ -93,6 +104,9 @@ def build_system_prompt(
 
     if "cron" in agent.tools:
         parts.append(CRON_GUIDE)
+
+    if "terminal" in agent.tools:
+        parts.append(FAST_LOOKUP_GUIDE)
 
     has_skill_tools = any(t in agent.tools for t in ("skills_list", "skill_view", "skill_manage"))
     if has_skill_tools:
