@@ -106,3 +106,33 @@ async def test_delegate_depth_guard(ctx):
     ctx.depth = 0  # no db wired -> graceful error, not a crash
     out = await registry.dispatch("delegate_task", {"goal": "do something"}, ctx)
     assert "delegation unavailable" in out
+
+
+async def test_web_search_uses_short_timeout(ctx, monkeypatch):
+    """无 Tavily key 时 web_search 走 DDG，且用 10s 而非 30s 超时（快失败）。"""
+    import sophagent.tools.web as web
+
+    captured = {}
+
+    class FakeResp:
+        text = '<a class="result__a" href="http://x.com">Title</a>'
+
+    class FakeClient:
+        def __init__(self, *a, **k):
+            captured["timeout"] = k.get("timeout")
+
+        async def __aenter__(self):
+            return self
+
+        async def __aexit__(self, *a):
+            return False
+
+        async def post(self, *a, **k):
+            return FakeResp()
+
+    monkeypatch.delenv("TAVILY_API_KEY", raising=False)
+    monkeypatch.setattr(web.httpx, "AsyncClient", FakeClient)
+    out = await web.web_search(ctx, "shenzhen weather")
+    assert captured["timeout"] == web.SEARCH_TIMEOUT
+    assert web.SEARCH_TIMEOUT == 10.0
+    assert "Title" in out
