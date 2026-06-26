@@ -10,6 +10,8 @@ services:
       - ./data/providers.yaml:/data/providers.yaml:ro
     environment:
       # see .env.example; all variables are optional except a provider config
+      # 服务器时区：cron 定时任务按服务器本地时间计算（默认北京时间，可用 TZ 覆盖）
+      - TZ=${TZ:-Asia/Shanghai}
       - SOPHAGENT_SECRET=${SOPHAGENT_SECRET:-}
       - SOPHAGENT_NO_LOGIN=${SOPHAGENT_NO_LOGIN:-}
       - ADMIN_USERNAME=${ADMIN_USERNAME:-admin}
