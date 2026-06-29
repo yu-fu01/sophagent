@@ -230,6 +230,16 @@ async def m_queue_submit(params: dict[str, Any], ctx: GatewayContext) -> dict[st
     return {"queued": True, "position": ctx.manager.pending_count(session_id)}
 
 
+async def m_queue_remove(params: dict[str, Any], ctx: GatewayContext) -> dict[str, Any]:
+    """Remove one queued (not-yet-running) message by 0-based index."""
+    session_id = params["session_id"]
+    index = int(params["index"])
+    await _require_session(ctx, session_id)
+    if not ctx.manager.remove_at(session_id, index):
+        raise GatewayError(protocol.ERR_INVALID_PARAMS, "queue item not found")
+    return {"removed": True, "remaining": ctx.manager.pending_count(session_id)}
+
+
 # method name → handler
 METHODS: dict[str, Callable[[dict[str, Any], GatewayContext], Awaitable[dict[str, Any]]]] = {
     "session.resume": m_session_resume,
@@ -239,4 +249,5 @@ METHODS: dict[str, Callable[[dict[str, Any], GatewayContext], Awaitable[dict[str
     "session.truncate": m_session_truncate,
     "slash.exec": m_slash_exec,
     "queue.submit": m_queue_submit,
+    "queue.remove": m_queue_remove,
 }

@@ -197,6 +197,7 @@ class MemberPatch(BaseModel):
 
 
 class SessionOverridePatch(BaseModel):
+    title: Optional[str] = None
     override_provider: Optional[str] = None
     override_model: Optional[str] = None
     thinking_mode: Optional[str] = Field(default=None, pattern=r"^(default|thinking|fast)$")

@@ -84,3 +84,28 @@ class SessionManager:
                 except asyncio.QueueEmpty:
                     break
             self._message_queues.pop(session_id, None)
+
+    def remove_at(self, session_id: str, index: int) -> bool:
+        """Remove one queued message by 0-based index. False if out of range."""
+        q = self._message_queues.get(session_id)
+        if q is None or q.empty():
+            return False
+        items: list[str] = []
+        while not q.empty():
+            try:
+                items.append(q.get_nowait())
+            except asyncio.QueueEmpty:
+                break
+        if index < 0 or index >= len(items):
+            for item in items:
+                q.put_nowait(item)
+            return False
+        del items[index]
+        if not items:
+            self._message_queues.pop(session_id, None)
+            return True
+        fresh: asyncio.Queue = asyncio.Queue(maxsize=self.MAX_QUEUED)
+        for item in items:
+            fresh.put_nowait(item)
+        self._message_queues[session_id] = fresh
+        return True

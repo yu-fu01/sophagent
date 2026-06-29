@@ -403,3 +403,60 @@ def test_user_deletion_cascades(client, admin, bob, agent_id):
     # bob's token no longer works; his session is gone
     assert client.get("/api/sessions", headers=bob).status_code == 401
     assert client.get(f"/api/sessions/{sid}", headers=admin).status_code == 404
+
+
+def test_patch_session_title(client, bob, agent_id):
+    s = client.post("/api/sessions", json={"agent_id": agent_id}, headers=bob).json()
+    client.patch(f"/api/sessions/{s['id']}", headers=bob, json={"thinking_mode": "fast"})
+    # 仅改 title 不应清掉已有 override（exclude_unset）
+    patched = client.patch(f"/api/sessions/{s['id']}", headers=bob, json={"title": "Renamed"}).json()
+    assert patched["title"] == "Renamed"
+    assert patched["thinking_mode"] == "fast"
+    detail = client.get(f"/api/sessions/{s['id']}", headers=bob).json()
+    assert detail["title"] == "Renamed"
+    assert detail["thinking_mode"] == "fast"
+
+
+def test_list_sessions_includes_running(client, bob, agent_id):
+    sid = client.post("/api/sessions", json={"agent_id": agent_id}, headers=bob).json()["id"]
+    row = next(r for r in client.get("/api/sessions", headers=bob).json() if r["id"] == sid)
+    assert row["running"] is False
+    client.app.state.manager.is_busy = lambda session_id: session_id == sid
+    try:
+        row = next(r for r in client.get("/api/sessions", headers=bob).json() if r["id"] == sid)
+        assert row["running"] is True
+        assert client.get(f"/api/sessions/{sid}", headers=bob).json()["running"] is True
+    finally:
+        client.app.state.manager.is_busy = lambda session_id: False
+
+
+def test_queue_remove(client, bob, agent_id):
+    started = threading.Event()
+    release = threading.Event()
+
+    async def blocking_chat(*, model, system, messages, tools=None,
+                            temperature=None, max_tokens=None, thinking=None):
+        started.set()
+        await asyncio.to_thread(release.wait, 5)
+        turn = AssistantTurn(content="done", stop_reason="stop", input_tokens=1, output_tokens=1)
+        yield StreamEvent("text_delta", text=turn.content)
+        yield StreamEvent("turn_done", turn=turn)
+
+    client.provider.chat = blocking_chat
+    sid = client.post("/api/sessions", json={"agent_id": agent_id}, headers=bob).json()["id"]
+    with client.websocket_connect(f"/ws?token={ws_token(bob)}") as ws:
+        ws_recv_frame(ws)  # ready
+        ws_send(ws, "session.resume", 1, session_id=sid); ws_response(ws, 1)
+        ws_send(ws, "prompt.submit", 2, session_id=sid, content="first")
+        ws_response(ws, 2)
+        assert started.wait(2)
+        ws_send(ws, "prompt.submit", 3, session_id=sid, content="second")
+        assert ws_response(ws, 3)["result"] == {"kind": "queued", "position": 1}
+        ws_send(ws, "prompt.submit", 4, session_id=sid, content="third")
+        assert ws_response(ws, 4)["result"] == {"kind": "queued", "position": 2}
+        ws_send(ws, "queue.remove", 5, session_id=sid, index=0)
+        assert ws_response(ws, 5)["result"] == {"removed": True, "remaining": 1}
+        release.set()
+        events = ws_events_until(ws, "turn.settled")
+    qnext = [e["payload"]["content"] for e in events if e["type"] == "queued_next"]
+    assert qnext == ["third"]

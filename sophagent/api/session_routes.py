@@ -23,10 +23,17 @@ async def _owned_or_managed(request: Request, session_id: str, user):
     return None
 
 
+def _session_dict(request: Request, row) -> dict:
+    """Serialize a session row + attach live ``running`` (是否有进行中的 turn)。"""
+    data = dict(row)
+    data["running"] = request.app.state.manager.is_busy(data["id"])
+    return data
+
+
 @router.get("")
 async def list_sessions(request: Request, user=Depends(require_user)):
     rows = await request.app.state.db.list_sessions(user["id"])
-    return [dict(r) for r in rows]
+    return [_session_dict(request, r) for r in rows]
 
 
 @router.post("", status_code=201)
@@ -49,7 +56,7 @@ async def get_session(session_id: str, request: Request, user=Depends(require_us
     if session is None:
         raise HTTPException(404, "session not found")
     messages = await db.load_messages_with_ids(session_id)
-    return {**dict(session),
+    return {**_session_dict(request, session),
             "messages": [{"id": mid, "created_at": created_at, **m.to_dict()}
                          for mid, m, created_at in messages]}
 
@@ -61,9 +68,17 @@ async def patch_session(session_id: str, req: SessionOverridePatch, request: Req
     # creator-only：覆盖参数只影响 chat，而 chat 本身就是创建者私有（与 chat 路由访问模型一致）
     if await db.get_session(session_id, user["id"]) is None:
         raise HTTPException(404, "session not found")
-    await db.set_session_overrides(session_id, override_provider=req.override_provider,
-        override_model=req.override_model, thinking_mode=req.thinking_mode)
-    return dict(await db.get_session(session_id, user["id"]))
+    body = req.model_dump(exclude_unset=True)
+    if "title" in body:
+        await db.touch_session(session_id, title=body["title"])
+    if any(k in body for k in ("override_provider", "override_model", "thinking_mode")):
+        await db.set_session_overrides(
+            session_id,
+            override_provider=body.get("override_provider"),
+            override_model=body.get("override_model"),
+            thinking_mode=body.get("thinking_mode"),
+        )
+    return _session_dict(request, await db.get_session(session_id, user["id"]))
 
 
 @router.delete("/{session_id}")
