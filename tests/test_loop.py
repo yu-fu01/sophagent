@@ -203,3 +203,124 @@ async def test_compaction_fallback_keeps_prev_summary_on_failure(ctx, fake_provi
     # 尾部消息没有全部丢失
     assert len(runner.history) >= 2
     assert runner.compressed is True
+
+
+def test_fast_lookup_guide_injected_with_terminal(ctx):
+    """启用 terminal 时注入快路径引导；未启用则不注入。"""
+    from sophagent.agent.prompt import build_system_prompt
+
+    ctx.agent.tools = ["terminal"]
+    assert "Fast lookups" in build_system_prompt(ctx.agent)
+
+    ctx.agent.tools = ["read_file"]
+    assert "Fast lookups" not in build_system_prompt(ctx.agent)
+
+
+def test_expand_parallel_passthrough():
+    """普通工具调用原样返回。"""
+    from sophagent.agent.loop import expand_parallel_calls
+
+    calls = [ToolCall(id="a", name="web_search", arguments={"query": "x"})]
+    assert expand_parallel_calls(calls) == calls
+
+
+def test_expand_parallel_unwraps_both_key_forms():
+    """multi_tool_use.parallel 展开为真实调用，兼容 recipient_name/name 两种键，
+    剥离命名空间前缀，生成稳定派生 id。"""
+    from sophagent.agent.loop import expand_parallel_calls
+
+    parent = ToolCall(
+        id="p",
+        name="multi_tool_use.parallel",
+        arguments={"tool_uses": [
+            {"recipient_name": "functions.web_search", "parameters": {"query": "a"}},
+            {"name": "web_fetch", "arguments": {"url": "u"}},
+        ]},
+    )
+    out = expand_parallel_calls([parent])
+    assert [c.name for c in out] == ["web_search", "web_fetch"]
+    assert [c.id for c in out] == ["p.0", "p.1"]
+    assert out[0].arguments == {"query": "a"}
+    assert out[1].arguments == {"url": "u"}
+
+
+def test_expand_parallel_malformed_passthrough():
+    """tool_uses 缺失/非数组时保留原调用，交给 dispatch 报未知工具。"""
+    from sophagent.agent.loop import expand_parallel_calls
+
+    bad = ToolCall(id="p", name="multi_tool_use.parallel", arguments={})
+    assert expand_parallel_calls([bad]) == [bad]
+
+
+def test_expand_parallel_empty_tool_uses_keeps_parent():
+    """tool_uses 为空列表 → 没有有效子调用 → 保留原父调用，保证 id 一致。"""
+    from sophagent.agent.loop import expand_parallel_calls
+
+    parent = ToolCall(id="p", name="multi_tool_use.parallel", arguments={"tool_uses": []})
+    assert expand_parallel_calls([parent]) == [parent]
+
+
+def test_expand_parallel_skips_nameless_use():
+    """缺工具名的子项被跳过；只展开有效的那个，id 连续。"""
+    from sophagent.agent.loop import expand_parallel_calls
+
+    parent = ToolCall(
+        id="p",
+        name="multi_tool_use.parallel",
+        arguments={"tool_uses": [
+            {"parameters": {"x": 1}},  # 无 recipient_name/name → 跳过
+            {"recipient_name": "web_search", "parameters": {"query": "a"}},
+        ]},
+    )
+    out = expand_parallel_calls([parent])
+    assert [c.name for c in out] == ["web_search"]
+    assert out[0].id == "p.0"  # 连续编号，不受被跳过项影响
+    assert out[0].arguments == {"query": "a"}
+
+
+async def test_parallel_dispatch_preserves_order(ctx, fake_provider, monkeypatch):
+    """并发执行多个工具，但 history 中 tool 消息按原调用顺序排列（非完成顺序）。"""
+    import asyncio
+
+    from sophagent.agent import loop as loop_mod
+
+    async def fake_dispatch(name, args, c):
+        await asyncio.sleep(args.get("delay", 0.0))
+        return f"done:{name}"
+
+    monkeypatch.setattr(loop_mod.registry, "dispatch", fake_dispatch)
+    turn = AssistantTurn(content="", stop_reason="tool_calls", tool_calls=[
+        ToolCall(id="a", name="slow", arguments={"delay": 0.05}),
+        ToolCall(id="b", name="fast", arguments={"delay": 0.0}),
+    ])
+    fake_provider([turn, AssistantTurn(content="ok", stop_reason="stop")])
+    runner = AgentRunner(ctx.agent, ctx, history=[])
+    await collect(runner, "go")
+    tool_msgs = [m for m in runner.history if m.role == "tool"]
+    assert [m.tool_call_id for m in tool_msgs] == ["a", "b"]
+    assert tool_msgs[0].content == "done:slow"
+
+
+async def test_parallel_pseudo_tool_end_to_end(ctx, fake_provider, monkeypatch):
+    """模型发来的 multi_tool_use.parallel 被拆解；assistant 消息与 tool 回复 id 一致。"""
+    from sophagent.agent import loop as loop_mod
+
+    async def fake_dispatch(name, args, c):
+        return f"ran:{name}"
+
+    monkeypatch.setattr(loop_mod.registry, "dispatch", fake_dispatch)
+    turn = AssistantTurn(content="", stop_reason="tool_calls", tool_calls=[
+        ToolCall(id="p", name="multi_tool_use.parallel", arguments={"tool_uses": [
+            {"recipient_name": "web_search", "parameters": {"query": "a"}},
+            {"recipient_name": "web_fetch", "parameters": {"url": "u"}},
+        ]}),
+    ])
+    fake_provider([turn, AssistantTurn(content="ok", stop_reason="stop")])
+    runner = AgentRunner(ctx.agent, ctx, history=[])
+    await collect(runner, "go")
+    tool_msgs = [m for m in runner.history if m.role == "tool"]
+    assert [m.tool_call_id for m in tool_msgs] == ["p.0", "p.1"]
+    assert tool_msgs[0].content == "ran:web_search"
+    # 关键：assistant 消息的 tool_calls 也应是展开后的 id，与 tool 回复一一对应
+    assistant = next(m for m in runner.history if m.role == "assistant" and m.tool_calls)
+    assert [tc.id for tc in assistant.tool_calls] == ["p.0", "p.1"]

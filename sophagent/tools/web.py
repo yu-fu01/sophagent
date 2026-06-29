@@ -16,6 +16,7 @@ from .registry import ToolContext, tool
 
 MAX_FETCH_BYTES = 2 * 1024 * 1024
 FETCH_TIMEOUT = 30.0
+SEARCH_TIMEOUT = 10.0
 UA = "Mozilla/5.0 (compatible; sophagent/0.1)"
 
 
@@ -100,7 +101,7 @@ _TAG = re.compile(r"<[^>]+>")
 
 
 async def _ddg_search(query: str, count: int) -> str:
-    async with httpx.AsyncClient(timeout=FETCH_TIMEOUT, headers={"User-Agent": UA}) as client:
+    async with httpx.AsyncClient(timeout=SEARCH_TIMEOUT, headers={"User-Agent": UA}) as client:
         resp = await client.post("https://html.duckduckgo.com/html/", data={"q": query})
     results = []
     for m in _DDG_RESULT.finditer(resp.text):
@@ -112,7 +113,7 @@ async def _ddg_search(query: str, count: int) -> str:
 
 
 async def _tavily_search(query: str, count: int, api_key: str) -> str:
-    async with httpx.AsyncClient(timeout=FETCH_TIMEOUT) as client:
+    async with httpx.AsyncClient(timeout=SEARCH_TIMEOUT) as client:
         resp = await client.post(
             "https://api.tavily.com/search",
             json={"api_key": api_key, "query": query, "max_results": count},

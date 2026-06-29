@@ -28,6 +28,7 @@ from .compaction import (
 # (e.g. `from sophagent.agent.loop import history_tokens`) keep working.
 __all__ = [
     "AgentRunner",
+    "expand_parallel_calls",
     "estimate_tokens",
     "history_tokens",
     "truncate_old_tool_messages",
@@ -36,6 +37,49 @@ __all__ = [
 ]
 
 log = logging.getLogger(__name__)
+
+PARALLEL_TOOL = "multi_tool_use.parallel"
+
+
+def expand_parallel_calls(tool_calls: list[ToolCall]) -> list[ToolCall]:
+    """Flatten any multi_tool_use.parallel pseudo-call into real ToolCalls.
+
+    GPT-family models sometimes bundle parallel tool calls into a single call
+    named ``multi_tool_use.parallel`` whose arguments carry a ``tool_uses`` list.
+    Each item names a tool (``recipient_name`` or ``name``) and its parameters
+    (``parameters`` or ``arguments``). We expand those into individual ToolCalls
+    so the normal dispatch path runs them.
+
+    Malformed wrappers (missing/invalid ``tool_uses``, or no usable sub-call)
+    are left as the original pseudo-call so dispatch returns an error under the
+    *same* tool_call id the assistant message already carries — keeping history
+    consistent (every tool_call has a matching tool reply).
+    """
+    out: list[ToolCall] = []
+    for tc in tool_calls:
+        if tc.name != PARALLEL_TOOL:
+            out.append(tc)
+            continue
+        uses = tc.arguments.get("tool_uses")
+        if not isinstance(uses, list):
+            out.append(tc)  # malformed → dispatch reports the pseudo-tool error
+            continue
+        expanded: list[ToolCall] = []
+        for use in uses:
+            if not isinstance(use, dict):
+                continue
+            name = (use.get("recipient_name") or use.get("name") or "").removeprefix("functions.")
+            if not name:
+                continue
+            args = use.get("parameters")
+            if args is None:
+                args = use.get("arguments")
+            if not isinstance(args, dict):
+                args = {}
+            expanded.append(ToolCall(id=f"{tc.id}.{len(expanded)}", name=name, arguments=args))
+        out.extend(expanded if expanded else [tc])
+    return out
+
 
 RETRYABLE_ATTEMPTS = 3
 TAIL_BUDGET_RATIO = 0.25  # 每次 LLM 摘要保护的尾部上下文占 context_limit 的比例
@@ -188,6 +232,7 @@ class AgentRunner:
                    "cache_read_tokens": turn.cache_read_tokens,
                    "cache_write_tokens": turn.cache_write_tokens,
                    "cache_hit": cache_hit_percent(turn.cache_read_tokens, turn_total)}
+            turn.tool_calls = expand_parallel_calls(turn.tool_calls)
             assistant_msg = turn.as_message()
             self.history.append(assistant_msg)
             await self._persist(assistant_msg)
@@ -196,9 +241,17 @@ class AgentRunner:
                 yield self._done_payload(system)
                 return
 
+            # 先按原序广播全部调用事件，让 UI 立刻看到
             for tc in turn.tool_calls:
                 yield {"type": "tool_call", "id": tc.id, "name": tc.name, "arguments": tc.arguments}
-                result = await registry.dispatch(tc.name, tc.arguments, self.ctx)
+            # 并发执行（dispatch 自身吞异常返回文本，gather 不会抛）。并行主要利好只读类
+            # 工具；写类工具（files/memory/skills）若同 turn 并发改同一资源需自行负责冲突，
+            # 本期不强制串行（见设计文档"并发边界"）。结果回写严格有序，history 不会错乱。
+            results = await asyncio.gather(
+                *(registry.dispatch(tc.name, tc.arguments, self.ctx) for tc in turn.tool_calls)
+            )
+            # 严格按原序回写 history 并广播结果，保证可复现且每个 tool_call_id 都有回复
+            for tc, result in zip(turn.tool_calls, results):
                 tool_msg = Message(role="tool", content=result, tool_call_id=tc.id)
                 self.history.append(tool_msg)
                 await self._persist(tool_msg)
