@@ -96,6 +96,8 @@ print(client.chat.completions.create(model="helper",
 ## 安全边界（务必阅读）
 
 - **容器是唯一的硬隔离边界。** `terminal` / `python_exec` 在容器内以子进程运行（cwd 钉在用户工作目录、环境变量白名单、超时与输出限额），但容器内多用户之间是软隔离——恶意用户原则上可通过 shell 越过工作目录约束。多租户敏感场景请在 agent 定义中不勾选这两个工具，或按用户拆分容器。
+- **exec 子进程降权（纵深防御）。** `terminal` / `python_exec` 的子进程在容器内被三层逐级约束：① **OS 用户隔离**——以低权 `sandbox` 用户运行，数据目录里的密钥（`providers.yaml` / `.secret` / `sophagent.db*`）按文件权限对其不可读（任意内核生效）；② **Landlock**——新内核（≥5.13）上把可读范围进一步限制到工作目录；③ **文本脱敏**——兜底抹除输出中的已知密钥。启动日志 `exec sandbox: uid-isolation=… , landlock=…` 会如实显示当前生效的层级。
+  - 为支持 ① 的降权，容器**刻意以 root 起动**（去掉了 `USER app`）：主进程本就持有全部密钥，而真正的执行面（exec 子进程）经 `setuid` 降到无权读数据目录的 `sandbox`。**请勿**用 `--user` 覆盖或改回 `USER app`——那会使 `exec_credentials()` 探测失败、降权与目录设权全部跳过，保护自动退回 ②③ 层（不会崩，但仅启动日志会提示 `uid-isolation=unavailable`）。`sandbox` 用户名可经 `SOPHAGENT_EXEC_USER` 配置。
 - `web_fetch` 拒绝解析到内网 / 回环地址的目标（防 SSRF）。
 - agent 自建 skill 会进入所有 agent 的 system prompt 索引，存在被诱导写入误导性指引的风险；admin 应定期在 Web 界面审查 Skills 列表。
 - 删除用户会级联删除其会话、消息、记忆和工作目录。
