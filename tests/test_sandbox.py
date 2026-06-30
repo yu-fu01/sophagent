@@ -143,3 +143,41 @@ def test_sandbox_status_uid_unavailable(monkeypatch):
     monkeypatch.setattr(sb, "exec_credentials", lambda: None)
     msg = sb.sandbox_status()
     assert "uid-isolation=unavailable" in msg and "landlock=degraded" in msg
+
+
+async def test_run_subprocess_passes_user_group_when_credentials(ctx, monkeypatch):
+    """有降权凭据时，create_subprocess_exec 收到 user=/group=。"""
+    import sophagent.tools.terminal as term
+    captured = {}
+
+    async def fake_exec(*args, **kwargs):
+        captured["user"] = kwargs.get("user")
+        captured["group"] = kwargs.get("group")
+        raise RuntimeError("stop-after-capture")  # 不真正起进程
+
+    monkeypatch.setattr(term, "exec_credentials", lambda: (4321, 8765))
+    monkeypatch.setattr(term.asyncio, "create_subprocess_exec", fake_exec)
+    try:
+        await term._run_subprocess("echo hi", str(ctx.workspace), 5)
+    except RuntimeError:
+        pass
+    assert captured["user"] == 4321 and captured["group"] == 8765
+
+
+async def test_run_subprocess_omits_user_group_when_no_credentials(ctx, monkeypatch):
+    """无凭据（非 root）时不传 user=/group=，保持原行为。"""
+    import sophagent.tools.terminal as term
+    captured = {}
+
+    async def fake_exec(*args, **kwargs):
+        captured["has_user"] = "user" in kwargs
+        captured["has_group"] = "group" in kwargs
+        raise RuntimeError("stop")
+
+    monkeypatch.setattr(term, "exec_credentials", lambda: None)
+    monkeypatch.setattr(term.asyncio, "create_subprocess_exec", fake_exec)
+    try:
+        await term._run_subprocess("echo hi", str(ctx.workspace), 5)
+    except RuntimeError:
+        pass
+    assert captured["has_user"] is False and captured["has_group"] is False

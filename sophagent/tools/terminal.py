@@ -14,7 +14,7 @@ import uuid
 
 from ..config import get_config
 from .registry import ToolContext, tool, truncate
-from .sandbox import exec_argv
+from .sandbox import exec_argv, exec_credentials
 
 ENV_WHITELIST = ("PATH", "HOME", "LANG", "LC_ALL", "TERM", "TZ")
 MAX_TIMEOUT = 300.0
@@ -25,6 +25,10 @@ def _safe_env() -> dict[str, str]:
 
 
 async def _run_subprocess(cmd: str, cwd: str, timeout: float) -> str:
+    creds = exec_credentials()
+    extra: dict = {}
+    if creds is not None:
+        extra["user"], extra["group"] = creds
     proc = await asyncio.create_subprocess_exec(
         *exec_argv(cmd, cwd),
         cwd=cwd,
@@ -32,6 +36,7 @@ async def _run_subprocess(cmd: str, cwd: str, timeout: float) -> str:
         stdout=asyncio.subprocess.PIPE,
         stderr=asyncio.subprocess.STDOUT,
         start_new_session=True,  # own process group so we can kill children
+        **extra,
     )
     try:
         out, _ = await asyncio.wait_for(proc.communicate(), timeout=timeout)
