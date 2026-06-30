@@ -29,6 +29,9 @@ async def _run_subprocess(cmd: str, cwd: str, timeout: float) -> str:
     extra: dict = {}
     if creds is not None:
         extra["user"], extra["group"] = creds
+        # 丢弃从 root 父进程继承的补充组(否则子进程仍在 gid 0 root 组里，
+        # 降级路径下可读 group-root 文件)。setgroups 需要父进程的 root 权限。
+        extra["extra_groups"] = []
     proc = await asyncio.create_subprocess_exec(
         *exec_argv(cmd, cwd),
         cwd=cwd,

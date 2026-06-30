@@ -164,6 +164,24 @@ async def test_run_subprocess_passes_user_group_when_credentials(ctx, monkeypatc
     assert captured["user"] == 4321 and captured["group"] == 8765
 
 
+async def test_run_subprocess_drops_supplementary_groups(ctx, monkeypatch):
+    """有凭据时传 extra_groups=[]，丢弃继承自 root 父进程的补充组。"""
+    import sophagent.tools.terminal as term
+    captured = {}
+
+    async def fake_exec(*args, **kwargs):
+        captured["extra_groups"] = kwargs.get("extra_groups", "MISSING")
+        raise RuntimeError("stop")
+
+    monkeypatch.setattr(term, "exec_credentials", lambda: (4321, 8765))
+    monkeypatch.setattr(term.asyncio, "create_subprocess_exec", fake_exec)
+    try:
+        await term._run_subprocess("echo hi", str(ctx.workspace), 5)
+    except RuntimeError:
+        pass
+    assert captured["extra_groups"] == []
+
+
 async def test_run_subprocess_omits_user_group_when_no_credentials(ctx, monkeypatch):
     """无凭据（非 root）时不传 user=/group=，保持原行为。"""
     import sophagent.tools.terminal as term
@@ -172,6 +190,7 @@ async def test_run_subprocess_omits_user_group_when_no_credentials(ctx, monkeypa
     async def fake_exec(*args, **kwargs):
         captured["has_user"] = "user" in kwargs
         captured["has_group"] = "group" in kwargs
+        captured["has_eg"] = "extra_groups" in kwargs
         raise RuntimeError("stop")
 
     monkeypatch.setattr(term, "exec_credentials", lambda: None)
@@ -181,6 +200,7 @@ async def test_run_subprocess_omits_user_group_when_no_credentials(ctx, monkeypa
     except RuntimeError:
         pass
     assert captured["has_user"] is False and captured["has_group"] is False
+    assert captured["has_eg"] is False
 
 
 # -- workspace_for chown 给 sandbox 用户 ----------------------------------
