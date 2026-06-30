@@ -1,0 +1,78 @@
+"""exec 沙箱（Landlock）测试：python_exec/terminal 子进程只能读 workspace，
+读不到 workspace 之外的密钥文件（data/providers.yaml、.secret、项目源码）。
+
+Landlock 不可用的内核上整组跳过——沙箱是 best-effort 硬化层，缺它时由
+工具输出脱敏兜底（见 test_redact_tool_output.py）。
+"""
+import pytest
+
+from sophagent.tools import registry
+from sophagent.tools.sandbox import landlock_available
+
+requires_landlock = pytest.mark.skipif(
+    not landlock_available(), reason="Landlock 在此内核不可用"
+)
+
+SECRET = "Sophnet-SUPERSECRET-api-key-value-do-not-leak"
+
+
+def _plant_secret(tmp_path):
+    """在 workspace 之外（兄弟目录 data/）放一个密钥文件，模拟 providers.yaml。"""
+    secret = tmp_path / "data" / "providers.yaml"
+    secret.parent.mkdir(parents=True, exist_ok=True)
+    secret.write_text(f"api_key: {SECRET}\n", encoding="utf-8")
+    return secret
+
+
+@requires_landlock
+async def test_python_exec_cannot_read_outside_workspace(ctx, tmp_path):
+    _plant_secret(tmp_path)
+    # workspace=tmp_path/ws；../data/providers.yaml 是逃逸路径
+    out = await registry.dispatch(
+        "python_exec",
+        {"code": "print(open('../data/providers.yaml').read())"},
+        ctx,
+    )
+    assert SECRET not in out
+    assert "Permission" in out or "denied" in out or "Errno 13" in out
+
+
+@requires_landlock
+async def test_python_exec_cannot_read_absolute_secret_path(ctx, tmp_path):
+    secret = _plant_secret(tmp_path)
+    out = await registry.dispatch(
+        "python_exec",
+        {"code": f"print(open({str(secret)!r}).read())"},
+        ctx,
+    )
+    assert SECRET not in out
+
+
+@requires_landlock
+async def test_terminal_cannot_read_outside_workspace(ctx, tmp_path):
+    _plant_secret(tmp_path)
+    out = await registry.dispatch(
+        "terminal", {"command": "cat ../data/providers.yaml"}, ctx
+    )
+    assert SECRET not in out
+
+
+@requires_landlock
+async def test_python_exec_can_still_read_inside_workspace(ctx):
+    (ctx.workspace / "mine.txt").write_text("workspace-data-ok", encoding="utf-8")
+    out = await registry.dispatch(
+        "python_exec", {"code": "print(open('mine.txt').read())"}, ctx
+    )
+    assert "workspace-data-ok" in out
+
+
+@requires_landlock
+async def test_python_exec_still_computes(ctx):
+    out = await registry.dispatch("python_exec", {"code": "print(6*7)"}, ctx)
+    assert "42" in out
+
+
+@requires_landlock
+async def test_terminal_still_runs_normal_command(ctx):
+    out = await registry.dispatch("terminal", {"command": "echo hello-world"}, ctx)
+    assert "hello-world" in out

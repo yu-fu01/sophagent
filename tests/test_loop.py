@@ -324,3 +324,23 @@ async def test_parallel_pseudo_tool_end_to_end(ctx, fake_provider, monkeypatch):
     # 关键：assistant 消息的 tool_calls 也应是展开后的 id，与 tool 回复一一对应
     assistant = next(m for m in runner.history if m.role == "assistant" and m.tool_calls)
     assert [tc.id for tc in assistant.tool_calls] == ["p.0", "p.1"]
+
+
+async def test_tool_output_redacts_known_secret(ctx, fake_provider):
+    """工具输出里出现的已知 provider key 明文，入 history 前被脱敏（兜底层）。"""
+    from sophagent.config import ProviderConfig, get_config
+    secret = "VaDnSECRET86charsSophnetKeyValue1234567890"
+    get_config().providers["p"] = ProviderConfig(name="p", api_mode="openai", api_key=secret)
+    fake_provider([
+        AssistantTurn(tool_calls=[ToolCall(id="c1", name="terminal",
+                                           arguments={"command": f"echo {secret}"})]),
+        AssistantTurn(content="done", stop_reason="stop"),
+    ])
+    runner = AgentRunner(ctx.agent, ctx, history=[])
+    events = await collect(runner, "leak it")
+    tool_msgs = [m for m in runner.history if m.role == "tool"]
+    assert tool_msgs and secret not in tool_msgs[0].content
+    assert "[REDACTED]" in tool_msgs[0].content
+    # 广播给 UI 的 tool_result 预览也不含明文
+    preview = next(e for e in events if e["type"] == "tool_result")["preview"]
+    assert secret not in preview

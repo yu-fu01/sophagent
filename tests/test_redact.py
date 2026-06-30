@@ -142,3 +142,40 @@ def test_redaction_is_idempotent():
     twice = R.redact_sensitive_text(once)
     assert once == twice
     assert "[REDACTED]" in once
+
+
+# -- redact_known_secrets：按配置中的实际密钥值脱敏（Landlock 缺失时的兜底） ----
+
+def test_redact_known_secrets_masks_provider_key(monkeypatch, tmp_path):
+    monkeypatch.setenv("SOPHAGENT_DATA_DIR", str(tmp_path / "data"))
+    from sophagent import config as config_mod
+    from sophagent.config import ProviderConfig
+    config_mod.reset_config()
+    cfg = config_mod.get_config()
+    cfg.providers["p"] = ProviderConfig(
+        name="p", api_mode="openai", api_key="VaDnSECRET86charsSophnetKeyValue1234567890")
+    out = R.redact_known_secrets("dump: VaDnSECRET86charsSophnetKeyValue1234567890 <eof>")
+    config_mod.reset_config()
+    assert "VaDnSECRET86charsSophnetKeyValue1234567890" not in out
+    assert "[REDACTED]" in out
+
+
+def test_redact_known_secrets_masks_server_secret(monkeypatch, tmp_path):
+    monkeypatch.setenv("SOPHAGENT_DATA_DIR", str(tmp_path / "data"))
+    monkeypatch.setenv("SOPHAGENT_SECRET", "server-secret-0123456789abcdef-very-long")
+    from sophagent import config as config_mod
+    config_mod.reset_config()
+    config_mod.get_config()
+    out = R.redact_known_secrets("leaked server-secret-0123456789abcdef-very-long now")
+    config_mod.reset_config()
+    assert "server-secret-0123456789abcdef-very-long" not in out
+
+
+def test_redact_known_secrets_noop_without_secrets(monkeypatch, tmp_path):
+    monkeypatch.setenv("SOPHAGENT_DATA_DIR", str(tmp_path / "data"))
+    from sophagent import config as config_mod
+    config_mod.reset_config()
+    config_mod.get_config()
+    text = "nothing sensitive here, just prose"
+    assert R.redact_known_secrets(text) == text
+    config_mod.reset_config()

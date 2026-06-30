@@ -80,6 +80,38 @@ _PRIVATE_KEY_RE = re.compile(
 )
 
 
+# 已知密钥值脱敏：把配置里实际的 provider api_key / 服务器 secret 的明文从文本中
+# 抹掉。这是确定性的、与 key 格式无关的兜底——在 Landlock 沙箱不可用的内核上，
+# 仍能拦住"读到明文再原样打印"的泄漏（base64 等编码绕过仍需沙箱挡，见 tools/sandbox）。
+_MIN_SECRET_LEN = 8  # 太短的值易误伤普通文本
+
+
+def _known_secret_values():
+    try:
+        from ..config import get_config
+        cfg = get_config()
+    except Exception:
+        return []
+    vals = [pc.api_key for pc in cfg.providers.values() if pc.api_key]
+    if getattr(cfg, "secret", None):
+        vals.append(cfg.secret)
+    # 长值优先替换，避免短值是长值子串时留下残片
+    return sorted({v for v in vals if len(v) >= _MIN_SECRET_LEN}, key=len, reverse=True)
+
+
+def redact_known_secrets(text):
+    """把文本中出现的、配置中已知的密钥明文替换为 [REDACTED]。
+
+    非字符串/空原样返回；无已知密钥时零开销返回。可关闭开关同 redact_sensitive_text。
+    """
+    if not text or not isinstance(text, str) or not _REDACT_ENABLED:
+        return text
+    for secret in _known_secret_values():
+        if secret in text:
+            text = text.replace(secret, PLACEHOLDER)
+    return text
+
+
 def redact_sensitive_text(text):
     """把 ``text`` 中的凭据替换为 [REDACTED]。非字符串原样返回；空/None 直接返回。
 

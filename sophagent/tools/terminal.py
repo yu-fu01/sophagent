@@ -14,6 +14,7 @@ import uuid
 
 from ..config import get_config
 from .registry import ToolContext, tool, truncate
+from .sandbox import exec_argv
 
 ENV_WHITELIST = ("PATH", "HOME", "LANG", "LC_ALL", "TERM", "TZ")
 MAX_TIMEOUT = 300.0
@@ -24,8 +25,8 @@ def _safe_env() -> dict[str, str]:
 
 
 async def _run_subprocess(cmd: str, cwd: str, timeout: float) -> str:
-    proc = await asyncio.create_subprocess_shell(
-        cmd,
+    proc = await asyncio.create_subprocess_exec(
+        *exec_argv(cmd, cwd),
         cwd=cwd,
         env=_safe_env(),
         stdout=asyncio.subprocess.PIPE,

@@ -23,6 +23,7 @@ from .compaction import (
     summarize,
     truncate_old_tool_messages,
 )
+from .redact import redact_known_secrets
 
 # Re-export compaction primitives so existing import paths
 # (e.g. `from sophagent.agent.loop import history_tokens`) keep working.
@@ -252,6 +253,8 @@ class AgentRunner:
             )
             # 严格按原序回写 history 并广播结果，保证可复现且每个 tool_call_id 都有回复
             for tc, result in zip(turn.tool_calls, results):
+                # 兜底脱敏：抹掉工具输出里出现的已知密钥明文（Landlock 缺失时的第二层）
+                result = redact_known_secrets(result)
                 tool_msg = Message(role="tool", content=result, tool_call_id=tc.id)
                 self.history.append(tool_msg)
                 await self._persist(tool_msg)
