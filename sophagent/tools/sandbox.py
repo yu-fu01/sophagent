@@ -84,11 +84,9 @@ def exec_argv(command: str, workspace: str) -> list[str]:
 def sandbox_status() -> str:
     """One-line, log-friendly summary of the exec sandbox's effective state.
 
-    Logged once at startup so operators can confirm which protection layer is
-    actually in force on the deployed kernel (Landlock is kernel/seccomp
-    dependent and degrades silently otherwise)."""
-    if landlock_available():
-        return "exec sandbox: landlock active (terminal/python_exec confined to workspace)"
-    return ("exec sandbox: DEGRADED — landlock unavailable on this kernel; "
-            "exec tools fall back to output redaction only (plaintext secrets only, "
-            "encoded exfiltration not blocked)")
+    Logged once at startup so operators can confirm which protection layers are
+    actually in force: uid isolation (OS-user, any kernel) and Landlock
+    (kernel/seccomp dependent). Both degrade silently otherwise."""
+    uid = "active" if exec_credentials() is not None else "unavailable"
+    landlock = "active" if landlock_available() else "degraded"
+    return f"exec sandbox: uid-isolation={uid}, landlock={landlock}"

@@ -127,3 +127,19 @@ def test_exec_credentials_honors_env_user(monkeypatch):
     fake = pwd.struct_passwd(("worker", "x", 2000, 2000, "", "/nonexistent", "/usr/sbin/nologin"))
     monkeypatch.setattr(sb.pwd, "getpwnam", lambda n: fake if n == "worker" else (_ for _ in ()).throw(KeyError(n)))
     assert sb.exec_credentials() == (2000, 2000)
+
+
+def test_sandbox_status_reports_uid_isolation(monkeypatch):
+    import sophagent.tools.sandbox as sb
+    monkeypatch.setattr(sb, "landlock_available", lambda: True)
+    monkeypatch.setattr(sb, "exec_credentials", lambda: (1001, 1001))
+    msg = sb.sandbox_status()
+    assert "uid-isolation=active" in msg and "landlock=active" in msg
+
+
+def test_sandbox_status_uid_unavailable(monkeypatch):
+    import sophagent.tools.sandbox as sb
+    monkeypatch.setattr(sb, "landlock_available", lambda: False)
+    monkeypatch.setattr(sb, "exec_credentials", lambda: None)
+    msg = sb.sandbox_status()
+    assert "uid-isolation=unavailable" in msg and "landlock=degraded" in msg
