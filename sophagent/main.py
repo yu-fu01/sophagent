@@ -59,6 +59,30 @@ def _harden_data_dir(cfg) -> None:
             pass
 
 
+async def _run_exec_selftest(cfg) -> None:
+    """启动期功能自检：真的走启动器跑一条命令，验证 exec 能执行、且(隔离应生效时)
+    读不到沙箱外的文件。这在生产事件循环(uvloop)下运行，能抓住 sandbox_status
+    仍报 active 却实际全崩/隔离失效 的静默退化。
+
+    隔离本应生效却自检失败时，默认 **拒绝启动**（把回归挡在上线前）；
+    设 ``SOPHAGENT_SANDBOX_SELFTEST=warn``（或 off）可降级为仅告警。"""
+    from .tools.sandbox import exec_credentials, landlock_available
+    from .tools.terminal import selftest_exec
+
+    ok, msg = await selftest_exec(cfg)
+    if ok:
+        log.info("exec sandbox self-test: %s", msg)
+        return
+    log.error("exec sandbox self-test: %s", msg)
+    isolation_expected = exec_credentials() is not None or landlock_available()
+    mode = os.environ.get("SOPHAGENT_SANDBOX_SELFTEST", "on").lower()
+    if isolation_expected and mode not in {"off", "warn"}:
+        raise RuntimeError(
+            "exec 沙箱启动自检失败，且当前环境本应启用隔离——拒绝启动。"
+            "设 SOPHAGENT_SANDBOX_SELFTEST=warn 可降级为告警。详情：" + msg
+        )
+
+
 async def _bootstrap_admin(db: Database) -> None:
     cfg = get_config()
     if await db.count_users() > 0:
@@ -94,6 +118,7 @@ async def lifespan(app: FastAPI):
     # 本地非 root 无降权属预期，按 landlock 是否降级决定级别。
     misconfig = os.geteuid() == 0 and exec_credentials() is None
     (log.warning if ("degraded" in status or misconfig) else log.info)(status)
+    await _run_exec_selftest(cfg)
     app.state.db = db
     seeded = seed_builtin_skills(cfg.skills_dir)  # populate missing built-in skills
     if seeded:

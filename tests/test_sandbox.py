@@ -260,3 +260,110 @@ def test_workspace_for_no_chown_without_credentials(monkeypatch, tmp_path):
     cfg.workspace_for(7)
     config_mod.reset_config()
     assert called["n"] == 0
+
+
+# -- 启动期 exec 沙箱功能自检(抓"声称 active 实则失效"的静默退化) ----------
+
+def test_selftest_verdict_pass_with_isolation():
+    import sophagent.tools.terminal as term
+    ok, msg = term._selftest_verdict(exec_ok=True, isolation_expected=True, leaked=False)
+    assert ok is True
+
+
+def test_selftest_verdict_pass_without_isolation_even_if_readable():
+    """无隔离层(本地 dev)时，越界可读不算失败——只要 exec 正常。"""
+    import sophagent.tools.terminal as term
+    ok, msg = term._selftest_verdict(exec_ok=True, isolation_expected=False, leaked=True)
+    assert ok is True
+
+
+def test_selftest_verdict_fail_broken_exec():
+    import sophagent.tools.terminal as term
+    ok, msg = term._selftest_verdict(exec_ok=False, isolation_expected=True, leaked=False)
+    assert ok is False and ("执行" in msg or "exec" in msg.lower())
+
+
+def test_selftest_verdict_fail_isolation_leak():
+    """声称隔离生效却读到越界内容 = 静默退化，必须判失败。"""
+    import sophagent.tools.terminal as term
+    ok, msg = term._selftest_verdict(exec_ok=True, isolation_expected=True, leaked=True)
+    assert ok is False and ("阻止" in msg or "隔离" in msg or "isolation" in msg.lower())
+
+
+async def test_selftest_exec_passes_on_host(monkeypatch, tmp_path):
+    """真实走启动器跑一遍：本机(landlock 可用)应 exec 正常且越界读被挡 → 通过。"""
+    monkeypatch.setenv("SOPHAGENT_DATA_DIR", str(tmp_path / "data"))
+    from sophagent import config as cm
+    cm.reset_config(); cfg = cm.get_config()
+    import sophagent.tools.terminal as term
+    ok, msg = await term.selftest_exec(cfg)
+    cm.reset_config()
+    assert ok is True, msg
+
+
+async def test_selftest_exec_flags_broken_exec(monkeypatch, tmp_path):
+    """模拟 exec 全崩(如 uvloop bug):自检必须报失败。"""
+    monkeypatch.setenv("SOPHAGENT_DATA_DIR", str(tmp_path / "data"))
+    from sophagent import config as cm
+    cm.reset_config(); cfg = cm.get_config()
+    import sophagent.tools.terminal as term
+
+    async def broken(cmd, cwd, timeout):
+        return "Error: command failed\n[exit code: 1]"
+
+    monkeypatch.setattr(term, "_run_subprocess", broken)
+    ok, msg = await term.selftest_exec(cfg)
+    cm.reset_config()
+    assert ok is False
+
+
+# -- 启动自检的"拒绝启动"接线(main._run_exec_selftest) ----------------------
+
+async def _failing_selftest(cfg):
+    return (False, "boom: exec broken")
+
+
+async def test_selftest_aborts_startup_when_isolation_expected(monkeypatch, tmp_path):
+    monkeypatch.setenv("SOPHAGENT_DATA_DIR", str(tmp_path / "data"))
+    monkeypatch.delenv("SOPHAGENT_SANDBOX_SELFTEST", raising=False)
+    from sophagent import config as cm
+    cm.reset_config(); cfg = cm.get_config()
+    import sophagent.main as main
+    import sophagent.tools.terminal as term
+    import sophagent.tools.sandbox as sb
+    monkeypatch.setattr(term, "selftest_exec", _failing_selftest)
+    monkeypatch.setattr(sb, "landlock_available", lambda: True)   # 隔离本应生效
+    monkeypatch.setattr(sb, "exec_credentials", lambda: None)
+    with pytest.raises(RuntimeError):
+        await main._run_exec_selftest(cfg)
+    cm.reset_config()
+
+
+async def test_selftest_warn_mode_does_not_abort(monkeypatch, tmp_path):
+    monkeypatch.setenv("SOPHAGENT_DATA_DIR", str(tmp_path / "data"))
+    monkeypatch.setenv("SOPHAGENT_SANDBOX_SELFTEST", "warn")
+    from sophagent import config as cm
+    cm.reset_config(); cfg = cm.get_config()
+    import sophagent.main as main
+    import sophagent.tools.terminal as term
+    import sophagent.tools.sandbox as sb
+    monkeypatch.setattr(term, "selftest_exec", _failing_selftest)
+    monkeypatch.setattr(sb, "landlock_available", lambda: True)
+    await main._run_exec_selftest(cfg)  # 不应抛
+    cm.reset_config()
+
+
+async def test_selftest_no_abort_without_isolation(monkeypatch, tmp_path):
+    """本地 dev(无隔离层)即使自检失败也不拒绝启动。"""
+    monkeypatch.setenv("SOPHAGENT_DATA_DIR", str(tmp_path / "data"))
+    monkeypatch.delenv("SOPHAGENT_SANDBOX_SELFTEST", raising=False)
+    from sophagent import config as cm
+    cm.reset_config(); cfg = cm.get_config()
+    import sophagent.main as main
+    import sophagent.tools.terminal as term
+    import sophagent.tools.sandbox as sb
+    monkeypatch.setattr(term, "selftest_exec", _failing_selftest)
+    monkeypatch.setattr(sb, "landlock_available", lambda: False)
+    monkeypatch.setattr(sb, "exec_credentials", lambda: None)
+    await main._run_exec_selftest(cfg)  # 不应抛
+    cm.reset_config()
