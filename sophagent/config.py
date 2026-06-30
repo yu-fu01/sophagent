@@ -96,15 +96,15 @@ class Config:
 
     def workspace_for(self, user_id: int) -> Path:
         ws = self.workspaces_dir / str(user_id)
-        existed = ws.exists()
         ws.mkdir(parents=True, exist_ok=True)
-        if not existed:
-            creds = exec_credentials()
-            if creds is not None:
-                try:
-                    os.chown(ws, creds[0], creds[1])
-                except OSError:
-                    pass  # 非 root 时无权改属主，本就无需降权，忽略
+        # 幂等：每次都尝试 chown 给 sandbox，确保存量(升级前 root 持有)workspace
+        # 也归属正确，降权后的 exec 子进程才能读写自己的 workspace。
+        creds = exec_credentials()
+        if creds is not None:
+            try:
+                os.chown(ws, creds[0], creds[1])
+            except OSError:
+                pass  # 非 root 时无权改属主，本就无需降权，忽略
         return ws
 
 

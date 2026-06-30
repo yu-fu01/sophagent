@@ -90,6 +90,7 @@ async def python_exec(ctx: ToolContext, code: str, timeout: float = 0) -> str:
     timeout = min(timeout or get_config().tool_timeout, MAX_TIMEOUT)
     script = ctx.workspace / f".pyexec_{uuid.uuid4().hex[:8]}.py"
     script.write_text(code, encoding="utf-8")
+    script.chmod(0o644)  # 降权后的 sandbox 子进程需可读以执行(不依赖默认 umask)
     try:
         return await _run_subprocess(f"python3 {script.name}", str(ctx.workspace), timeout)
     finally:

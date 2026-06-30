@@ -36,12 +36,22 @@ def _harden_data_dir(cfg) -> None:
             os.chmod(d, 0o711)
         except OSError:
             pass
-    try:
-        if cfg.skills_dir.exists():
-            os.chmod(cfg.skills_dir, 0o755)  # skill 脚本需对 sandbox 可读
-    except OSError:
-        pass
-    for f in (cfg.db_path, cfg.data_dir / ".secret", cfg.data_dir / "providers.yaml"):
+    # skill 脚本需对降权后的 sandbox 子进程可读：递归授目录 o+x、文件 o+r
+    if cfg.skills_dir.exists():
+        for root, dirs, files in os.walk(cfg.skills_dir):
+            try:
+                os.chmod(root, 0o755)
+            except OSError:
+                pass
+            for name in files:
+                try:
+                    p = os.path.join(root, name)
+                    os.chmod(p, os.stat(p).st_mode | 0o044)  # 加 group/other 读
+                except OSError:
+                    pass
+    secret_files = [cfg.data_dir / ".secret", cfg.data_dir / "providers.yaml"]
+    secret_files += sorted(cfg.data_dir.glob("sophagent.db*"))  # db + WAL/SHM 旁文件
+    for f in secret_files:
         try:
             if f.exists():
                 os.chmod(f, 0o600)
