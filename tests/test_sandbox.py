@@ -92,3 +92,38 @@ def test_sandbox_status_degraded(monkeypatch):
     monkeypatch.setattr(sb, "landlock_available", lambda: False)
     msg = sb.sandbox_status()
     assert "degraded" in msg.lower()
+
+
+# -- exec_credentials：降权凭据探测 ------------------------------------------
+
+def test_exec_credentials_none_when_not_root(monkeypatch):
+    import sophagent.tools.sandbox as sb
+    monkeypatch.setattr(sb.os, "geteuid", lambda: 1000)
+    assert sb.exec_credentials() is None
+
+
+def test_exec_credentials_returns_uid_gid_when_root_and_user_exists(monkeypatch):
+    import sophagent.tools.sandbox as sb
+    import pwd
+    monkeypatch.setattr(sb.os, "geteuid", lambda: 0)
+    fake = pwd.struct_passwd(("sandbox", "x", 1001, 1002, "", "/nonexistent", "/usr/sbin/nologin"))
+    monkeypatch.setattr(sb.pwd, "getpwnam", lambda n: fake if n == "sandbox" else (_ for _ in ()).throw(KeyError(n)))
+    assert sb.exec_credentials() == (1001, 1002)
+
+
+def test_exec_credentials_none_when_root_but_user_missing(monkeypatch):
+    import sophagent.tools.sandbox as sb
+    monkeypatch.setattr(sb.os, "geteuid", lambda: 0)
+    def _raise(n): raise KeyError(n)
+    monkeypatch.setattr(sb.pwd, "getpwnam", _raise)
+    assert sb.exec_credentials() is None
+
+
+def test_exec_credentials_honors_env_user(monkeypatch):
+    import sophagent.tools.sandbox as sb
+    import pwd
+    monkeypatch.setenv("SOPHAGENT_EXEC_USER", "worker")
+    monkeypatch.setattr(sb.os, "geteuid", lambda: 0)
+    fake = pwd.struct_passwd(("worker", "x", 2000, 2000, "", "/nonexistent", "/usr/sbin/nologin"))
+    monkeypatch.setattr(sb.pwd, "getpwnam", lambda n: fake if n == "worker" else (_ for _ in ()).throw(KeyError(n)))
+    assert sb.exec_credentials() == (2000, 2000)

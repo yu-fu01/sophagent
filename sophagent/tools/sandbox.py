@@ -15,6 +15,7 @@ from __future__ import annotations
 
 import ctypes
 import os
+import pwd
 import sys
 from pathlib import Path
 
@@ -46,6 +47,24 @@ def landlock_available() -> bool:
     except OSError:
         return False
     return abi >= 1
+
+
+def exec_credentials() -> "tuple[int, int] | None":
+    """(uid, gid) to drop the exec subprocess to, or None if uid isolation
+    isn't available here.
+
+    Available only when we are root (can setuid) AND the dedicated low-priv
+    user exists (default ``sandbox``, override via ``SOPHAGENT_EXEC_USER``).
+    Non-root dev runs and misconfigured images return None → caller skips
+    ``user=`` and falls back to the Landlock / redaction layers."""
+    if os.geteuid() != 0:
+        return None
+    name = os.environ.get("SOPHAGENT_EXEC_USER", "sandbox")
+    try:
+        ent = pwd.getpwnam(name)
+    except KeyError:
+        return None
+    return (ent.pw_uid, ent.pw_gid)
 
 
 def exec_argv(command: str, workspace: str) -> list[str]:
