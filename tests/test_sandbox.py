@@ -76,3 +76,19 @@ async def test_python_exec_still_computes(ctx):
 async def test_terminal_still_runs_normal_command(ctx):
     out = await registry.dispatch("terminal", {"command": "echo hello-world"}, ctx)
     assert "hello-world" in out
+
+
+# -- 启动状态串：运维可一眼确认走的是沙箱还是降级 --------------------------
+
+def test_sandbox_status_active(monkeypatch):
+    import sophagent.tools.sandbox as sb
+    monkeypatch.setattr(sb, "landlock_available", lambda: True)
+    msg = sb.sandbox_status()
+    assert "active" in msg.lower() and "landlock" in msg.lower()
+
+
+def test_sandbox_status_degraded(monkeypatch):
+    import sophagent.tools.sandbox as sb
+    monkeypatch.setattr(sb, "landlock_available", lambda: False)
+    msg = sb.sandbox_status()
+    assert "degraded" in msg.lower()

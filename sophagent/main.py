@@ -52,6 +52,9 @@ async def lifespan(app: FastAPI):
     from .tools import load_all
 
     load_all()
+    from .tools.sandbox import sandbox_status
+    status = sandbox_status()
+    (log.info if "active" in status else log.warning)(status)
     app.state.db = db
     seeded = seed_builtin_skills(cfg.skills_dir)  # populate missing built-in skills
     if seeded:
