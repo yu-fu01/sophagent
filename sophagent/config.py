@@ -18,6 +18,16 @@ COMPRESS_THRESHOLD_MIN = 0.3
 COMPRESS_THRESHOLD_MAX = 0.9
 
 
+def exec_credentials():
+    """Thin indirection over ``tools.sandbox.exec_credentials``.
+
+    Imported lazily inside the body to avoid a ``config`` ↔ ``tools`` import
+    cycle, yet kept at module scope so callers (and tests) resolve it as
+    ``config.exec_credentials`` — giving a stable patch seam."""
+    from .tools.sandbox import exec_credentials as _ec
+    return _ec()
+
+
 @dataclass
 class ProviderConfig:
     name: str
@@ -89,13 +99,12 @@ class Config:
         existed = ws.exists()
         ws.mkdir(parents=True, exist_ok=True)
         if not existed:
-            from .tools.sandbox import exec_credentials  # 延迟 import 避免循环依赖
             creds = exec_credentials()
             if creds is not None:
                 try:
                     os.chown(ws, creds[0], creds[1])
                 except OSError:
-                    pass  # 非 root 或权限不足：不降权场景，忽略
+                    pass  # 非 root 时无权改属主，本就无需降权，忽略
         return ws
 
 

@@ -188,13 +188,12 @@ async def test_run_subprocess_omits_user_group_when_no_credentials(ctx, monkeypa
 def test_workspace_for_chowns_to_sandbox_when_root(monkeypatch, tmp_path):
     monkeypatch.setenv("SOPHAGENT_DATA_DIR", str(tmp_path / "data"))
     from sophagent import config as config_mod
-    import sophagent.tools.sandbox as sb
-    import os as os_mod
+    import sophagent.config as cfgmod
     config_mod.reset_config()
     cfg = config_mod.get_config()
-    monkeypatch.setattr(sb, "exec_credentials", lambda: (1234, 5678))
+    monkeypatch.setattr(cfgmod, "exec_credentials", lambda: (1234, 5678))
     chowned = {}
-    monkeypatch.setattr(os_mod, "chown", lambda p, u, g: chowned.update(path=str(p), uid=u, gid=g))
+    monkeypatch.setattr(cfgmod.os, "chown", lambda p, u, g: chowned.update(path=str(p), uid=u, gid=g))
     ws = cfg.workspace_for(7)
     config_mod.reset_config()
     assert chowned == {"path": str(ws), "uid": 1234, "gid": 5678}
@@ -203,13 +202,12 @@ def test_workspace_for_chowns_to_sandbox_when_root(monkeypatch, tmp_path):
 def test_workspace_for_no_chown_without_credentials(monkeypatch, tmp_path):
     monkeypatch.setenv("SOPHAGENT_DATA_DIR", str(tmp_path / "data"))
     from sophagent import config as config_mod
-    import sophagent.tools.sandbox as sb
-    import os as os_mod
+    import sophagent.config as cfgmod
     config_mod.reset_config()
     cfg = config_mod.get_config()
-    monkeypatch.setattr(sb, "exec_credentials", lambda: None)
+    monkeypatch.setattr(cfgmod, "exec_credentials", lambda: None)
     called = {"n": 0}
-    monkeypatch.setattr(os_mod, "chown", lambda *a: called.update(n=called["n"] + 1))
+    monkeypatch.setattr(cfgmod.os, "chown", lambda *a: called.update(n=called["n"] + 1))
     cfg.workspace_for(7)
     config_mod.reset_config()
     assert called["n"] == 0
