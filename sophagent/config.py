@@ -18,6 +18,16 @@ COMPRESS_THRESHOLD_MIN = 0.3
 COMPRESS_THRESHOLD_MAX = 0.9
 
 
+def exec_credentials():
+    """Thin indirection over ``tools.sandbox.exec_credentials``.
+
+    Imported lazily inside the body to avoid a ``config`` ↔ ``tools`` import
+    cycle, yet kept at module scope so callers (and tests) resolve it as
+    ``config.exec_credentials`` — giving a stable patch seam."""
+    from .tools.sandbox import exec_credentials as _ec
+    return _ec()
+
+
 @dataclass
 class ProviderConfig:
     name: str
@@ -87,6 +97,14 @@ class Config:
     def workspace_for(self, user_id: int) -> Path:
         ws = self.workspaces_dir / str(user_id)
         ws.mkdir(parents=True, exist_ok=True)
+        # 幂等：每次都尝试 chown 给 sandbox，确保存量(升级前 root 持有)workspace
+        # 也归属正确，降权后的 exec 子进程才能读写自己的 workspace。
+        creds = exec_credentials()
+        if creds is not None:
+            try:
+                os.chown(ws, creds[0], creds[1])
+            except OSError:
+                pass  # 非 root 时无权改属主，本就无需降权，忽略
         return ws
 
 

@@ -15,6 +15,7 @@ from __future__ import annotations
 
 import ctypes
 import os
+import pwd
 import sys
 from pathlib import Path
 
@@ -48,28 +49,50 @@ def landlock_available() -> bool:
     return abi >= 1
 
 
-def exec_argv(command: str, workspace: str) -> list[str]:
-    """argv that runs ``command`` (shell-interpreted) confined to ``workspace``.
+def exec_credentials() -> "tuple[int, int] | None":
+    """(uid, gid) to drop the exec subprocess to, or None if uid isolation
+    isn't available here.
 
-    With Landlock: ``python3 _sandbox_exec.py <ws> -- /bin/sh -c <command>`` so
-    the subprocess can only read the workspace + runtime. Without it: a plain
-    ``/bin/sh -c`` (the redaction layer is the backstop). Always launched via
-    ``create_subprocess_exec`` — no shell-quoting of the wrapper itself.
-    """
+    Available only when we are root (can setuid) AND the dedicated low-priv
+    user exists (default ``sandbox``, override via ``SOPHAGENT_EXEC_USER``).
+    Non-root dev runs and misconfigured images return None → caller skips
+    ``user=`` and falls back to the Landlock / redaction layers."""
+    if os.geteuid() != 0:
+        return None
+    name = os.environ.get("SOPHAGENT_EXEC_USER", "sandbox")
+    try:
+        ent = pwd.getpwnam(name)
+    except KeyError:
+        return None
+    return (ent.pw_uid, ent.pw_gid)
+
+
+def exec_argv(command: str, workspace: str) -> list[str]:
+    """argv that runs ``command`` (shell-interpreted) under the active sandbox.
+
+    When uid isolation and/or Landlock applies, route through the launcher
+    ``_sandbox_exec.py <uid|-> <gid|-> <landlock> <ws> -- /bin/sh -c <cmd>`` which
+    drops privileges and/or confines reads *inside the launched process*. This is
+    deliberately NOT done via ``create_subprocess_exec(user=,group=)``: uvloop
+    (uvicorn's production loop) rejects those kwargs. When neither layer applies
+    (local non-root dev on an old kernel), return a plain ``/bin/sh -c``."""
     base = ["/bin/sh", "-c", command]
-    if landlock_available():
-        return [sys.executable, _LAUNCHER, str(workspace), "--", *base]
-    return base
+    creds = exec_credentials()
+    landlock = landlock_available()
+    if creds is None and not landlock:
+        return base
+    uid = str(creds[0]) if creds else "-"
+    gid = str(creds[1]) if creds else "-"
+    ll = "1" if landlock else "0"
+    return [sys.executable, _LAUNCHER, uid, gid, ll, str(workspace), "--", *base]
 
 
 def sandbox_status() -> str:
     """One-line, log-friendly summary of the exec sandbox's effective state.
 
-    Logged once at startup so operators can confirm which protection layer is
-    actually in force on the deployed kernel (Landlock is kernel/seccomp
-    dependent and degrades silently otherwise)."""
-    if landlock_available():
-        return "exec sandbox: landlock active (terminal/python_exec confined to workspace)"
-    return ("exec sandbox: DEGRADED — landlock unavailable on this kernel; "
-            "exec tools fall back to output redaction only (plaintext secrets only, "
-            "encoded exfiltration not blocked)")
+    Logged once at startup so operators can confirm which protection layers are
+    actually in force: uid isolation (OS-user, any kernel) and Landlock
+    (kernel/seccomp dependent). Both degrade silently otherwise."""
+    uid = "active" if exec_credentials() is not None else "unavailable"
+    landlock = "active" if landlock_available() else "degraded"
+    return f"exec sandbox: uid-isolation={uid}, landlock={landlock}"

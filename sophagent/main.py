@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import logging
 import mimetypes
+import os
 import secrets
 from contextlib import asynccontextmanager
 from pathlib import Path
@@ -22,6 +23,64 @@ from .db import Database
 log = logging.getLogger("sophagent")
 
 WEB_DIR = Path(__file__).resolve().parent.parent / "web"
+
+
+def _harden_data_dir(cfg) -> None:
+    """root 容器内收紧 data 目录权限：目录 0711(可穿行不可列举)，密钥文件
+    0600，skills 目录 0755(脚本需可读)，使降权后的 exec 子进程(sandbox 用户)
+    读不到密钥但能进入自己的 workspace。非 root 环境直接跳过(本地开发无降权)。"""
+    if os.geteuid() != 0:
+        return
+    for d in (cfg.data_dir, cfg.workspaces_dir):
+        try:
+            os.chmod(d, 0o711)
+        except OSError:
+            pass
+    # skill 脚本需对降权后的 sandbox 子进程可读：递归授目录 o+x、文件 o+r
+    if cfg.skills_dir.exists():
+        for root, dirs, files in os.walk(cfg.skills_dir):
+            try:
+                os.chmod(root, 0o755)
+            except OSError:
+                pass
+            for name in files:
+                try:
+                    p = os.path.join(root, name)
+                    os.chmod(p, os.stat(p).st_mode | 0o044)  # 加 group/other 读
+                except OSError:
+                    pass
+    secret_files = [cfg.data_dir / ".secret", cfg.data_dir / "providers.yaml"]
+    secret_files += sorted(cfg.data_dir.glob("sophagent.db*"))  # db + WAL/SHM 旁文件
+    for f in secret_files:
+        try:
+            if f.exists():
+                os.chmod(f, 0o600)
+        except OSError:
+            pass
+
+
+async def _run_exec_selftest(cfg) -> None:
+    """启动期功能自检：真的走启动器跑一条命令，验证 exec 能执行、且(隔离应生效时)
+    读不到沙箱外的文件。这在生产事件循环(uvloop)下运行，能抓住 sandbox_status
+    仍报 active 却实际全崩/隔离失效 的静默退化。
+
+    隔离本应生效却自检失败时，默认 **拒绝启动**（把回归挡在上线前）；
+    设 ``SOPHAGENT_SANDBOX_SELFTEST=warn``（或 off）可降级为仅告警。"""
+    from .tools.sandbox import exec_credentials, landlock_available
+    from .tools.terminal import selftest_exec
+
+    ok, msg = await selftest_exec(cfg)
+    if ok:
+        log.info("exec sandbox self-test: %s", msg)
+        return
+    log.error("exec sandbox self-test: %s", msg)
+    isolation_expected = exec_credentials() is not None or landlock_available()
+    mode = os.environ.get("SOPHAGENT_SANDBOX_SELFTEST", "on").lower()
+    if isolation_expected and mode not in {"off", "warn"}:
+        raise RuntimeError(
+            "exec 沙箱启动自检失败，且当前环境本应启用隔离——拒绝启动。"
+            "设 SOPHAGENT_SANDBOX_SELFTEST=warn 可降级为告警。详情：" + msg
+        )
 
 
 async def _bootstrap_admin(db: Database) -> None:
@@ -52,9 +111,14 @@ async def lifespan(app: FastAPI):
     from .tools import load_all
 
     load_all()
-    from .tools.sandbox import sandbox_status
+    _harden_data_dir(cfg)
+    from .tools.sandbox import exec_credentials, sandbox_status
     status = sandbox_status()
-    (log.info if "active" in status else log.warning)(status)
+    # 容器内(root)却拿不到降权凭据 = sandbox 用户缺失，属配置异常 → 告警；
+    # 本地非 root 无降权属预期，按 landlock 是否降级决定级别。
+    misconfig = os.geteuid() == 0 and exec_credentials() is None
+    (log.warning if ("degraded" in status or misconfig) else log.info)(status)
+    await _run_exec_selftest(cfg)
     app.state.db = db
     seeded = seed_builtin_skills(cfg.skills_dir)  # populate missing built-in skills
     if seeded:

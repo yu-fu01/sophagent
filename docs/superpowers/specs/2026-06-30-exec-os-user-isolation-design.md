@@ -1,7 +1,7 @@
 # exec 子进程 OS 用户隔离(P0#2)设计
 
 日期:2026-06-30
-状态:已批准设计,待实现
+状态:已实现并经 Docker 实测（2026-06-30）。含三轮纠错：补充组泄漏(extra_groups)、uvloop 不兼容(降权移入启动器)、P3 启动期功能自检。详见末尾「验证过程与纠错记录」。
 关联:`37af5b5`(Landlock 沙箱 + 明文脱敏)、`729e0e4`(沙箱状态日志);参考漏洞报告 ai-cs-qa API Key 提取
 
 ## 背景与目标
@@ -95,6 +95,32 @@ exec sandbox: uid-isolation=active, landlock=degraded         # 老内核 Docker
 
 ## 影响与回滚
 
-- 改动文件:`Dockerfile`、`sophagent/tools/sandbox.py`、`sophagent/tools/terminal.py`、`sophagent/config.py`(workspace chown)、`sophagent/main.py`(日志)、新增测试。
+- 改动文件:`Dockerfile`、`sophagent/tools/sandbox.py`、`sophagent/tools/_sandbox_exec.py`(启动器:降权 + Landlock)、`sophagent/tools/terminal.py`(走启动器 + 启动自检)、`sophagent/config.py`(workspace chown)、`sophagent/main.py`(设权 + 日志 + 启动自检)、`tests/test_sandbox.py`、README。
 - 行为变化:仅在 root 容器 + sandbox 用户存在时启用降权;其余环境零行为变化。
 - 回滚:恢复 Dockerfile `USER app`,`exec_credentials()` 在非 root 下自然返 `None`,代码路径自动退回。
+
+## 验证过程与纠错记录（诚实留痕，供审计）
+
+实现后的 Docker 实测暴露了两个单测/本地探针都没抓到的真实缺陷，记录如下：
+
+### 纠错 1：降权子进程残留 root 补充组（已修）
+- **现象**：Docker 内 `id` 显示降权后仍 `groups=…,0(root)`。
+- **根因**：`create_subprocess_exec(user=,group=)` 不调用 `setgroups()`，子进程继承 root 父进程的补充组（gid 0）。降级路径（无 Landlock）下，任何 `group-root` 可读文件（如 0640）仍可被读。
+- **修复**：丢弃继承的补充组。最终随纠错 2 一并落到启动器里的 `setgroups([])`。
+
+### 纠错 2：uvloop 拒绝 user/group/extra_groups，生产 exec 全崩（已修，关键）
+- **现象**：在真实 `uvicorn`（用 **uvloop** 事件循环）部署里，uid 隔离一旦激活，`terminal`/`python_exec` 直接 `ValueError: unexpected kwargs: user, group, extra_groups`——连合法使用都坏；而 `sandbox_status()` 仍报 `active`。
+- **根因**：privilege drop 经由 `create_subprocess_exec` 的 `user/group/extra_groups` kwargs 实现，标准 `asyncio` 支持、**uvloop 不支持**。pytest 与早期 Docker 探针都用普通 `asyncio.run()`，从未走 uvloop 路径 → 漏测。
+- **修复**（commit `235e997`）：把降权（`setgroups([])`/`setgid`/`setuid`）与 Landlock 一并移入启动器进程 `_sandbox_exec.py`，`_run_subprocess` 不再向 `create_subprocess_exec` 传任何 loop 不兼容 kwargs，事件循环无关。新增回归：uvloop 循环下 `_run_subprocess` 正常执行 + 绝不传 loop 不兼容 kwargs。
+- **教训**：单测的事件循环（asyncio）≠ 生产事件循环（uvloop）。**安全关键路径必须在与生产同构的环境（同镜像、同 loop、root + sandbox 用户）下实测**，不能只靠单测。
+
+### 加固：启动期功能自检（P3，commit `a1e899f`）
+- **动机**：上面 uvloop bug 期间 `sandbox_status()` 照报 `active`——配置级检查查不出功能性退化。
+- **做法**：`selftest_exec` 在启动时（生产 uvloop 循环下）真的走启动器跑一条命令，断言 (a) exec 能执行、(b) 隔离应生效时读不到沙箱外 canary 文件。隔离本应生效却自检失败 → **默认拒绝启动**（`SOPHAGENT_SANDBOX_SELFTEST=warn/off` 可降级为告警）。
+- **实测**：真实 uvicorn 启动打印「自检通过」；注入 exec 崩溃（模拟本 bug 复发）→ 自检捕获并拒绝启动。这一关能把同类回归挡在上线前。
+
+### 最终验证状态（Docker，同生产镜像 + uvloop + root/sandbox）
+- 三类密钥（`providers.yaml` / `.secret` / `sophagent.db*`）在 **Landlock+uid** 与 **仅 uid（降级）** 两路径下均 `Permission denied`；
+- 合法 `python_exec`（含 umask 0077）正常输出；exec 身份 `uid=1001(sandbox) groups=1001(sandbox)`（无 root 组）；
+- 启动日志 `uid-isolation=active, landlock=active` + `exec 自检通过`。
+
