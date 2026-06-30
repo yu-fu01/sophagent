@@ -1,11 +1,16 @@
-"""Self-contained Landlock launcher (stdlib only).
+"""Self-contained sandbox launcher (stdlib only).
 
-Spawned as ``python3 _sandbox_exec.py <workspace> [extra_ro ...] -- <argv...>``.
+Spawned as ``python3 _sandbox_exec.py <uid|-> <gid|-> <landlock:0|1> <workspace>
+[extra_ro ...] -- <argv...>``. Running the privilege drop *here* (rather than via
+``create_subprocess_exec(user=,group=)``) keeps it event-loop agnostic: uvloop —
+which uvicorn uses in production — rejects those kwargs, but a plain launcher
+process drops privileges itself with ``setgroups``/``setgid``/``setuid``.
+
 This file is read and parsed by the interpreter *before* the sandbox is applied
-(so it needs no special access), then it restricts the process to read only the
-workspace + language runtime and ``execvp``s the real command. The exec'd
-program inherits the restriction, so anything it spawns (a shell, python, cat)
-cannot read the data dir / project source / $HOME.
+(so it needs no special access), then it drops to the low-priv user (if asked),
+restricts reads to the workspace + runtime via Landlock (if asked), and
+``execvp``s the real command. The exec'd program inherits both, so anything it
+spawns (a shell, python, cat) runs unprivileged and cannot read the data dir.
 
 Kept import-free of the sophagent package on purpose: the sandbox denies reading
 the project source, which would break ``import sophagent`` here.
@@ -79,16 +84,29 @@ def _restrict(workspace: str, extra_ro: list[str]) -> None:
         raise OSError(ctypes.get_errno(), "landlock_restrict_self")
 
 
+def _drop_privs(uid: int, gid: int) -> None:
+    """Drop to the low-priv user. ``setgroups([])`` first to shed the root
+    parent's supplementary groups (else the child keeps gid 0 and could read
+    group-root files); then setgid before setuid (setgid needs privilege we
+    lose at setuid)."""
+    os.setgroups([])
+    os.setgid(gid)
+    os.setuid(uid)
+
+
 def main(argv: list[str]) -> "int":
     sep = argv.index("--")
-    workspace = argv[1]
-    extra_ro = argv[2:sep]
+    uid_s, gid_s, landlock_s, workspace = argv[1], argv[2], argv[3], argv[4]
+    extra_ro = argv[5:sep]
     inner = argv[sep + 1:]
     # /tmp is not readable inside the sandbox; point temp dirs at the workspace
     # so tempfile write-then-read keeps working.
     for var in ("TMPDIR", "TEMP", "TMP"):
         os.environ[var] = workspace
-    _restrict(workspace, extra_ro)
+    if uid_s != "-":
+        _drop_privs(int(uid_s), int(gid_s))  # as root, before Landlock
+    if landlock_s == "1":
+        _restrict(workspace, extra_ro)
     os.execvp(inner[0], inner)  # replaces process image; only returns on failure
     return 127
 

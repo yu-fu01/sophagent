@@ -9,6 +9,12 @@ import pytest
 from sophagent.tools import registry
 from sophagent.tools.sandbox import landlock_available
 
+try:
+    import uvloop  # noqa: F401
+    _HAS_UVLOOP = True
+except ImportError:
+    _HAS_UVLOOP = False
+
 requires_landlock = pytest.mark.skipif(
     not landlock_available(), reason="Landlock 在此内核不可用"
 )
@@ -145,62 +151,85 @@ def test_sandbox_status_uid_unavailable(monkeypatch):
     assert "uid-isolation=unavailable" in msg and "landlock=degraded" in msg
 
 
-async def test_run_subprocess_passes_user_group_when_credentials(ctx, monkeypatch):
-    """有降权凭据时，create_subprocess_exec 收到 user=/group=。"""
+async def test_run_subprocess_never_passes_loop_incompatible_kwargs(ctx, monkeypatch):
+    """即使有降权凭据，_run_subprocess 也绝不给 create_subprocess_exec 传
+    user/group/extra_groups —— 这些会被 uvloop(uvicorn 生产事件循环)拒绝。
+    降权改由 exec_argv 的启动器进程内部完成；uid 通过位置参数(argv)编码。"""
     import sophagent.tools.terminal as term
+    import sophagent.tools.sandbox as sb
+    monkeypatch.setattr(sb, "exec_credentials", lambda: (4321, 8765))  # 假装 root 有凭据
+    monkeypatch.setattr(sb, "landlock_available", lambda: False)
     captured = {}
 
     async def fake_exec(*args, **kwargs):
-        captured["user"] = kwargs.get("user")
-        captured["group"] = kwargs.get("group")
-        raise RuntimeError("stop-after-capture")  # 不真正起进程
-
-    monkeypatch.setattr(term, "exec_credentials", lambda: (4321, 8765))
-    monkeypatch.setattr(term.asyncio, "create_subprocess_exec", fake_exec)
-    try:
-        await term._run_subprocess("echo hi", str(ctx.workspace), 5)
-    except RuntimeError:
-        pass
-    assert captured["user"] == 4321 and captured["group"] == 8765
-
-
-async def test_run_subprocess_drops_supplementary_groups(ctx, monkeypatch):
-    """有凭据时传 extra_groups=[]，丢弃继承自 root 父进程的补充组。"""
-    import sophagent.tools.terminal as term
-    captured = {}
-
-    async def fake_exec(*args, **kwargs):
-        captured["extra_groups"] = kwargs.get("extra_groups", "MISSING")
+        captured["kwargs"] = kwargs
+        captured["argv"] = args
         raise RuntimeError("stop")
 
-    monkeypatch.setattr(term, "exec_credentials", lambda: (4321, 8765))
     monkeypatch.setattr(term.asyncio, "create_subprocess_exec", fake_exec)
     try:
         await term._run_subprocess("echo hi", str(ctx.workspace), 5)
     except RuntimeError:
         pass
-    assert captured["extra_groups"] == []
+    k = captured["kwargs"]
+    assert "user" not in k and "group" not in k and "extra_groups" not in k
+    # uid 改由启动器 argv 编码(4321/8765 出现在位置参数里)
+    assert any("4321" in str(a) for a in captured["argv"])
 
 
-async def test_run_subprocess_omits_user_group_when_no_credentials(ctx, monkeypatch):
-    """无凭据（非 root）时不传 user=/group=，保持原行为。"""
+def test_exec_argv_plain_when_no_isolation(monkeypatch):
+    import sophagent.tools.sandbox as sb
+    monkeypatch.setattr(sb, "exec_credentials", lambda: None)
+    monkeypatch.setattr(sb, "landlock_available", lambda: False)
+    assert sb.exec_argv("echo hi", "/ws") == ["/bin/sh", "-c", "echo hi"]
+
+
+def test_exec_argv_landlock_only_no_drop(monkeypatch):
+    import sophagent.tools.sandbox as sb
+    monkeypatch.setattr(sb, "exec_credentials", lambda: None)
+    monkeypatch.setattr(sb, "landlock_available", lambda: True)
+    a = sb.exec_argv("echo hi", "/ws")
+    assert a[0] == sb.sys.executable and a[1] == sb._LAUNCHER
+    assert a[2:7] == ["-", "-", "1", "/ws", "--"]  # uid=- gid=- landlock=1
+    assert a[-3:] == ["/bin/sh", "-c", "echo hi"]
+
+
+def test_exec_argv_uid_drop_no_landlock(monkeypatch):
+    import sophagent.tools.sandbox as sb
+    monkeypatch.setattr(sb, "exec_credentials", lambda: (1001, 1002))
+    monkeypatch.setattr(sb, "landlock_available", lambda: False)
+    a = sb.exec_argv("echo hi", "/ws")
+    assert a[2:7] == ["1001", "1002", "0", "/ws", "--"]  # uid/gid set, landlock off
+
+
+def test_exec_argv_uid_drop_and_landlock(monkeypatch):
+    import sophagent.tools.sandbox as sb
+    monkeypatch.setattr(sb, "exec_credentials", lambda: (1001, 1002))
+    monkeypatch.setattr(sb, "landlock_available", lambda: True)
+    a = sb.exec_argv("echo hi", "/ws")
+    assert a[2:7] == ["1001", "1002", "1", "/ws", "--"]  # both layers
+
+
+@pytest.mark.skipif(
+    _HAS_UVLOOP is False,
+    reason="uvloop 未安装(生产用,本地可缺)",
+)
+def test_run_subprocess_works_under_uvloop_loop(ctx):
+    """回归守卫:在 uvloop 事件循环下 _run_subprocess 不得因 create_subprocess_exec
+    的 kwargs 报错(旧实现传 user/group/extra_groups 会被 uvloop 拒绝)。
+    同步测试 + 独立 uvloop 循环,避免与 pytest-asyncio 的循环嵌套。"""
+    import uvloop
     import sophagent.tools.terminal as term
-    captured = {}
 
-    async def fake_exec(*args, **kwargs):
-        captured["has_user"] = "user" in kwargs
-        captured["has_group"] = "group" in kwargs
-        captured["has_eg"] = "extra_groups" in kwargs
-        raise RuntimeError("stop")
+    async def go():
+        return await term._run_subprocess("echo uvloop-ok", str(ctx.workspace), 10)
 
-    monkeypatch.setattr(term, "exec_credentials", lambda: None)
-    monkeypatch.setattr(term.asyncio, "create_subprocess_exec", fake_exec)
+    loop = uvloop.new_event_loop()
     try:
-        await term._run_subprocess("echo hi", str(ctx.workspace), 5)
-    except RuntimeError:
-        pass
-    assert captured["has_user"] is False and captured["has_group"] is False
-    assert captured["has_eg"] is False
+        out = loop.run_until_complete(go())
+    finally:
+        loop.close()
+    assert "uvloop-ok" in out
 
 
 # -- workspace_for chown 给 sandbox 用户 ----------------------------------

@@ -14,7 +14,7 @@ import uuid
 
 from ..config import get_config
 from .registry import ToolContext, tool, truncate
-from .sandbox import exec_argv, exec_credentials
+from .sandbox import exec_argv
 
 ENV_WHITELIST = ("PATH", "HOME", "LANG", "LC_ALL", "TERM", "TZ")
 MAX_TIMEOUT = 300.0
@@ -25,13 +25,8 @@ def _safe_env() -> dict[str, str]:
 
 
 async def _run_subprocess(cmd: str, cwd: str, timeout: float) -> str:
-    creds = exec_credentials()
-    extra: dict = {}
-    if creds is not None:
-        extra["user"], extra["group"] = creds
-        # 丢弃从 root 父进程继承的补充组(否则子进程仍在 gid 0 root 组里，
-        # 降级路径下可读 group-root 文件)。setgroups 需要父进程的 root 权限。
-        extra["extra_groups"] = []
+    # Privilege drop + Landlock are applied inside exec_argv's launcher process,
+    # NOT via user=/group= kwargs — uvloop (uvicorn's loop) rejects those.
     proc = await asyncio.create_subprocess_exec(
         *exec_argv(cmd, cwd),
         cwd=cwd,
@@ -39,7 +34,6 @@ async def _run_subprocess(cmd: str, cwd: str, timeout: float) -> str:
         stdout=asyncio.subprocess.PIPE,
         stderr=asyncio.subprocess.STDOUT,
         start_new_session=True,  # own process group so we can kill children
-        **extra,
     )
     try:
         out, _ = await asyncio.wait_for(proc.communicate(), timeout=timeout)

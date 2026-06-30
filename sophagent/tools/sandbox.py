@@ -68,17 +68,23 @@ def exec_credentials() -> "tuple[int, int] | None":
 
 
 def exec_argv(command: str, workspace: str) -> list[str]:
-    """argv that runs ``command`` (shell-interpreted) confined to ``workspace``.
+    """argv that runs ``command`` (shell-interpreted) under the active sandbox.
 
-    With Landlock: ``python3 _sandbox_exec.py <ws> -- /bin/sh -c <command>`` so
-    the subprocess can only read the workspace + runtime. Without it: a plain
-    ``/bin/sh -c`` (the redaction layer is the backstop). Always launched via
-    ``create_subprocess_exec`` — no shell-quoting of the wrapper itself.
-    """
+    When uid isolation and/or Landlock applies, route through the launcher
+    ``_sandbox_exec.py <uid|-> <gid|-> <landlock> <ws> -- /bin/sh -c <cmd>`` which
+    drops privileges and/or confines reads *inside the launched process*. This is
+    deliberately NOT done via ``create_subprocess_exec(user=,group=)``: uvloop
+    (uvicorn's production loop) rejects those kwargs. When neither layer applies
+    (local non-root dev on an old kernel), return a plain ``/bin/sh -c``."""
     base = ["/bin/sh", "-c", command]
-    if landlock_available():
-        return [sys.executable, _LAUNCHER, str(workspace), "--", *base]
-    return base
+    creds = exec_credentials()
+    landlock = landlock_available()
+    if creds is None and not landlock:
+        return base
+    uid = str(creds[0]) if creds else "-"
+    gid = str(creds[1]) if creds else "-"
+    ll = "1" if landlock else "0"
+    return [sys.executable, _LAUNCHER, uid, gid, ll, str(workspace), "--", *base]
 
 
 def sandbox_status() -> str:
