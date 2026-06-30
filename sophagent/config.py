@@ -86,7 +86,16 @@ class Config:
 
     def workspace_for(self, user_id: int) -> Path:
         ws = self.workspaces_dir / str(user_id)
+        existed = ws.exists()
         ws.mkdir(parents=True, exist_ok=True)
+        if not existed:
+            from .tools.sandbox import exec_credentials  # 延迟 import 避免循环依赖
+            creds = exec_credentials()
+            if creds is not None:
+                try:
+                    os.chown(ws, creds[0], creds[1])
+                except OSError:
+                    pass  # 非 root 或权限不足：不降权场景，忽略
         return ws
 
 
