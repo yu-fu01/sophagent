@@ -21,3 +21,5 @@ data/
 # 安全测试产物（含漏洞复现/报告，勿入库）
 *漏洞报告*.html
 *安全漏洞*.html
+*安全审计*.html
+*security*report*.html
