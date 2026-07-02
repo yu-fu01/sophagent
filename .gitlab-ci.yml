@@ -1,0 +1,27 @@
+stages:
+  - build
+
+variables:
+  DOCKER_BUILDKIT: "1"
+  # 目标镜像仓库地址，可在 GitLab CI/CD 变量中覆盖
+  REGISTRY_IMAGE: "sophnet-registry-vpc.cn-hongkong.cr.aliyuncs.com/sophgo-oa/sophagent"
+
+build-image:
+  stage: build
+  tags:
+    - public-hk
+  when: manual
+  script:
+    - set -euo pipefail
+    - TAG=${CI_COMMIT_TAG:-dev-${CI_COMMIT_SHORT_SHA}}
+    - echo "Building and pushing ${REGISTRY_IMAGE}:${TAG}"
+    - docker pull ${REGISTRY_IMAGE}:cache || true
+    - docker build --cache-from ${REGISTRY_IMAGE}:cache -t ${REGISTRY_IMAGE}:${TAG} -t ${REGISTRY_IMAGE}:cache -f Dockerfile .
+    - docker push ${REGISTRY_IMAGE}:${TAG}
+    - docker push ${REGISTRY_IMAGE}:cache
+    - echo "Successfully pushed ${REGISTRY_IMAGE}:${TAG}"
+    - echo "IMAGE_TAG=${TAG}" >> build.env
+    - docker rmi ${REGISTRY_IMAGE}:${TAG} || true
+  artifacts:
+    reports:
+      dotenv: build.env
