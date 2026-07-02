@@ -5,6 +5,8 @@ variables:
   DOCKER_BUILDKIT: "1"
   # 目标镜像仓库地址，可在 GitLab CI/CD 变量中覆盖
   REGISTRY_IMAGE: "sophnet-registry-vpc.cn-hongkong.cr.aliyuncs.com/sophgo-oa/sophagent"
+  # 镜像仓库主机（docker login 目标），随 REGISTRY_IMAGE 一起改
+  REGISTRY_HOST: "sophnet-registry-vpc.cn-hongkong.cr.aliyuncs.com"
 
 build-image:
   stage: build
@@ -14,6 +16,10 @@ build-image:
   script:
     - set -euo pipefail
     - TAG=${CI_COMMIT_TAG:-dev-${CI_COMMIT_SHORT_SHA}}
+    # 登录仓库：凭据在 GitLab CI/CD 变量中配置（REGISTRY_USER / REGISTRY_PASSWORD，建议设为 Masked）
+    - test -n "${REGISTRY_USER:-}" || (echo "REGISTRY_USER 未设置，请在 GitLab CI/CD 变量中配置" && exit 1)
+    - test -n "${REGISTRY_PASSWORD:-}" || (echo "REGISTRY_PASSWORD 未设置，请在 GitLab CI/CD 变量中配置" && exit 1)
+    - echo "${REGISTRY_PASSWORD}" | docker login "${REGISTRY_HOST}" -u "${REGISTRY_USER}" --password-stdin
     - echo "Building and pushing ${REGISTRY_IMAGE}:${TAG}"
     - docker pull ${REGISTRY_IMAGE}:cache || true
     - docker build --cache-from ${REGISTRY_IMAGE}:cache -t ${REGISTRY_IMAGE}:${TAG} -t ${REGISTRY_IMAGE}:cache -f Dockerfile .
@@ -22,6 +28,7 @@ build-image:
     - echo "Successfully pushed ${REGISTRY_IMAGE}:${TAG}"
     - echo "IMAGE_TAG=${TAG}" >> build.env
     - docker rmi ${REGISTRY_IMAGE}:${TAG} || true
+    - docker logout "${REGISTRY_HOST}" || true
   artifacts:
     reports:
       dotenv: build.env
