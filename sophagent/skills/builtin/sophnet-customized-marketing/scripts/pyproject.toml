@@ -1,0 +1,9 @@
+[project]
+name = "sophnet-customized-marketing"
+version = "1.0.0"
+description = "Personalized marketing content generation for small business owners"
+requires-python = ">=3.10"
+dependencies = [
+    "requests>=2.28.0",
+    "sophnet-tools>=0.0.2",
+]

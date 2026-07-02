@@ -20,10 +20,33 @@ from ..config import get_config
 
 NAME_RE = re.compile(r"^[a-z0-9][a-z0-9-]{1,63}$")
 ALLOWED_SUBDIRS = ("references", "scripts", "templates", "assets")
+CONTEXTUAL_SKILL_NAMES = {"sophnet-customized-marketing"}
+CONTEXTUAL_SKILL_PREFIXES = ("beauty-salon-",)
+CONTEXTUAL_SKILL_KEYWORDS = ("美容院",)
 
 
 class SkillError(ValueError):
     pass
+
+
+def filter_index_for_agent(index: list[dict[str, Any]], agent: Any) -> list[dict[str, Any]]:
+    """Hide domain-specific skills from the default index unless the agent
+    clearly targets that domain. Explicit skill allow-lists still win."""
+    if getattr(agent, "skills", None) is not None:
+        return index
+    text = "\n".join([
+        str(getattr(agent, "name", "") or ""),
+        str(getattr(agent, "description", "") or ""),
+        str(getattr(agent, "system_prompt", "") or ""),
+    ])
+    if any(k in text for k in CONTEXTUAL_SKILL_KEYWORDS):
+        return index
+
+    def is_contextual(skill: dict[str, Any]) -> bool:
+        name = str(skill.get("name") or skill.get("dir") or "")
+        return name in CONTEXTUAL_SKILL_NAMES or any(name.startswith(p) for p in CONTEXTUAL_SKILL_PREFIXES)
+
+    return [s for s in index if not is_contextual(s)]
 
 
 def parse_frontmatter(content: str) -> tuple[dict[str, Any], str]:
@@ -95,10 +118,16 @@ class SkillStore:
             raise SkillError(f"invalid skill name {name!r} (lowercase letters, digits, hyphens; 2-64 chars)")
         return self.root / name
 
-    def view(self, name: str) -> str:
-        md = self._dir_for(name) / "SKILL.md"
+    def view(self, name: str, file_path: str = "") -> str:
+        d = self._dir_for(name)
+        md = d / "SKILL.md"
         if not md.is_file():
             raise SkillError(f"skill {name!r} not found")
+        if file_path:
+            p = self._support_path(name, file_path)
+            if not p.is_file():
+                raise SkillError(f"file not found: {file_path}")
+            return p.read_text(encoding="utf-8", errors="replace")
         content = md.read_text(encoding="utf-8", errors="replace")
         extras = [str(p.relative_to(md.parent)) for p in sorted(md.parent.rglob("*"))
                   if p.is_file() and p.name != "SKILL.md"]

@@ -1,7 +1,8 @@
 import pytest
 
+from sophagent.models import AgentDef
 from sophagent.skills.seed import builtin_dir, seed_builtin_skills
-from sophagent.skills.store import SkillError, SkillStore, parse_frontmatter
+from sophagent.skills.store import SkillError, SkillStore, filter_index_for_agent, parse_frontmatter
 
 SKILL_MD = """---
 name: deploy-checklist
@@ -71,6 +72,9 @@ def test_support_files_confined(store):
     store.create("deploy-checklist", SKILL_MD)
     store.write_support_file("deploy-checklist", "scripts/run.sh", "echo hi")
     assert (store.root / "deploy-checklist/scripts/run.sh").read_text() == "echo hi"
+    assert store.view("deploy-checklist", "scripts/run.sh") == "echo hi"
+    with pytest.raises(SkillError):
+        store.view("deploy-checklist", "../SKILL.md")
     with pytest.raises(SkillError):
         store.write_support_file("deploy-checklist", "../../evil.sh", "x")
     with pytest.raises(SkillError):
@@ -99,6 +103,11 @@ async def test_skill_manage_tool_self_evolution(ctx, tmp_path):
     assert '"ok": true' in out
     out = await registry.dispatch("skills_list", {}, ctx)
     assert "deploy-checklist" in out
+    ctx.skill_store.write_support_file("deploy-checklist", "references/checklist.md", "support notes")
+    out = await registry.dispatch(
+        "skill_view", {"name": "deploy-checklist", "file_path": "references/checklist.md"}, ctx
+    )
+    assert out == "support notes"
     prompt = build_system_prompt(ctx.agent, ctx.skill_store.index(None), None, ctx.workspace)
     assert "deploy-checklist: Steps to deploy" in prompt
     assert "skill_manage" in prompt  # self-evolution guide present
@@ -118,6 +127,14 @@ metadata:
 
 # Hermes Tagged
 body
+"""
+
+BEAUTY_SKILL_MD = """---
+name: beauty-salon-marketing
+description: "美容院营销"
+---
+
+# Beauty Salon Marketing
 """
 
 
@@ -194,3 +211,39 @@ def test_index_reads_hermes_nested_tags(store):
     store.create("hermes-tagged", HERMES_TAGS_MD)
     idx = store.index()
     assert idx[0]["tags"] == ["GitHub", "Git"]
+
+
+def _agent(**overrides):
+    base = {
+        "id": 1,
+        "name": "helper",
+        "description": "general assistant",
+        "system_prompt": "You help users.",
+        "provider": "deepseek",
+        "model": "DeepSeek-V4-Flash",
+        "tools": ["skills_list", "skill_view"],
+        "skills": None,
+    }
+    base.update(overrides)
+    return AgentDef(**base)
+
+
+def test_contextual_beauty_skills_hidden_by_default(store):
+    store.create("deploy-checklist", SKILL_MD)
+    store.create("beauty-salon-marketing", BEAUTY_SKILL_MD)
+    names = {s["name"] for s in filter_index_for_agent(store.index(), _agent())}
+    assert "deploy-checklist" in names
+    assert "beauty-salon-marketing" not in names
+
+
+def test_contextual_beauty_skills_shown_for_beauty_agent(store):
+    store.create("beauty-salon-marketing", BEAUTY_SKILL_MD)
+    names = {s["name"] for s in filter_index_for_agent(store.index(), _agent(description="美容院管理"))}
+    assert "beauty-salon-marketing" in names
+
+
+def test_contextual_beauty_skills_respect_explicit_allowlist(store):
+    store.create("beauty-salon-marketing", BEAUTY_SKILL_MD)
+    idx = store.index(["beauty-salon-marketing"])
+    names = {s["name"] for s in filter_index_for_agent(idx, _agent(skills=["beauty-salon-marketing"]))}
+    assert names == {"beauty-salon-marketing"}

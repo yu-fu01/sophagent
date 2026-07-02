@@ -18,7 +18,7 @@ services:
       - ADMIN_PASSWORD=${ADMIN_PASSWORD:-}
       - SOPHAGENT_PROVIDERS=${SOPHAGENT_PROVIDERS:-}
       - TAVILY_API_KEY=${TAVILY_API_KEY:-}
-      - OPENAI_API_KEY=${OPENAI_API_KEY:-}
+      - DEEPSEEK_API_KEY=${DEEPSEEK_API_KEY:-}
       - ANTHROPIC_API_KEY=${ANTHROPIC_API_KEY:-}
     restart: unless-stopped
     mem_limit: 1g
