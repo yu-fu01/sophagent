@@ -17,6 +17,7 @@ from .registry import ToolContext, tool
 MAX_FETCH_BYTES = 2 * 1024 * 1024
 FETCH_TIMEOUT = 30.0
 SEARCH_TIMEOUT = 10.0
+MAX_REDIRECTS = 5
 UA = "Mozilla/5.0 (compatible; sophagent/0.1)"
 
 
@@ -73,15 +74,26 @@ def extract_text(html: str) -> str:
     },
 )
 async def web_fetch(ctx: ToolContext, url: str) -> str:
-    try:
-        _assert_public_host(url)
-    except ValueError as e:
-        return f"Error: {e}"
-    async with httpx.AsyncClient(timeout=FETCH_TIMEOUT, follow_redirects=True, headers={"User-Agent": UA}) as client:
-        try:
-            resp = await client.get(url)
-        except httpx.HTTPError as e:
-            return f"Error: fetch failed: {e}"
+    # Follow redirects manually so the SSRF guard re-runs on every hop: httpx's
+    # auto follow_redirects would jump to a redirect target (e.g. a 302 to
+    # 127.0.0.1 or 169.254.169.254) without re-validating it.
+    async with httpx.AsyncClient(timeout=FETCH_TIMEOUT, follow_redirects=False,
+                                 headers={"User-Agent": UA}) as client:
+        for _ in range(MAX_REDIRECTS + 1):
+            try:
+                _assert_public_host(url)
+            except ValueError as e:
+                return f"Error: {e}"
+            try:
+                resp = await client.get(url)
+            except httpx.HTTPError as e:
+                return f"Error: fetch failed: {e}"
+            if resp.is_redirect and "location" in resp.headers:
+                url = str(resp.url.join(resp.headers["location"]))  # resolve relative
+                continue
+            break
+        else:
+            return f"Error: too many redirects (> {MAX_REDIRECTS})"
     if len(resp.content) > MAX_FETCH_BYTES:
         return f"Error: response too large (> {MAX_FETCH_BYTES} bytes)"
     ctype = resp.headers.get("content-type", "")

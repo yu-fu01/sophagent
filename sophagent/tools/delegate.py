@@ -53,6 +53,11 @@ async def delegate_task(ctx: ToolContext, goal: str, agent_name: str = "", conte
         row = await ctx.db.get_agent_by_name(agent_name)
         if row is None:
             return f"Error: unknown agent {agent_name!r}"
+        # 归属校验：只能委派到调用者有权访问的组内 agent，防止跨租户借用
+        # 他人私有 agent 定义(system_prompt/工具集)。先于 from_row,快速失败。
+        from ..perms import can_access_group
+        if not await can_access_group(ctx.db, row["group_id"], ctx.user_id):
+            return f"Error: you cannot access agent {agent_name!r}"
         agent = AgentDef.from_row(row)
         if "delegate_task" in agent.tools:
             # depth guard also applies, but don't even offer the tool downstream
