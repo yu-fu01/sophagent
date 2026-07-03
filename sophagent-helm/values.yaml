@@ -1,0 +1,38 @@
+replicaCount: 1
+
+data:
+  # PVC for mounting /data (SQLite, skills, workspaces)
+  pvcClaimName: "sophagent-data-pvc"
+
+env:
+  TZ: "Asia/Shanghai"
+  SOPHAGENT_DATA_DIR: "/data"
+  ADMIN_USERNAME: "admin"
+  ADMIN_PASSWORD: ""
+  SOPHAGENT_SECRET: ""
+  SOPHAGENT_NO_LOGIN: ""
+  SOPHAGENT_PROVIDERS: ""
+  TAVILY_API_KEY: ""
+  OPENAI_API_KEY: ""
+  ANTHROPIC_API_KEY: ""
+
+image:
+  repository: docker.fuyucloud.top/sophagent
+  tag: "latest"
+
+# Leave empty when the registry does not require authentication.
+imagePullSecretName: ""
+
+service:
+  port: 8000
+
+container:
+  name: "sophagent"
+
+resources:
+  limits:
+    cpu: "1000m"
+    memory: "1Gi"
+  requests:
+    cpu: "250m"
+    memory: "512Mi"
