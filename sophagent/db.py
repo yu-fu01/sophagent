@@ -353,6 +353,17 @@ class Database:
     async def delete_agent(self, agent_id: int) -> None:
         await self._exec("DELETE FROM agents WHERE id=?", (agent_id,))
 
+    async def list_session_ids_for_agent(self, agent_id: int) -> list[str]:
+        rows = await self._all(
+            "SELECT id FROM sessions WHERE agent_id=?", (agent_id,),
+        )
+        return [str(r["id"]) for r in rows]
+
+    async def delete_agent_cascade(self, agent_id: int) -> None:
+        """Delete all sessions (messages cascade) then the agent row."""
+        await self._exec("DELETE FROM sessions WHERE agent_id=?", (agent_id,))
+        await self._exec("DELETE FROM agents WHERE id=?", (agent_id,))
+
     # -- sessions ------------------------------------------------------------
 
     async def create_session(self, session_id: str, user_id: int, agent_id: int,
