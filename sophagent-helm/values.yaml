@@ -11,7 +11,7 @@ env:
   ADMIN_PASSWORD: ""
   SOPHAGENT_SECRET: ""
   SOPHAGENT_NO_LOGIN: ""
-  SOPHAGENT_PROVIDERS: ""
+  SOPHAGENT_PROVIDERS: '{"providers":{"sophnet":{"api_mode":"openai","base_url":"https://www.sophnet.com/api/open-apis/v1","api_key":"VaDnyTW2SqHVxeVFBjN16KyQjbDlxsInWjDD1QFm9qe2nqEaBplrf9dGsER4od_v37-jJnDrmInhKlAAzJvlzQ","context_limit":128000}}}'
   TAVILY_API_KEY: ""
   OPENAI_API_KEY: ""
   ANTHROPIC_API_KEY: ""
