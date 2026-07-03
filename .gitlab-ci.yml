@@ -4,6 +4,7 @@ stages:
 variables:
   DOCKER_BUILDKIT: "1"
   REGISTRY_IMAGE: "sophnet-registry-vpc.cn-hongkong.cr.aliyuncs.com/sophgo-oa/sophagent"
+  REGISTRY_HOST: "sophnet-registry-vpc.cn-hongkong.cr.aliyuncs.com"
 
 build-image:
   stage: build
@@ -15,14 +16,25 @@ build-image:
   script:
     - set -euo pipefail
     - TAG=${CI_COMMIT_TAG:-dev-${CI_COMMIT_SHORT_SHA}}
+    # Runner 可能对 openclaw 有预登录，但 sophagent 仓库需显式凭据；在 GitLab CI/CD Variables 配置（建议 Group 级继承）
+    - test -n "${REGISTRY_USER:-}" || (echo "REGISTRY_USER 未设置，请在 GitLab CI/CD Variables 中配置（可与 moltbot 项目共用同一 ACR 账号）" && exit 1)
+    - test -n "${REGISTRY_PASSWORD:-}" || (echo "REGISTRY_PASSWORD 未设置，请在 GitLab CI/CD Variables 中配置" && exit 1)
+    - echo "${REGISTRY_PASSWORD}" | docker login "${REGISTRY_HOST}" -u "${REGISTRY_USER}" --password-stdin
     - echo "Building and pushing ${REGISTRY_IMAGE}:${TAG}"
     - docker pull ${REGISTRY_IMAGE}:cache || true
     - docker build --cache-from ${REGISTRY_IMAGE}:cache -t ${REGISTRY_IMAGE}:${TAG} -t ${REGISTRY_IMAGE}:cache -f Dockerfile .
-    - docker push ${REGISTRY_IMAGE}:${TAG}
+    - |
+      if ! docker push ${REGISTRY_IMAGE}:${TAG}; then
+        echo "ERROR: docker push 被拒绝。请检查："
+        echo "  1. 阿里云 ACR 命名空间 sophgo-oa 下是否已创建仓库 sophagent（首次推送前需在控制台创建）"
+        echo "  2. REGISTRY_USER / REGISTRY_PASSWORD 是否对该仓库有推送权限"
+        exit 1
+      fi
     - docker push ${REGISTRY_IMAGE}:cache
     - echo "Successfully pushed ${REGISTRY_IMAGE}:${TAG}"
     - echo "IMAGE_TAG=${TAG}" >> build.env
     - docker rmi ${REGISTRY_IMAGE}:${TAG} || true
+    - docker logout "${REGISTRY_HOST}" || true
   artifacts:
     reports:
       dotenv: build.env
