@@ -1,0 +1,10 @@
+# Common Helm ignore patterns
+.DS_Store
+# Git
+.git/
+.gitignore
+# MacOS
+.Spotlight-V100
+.Trashes
+ehthumbs.db
+Thumbs.db

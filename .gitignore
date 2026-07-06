@@ -13,6 +13,8 @@ data/
 *.db-shm
 .pytest_cache/
 .coverage
+# CI 构建产物
+build.env
 .idea/
 .vscode/
 .worktrees/

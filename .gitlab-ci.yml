@@ -1,0 +1,85 @@
+stages:
+  - build
+  - deploy
+
+variables:
+  DOCKER_BUILDKIT: "1"
+  REGISTRY_IMAGE: "docker.fuyucloud.top/sophagent"
+  HELM_CHART_DIR: "./sophagent-helm"
+  HELM_VALUES_FILE: "./sophagent-helm/values.yaml"
+  K8S_NAMESPACE: "llmop"
+
+build-image:
+  stage: build
+  tags:
+    - public-hk
+  when: manual
+  variables:
+    DOCKER_BUILDKIT: 1
+  script:
+    - set -euo pipefail
+    - TAG=${CI_COMMIT_TAG:-dev-${CI_COMMIT_SHORT_SHA}}
+    - echo "Building and pushing ${REGISTRY_IMAGE}:${TAG}"
+    - docker pull ${REGISTRY_IMAGE}:cache || true
+    - docker build --cache-from ${REGISTRY_IMAGE}:cache -t ${REGISTRY_IMAGE}:${TAG} -t ${REGISTRY_IMAGE}:cache -f Dockerfile .
+    - docker push ${REGISTRY_IMAGE}:${TAG}
+    - docker push ${REGISTRY_IMAGE}:cache
+    - echo "Successfully pushed ${REGISTRY_IMAGE}:${TAG}"
+    - echo "IMAGE_TAG=${TAG}" >> build.env
+    - docker rmi ${REGISTRY_IMAGE}:${TAG} || true
+  artifacts:
+    reports:
+      dotenv: build.env
+
+.deploy_template:
+  stage: deploy
+  tags:
+    - public-hk
+  when: manual
+  needs:
+    - job: build-image
+      artifacts: true
+  script:
+    - set -euo pipefail
+    - test -n "${IMAGE_TAG:-}" || (echo "IMAGE_TAG is not set. Please run build-image first." && exit 1)
+    - test -n "${RELEASE_NAME:-}" || (echo "RELEASE_NAME is not set." && exit 1)
+    - test -n "${PVC_CLAIM_NAME:-}" || (echo "PVC_CLAIM_NAME is not set." && exit 1)
+    - echo "Deploying ${REGISTRY_IMAGE}:${IMAGE_TAG} to release=${RELEASE_NAME}"
+    - |
+      if ! command -v kubectl >/dev/null 2>&1; then
+        echo "kubectl not found in runner; downloading a temporary kubectl binary..."
+        tmp_dir="$(mktemp -d)"
+        (
+          cd "${tmp_dir}"
+          curl -fsSLo kubectl "https://dl.k8s.io/release/$(curl -fsSL https://dl.k8s.io/release/stable.txt)/bin/linux/amd64/kubectl"
+          chmod +x kubectl
+          if install -m 0755 kubectl /usr/local/bin/kubectl 2>/dev/null; then
+            echo "kubectl installed to /usr/local/bin/kubectl"
+          else
+            mkdir -p "${CI_PROJECT_DIR}/.bin"
+            install -m 0755 kubectl "${CI_PROJECT_DIR}/.bin/kubectl"
+            export PATH="${CI_PROJECT_DIR}/.bin:${PATH}"
+            echo "kubectl installed to ${CI_PROJECT_DIR}/.bin/kubectl"
+          fi
+        )
+      fi
+      ns="${K8S_NAMESPACE}"
+      rel="${RELEASE_NAME}"
+      echo "Ensuring Helm ownership metadata for existing resources (if any): namespace=${ns} release=${rel}"
+      for kind in deployment service; do
+        if kubectl -n "${ns}" get "${kind}" "${rel}" >/dev/null 2>&1; then
+          echo "Patching ${kind}/${rel} for Helm adoption..."
+          kubectl -n "${ns}" label "${kind}" "${rel}" app.kubernetes.io/managed-by=Helm --overwrite
+          kubectl -n "${ns}" annotate "${kind}" "${rel}" meta.helm.sh/release-name="${rel}" meta.helm.sh/release-namespace="${ns}" --overwrite
+        else
+          echo "No existing ${kind}/${rel} found; skipping."
+        fi
+      done
+    - helm upgrade --install "${RELEASE_NAME}" "${HELM_CHART_DIR}" --values "${HELM_VALUES_FILE}" --namespace "${K8S_NAMESPACE}" --set image.tag="${IMAGE_TAG}" --set data.pvcClaimName="${PVC_CLAIM_NAME}" --history-max 10
+    - echo "Helm deployment completed"
+
+deploy-sophagent:
+  extends: .deploy_template
+  variables:
+    RELEASE_NAME: "sophagent"
+    PVC_CLAIM_NAME: "sophagent-data-pvc"

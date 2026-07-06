@@ -1,6 +1,10 @@
 services:
   sophagent:
+    image: ${SOPHAGENT_IMAGE:-sophagent:local}
     build: .
+    env_file:
+      - path: .env
+        required: false
     ports:
       - "${SOPHAGENT_PORT:-8000}:8000"
     volumes:

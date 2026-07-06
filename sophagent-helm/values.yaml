@@ -1,0 +1,49 @@
+replicaCount: 1
+
+data:
+  # PVC for mounting /data (SQLite, skills, workspaces)
+  pvcClaimName: "sophagent-data-pvc"
+
+env:
+  TZ: "Asia/Shanghai"
+  SOPHAGENT_DATA_DIR: "/data"
+  ADMIN_USERNAME: "admin"
+  ADMIN_PASSWORD: "sophnet"
+  SOPHAGENT_SECRET: ""
+  SOPHAGENT_NO_LOGIN: ""
+  SOPHAGENT_PROVIDERS: '{"providers":{"sophnet":{"api_mode":"openai","base_url":"https://www.sophnet.com/api/open-apis/v1","api_key":"VaDnyTW2SqHVxeVFBjN16KyQjbDlxsInWjDD1QFm9qe2nqEaBplrf9dGsER4od_v37-jJnDrmInhKlAAzJvlzQ","context_limit":128000}}}'
+  TAVILY_API_KEY: ""
+  OPENAI_API_KEY: ""
+  ANTHROPIC_API_KEY: ""
+
+image:
+  repository: docker.fuyucloud.top/sophagent
+  tag: "latest"
+
+# Leave empty when the registry does not require authentication.
+imagePullSecretName: ""
+
+service:
+  port: 8000
+
+ingress:
+  enabled: true
+  name: "sophagent-ingress"
+  className: "nginx-private"
+  host: "devsophagent-web.fastmodels.cn"
+  annotations: {}
+  tls:
+    - hosts:
+        - devsophagent-web.fastmodels.cn
+      secretName: fastmodels-2024-tls
+
+container:
+  name: "sophagent"
+
+resources:
+  limits:
+    cpu: "1000m"
+    memory: "1Gi"
+  requests:
+    cpu: "250m"
+    memory: "512Mi"
