@@ -26,6 +26,17 @@ imagePullSecretName: ""
 service:
   port: 8000
 
+ingress:
+  enabled: true
+  name: "sophagent-ingress"
+  className: "nginx-private"
+  host: "devsophagent-web.fastmodels.cn"
+  annotations: {}
+  tls:
+    - hosts:
+        - devsophagent-web.fastmodels.cn
+      secretName: fastmodels-2024-tls
+
 container:
   name: "sophagent"
 
