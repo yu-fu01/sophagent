@@ -95,6 +95,7 @@ async def cron(
         await db.create_cron_job({
             "id": new_id,
             "session_id": job_session_id,
+            "source_session_id": ctx.session_id,
             "user_id": ctx.user_id,
             "name": name,
             "prompt": prompt,

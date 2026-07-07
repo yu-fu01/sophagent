@@ -148,6 +148,7 @@ CREATE VIRTUAL TABLE IF NOT EXISTS messages_fts USING fts5(
 CREATE TABLE IF NOT EXISTS cron_jobs (
   id TEXT PRIMARY KEY,
   session_id TEXT NOT NULL REFERENCES sessions(id) ON DELETE CASCADE,
+  source_session_id TEXT REFERENCES sessions(id) ON DELETE SET NULL,
   user_id INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
   name TEXT NOT NULL,
   prompt TEXT NOT NULL,
@@ -249,6 +250,16 @@ class Database:
             # dual-store: legacy single-store rows become agent-notes ('memory')
             await self._exec(
                 "ALTER TABLE memory ADD COLUMN target TEXT NOT NULL DEFAULT 'memory'"
+            )
+        cron_cols = await self._columns("cron_jobs")
+        if cron_cols and "source_session_id" not in cron_cols:
+            await self._exec(
+                "ALTER TABLE cron_jobs ADD COLUMN source_session_id TEXT REFERENCES sessions(id) ON DELETE SET NULL"
+            )
+            cron_cols = await self._columns("cron_jobs")
+        if cron_cols and "source_session_id" in cron_cols:
+            await self._exec(
+                "CREATE INDEX IF NOT EXISTS idx_cron_jobs_source_session ON cron_jobs(source_session_id)"
             )
 
     async def close(self) -> None:
@@ -862,12 +873,12 @@ class Database:
     async def create_cron_job(self, job: dict[str, Any]) -> str:
         ts = now()
         await self._exec(
-            "INSERT INTO cron_jobs (id, session_id, user_id, name, prompt, mode, schedule,"
+            "INSERT INTO cron_jobs (id, session_id, source_session_id, user_id, name, prompt, mode, schedule,"
             " schedule_display, repeat_times, repeat_completed, enabled, state,"
             " last_run_at, next_run_at, last_status, last_error, created_at, updated_at)"
-            " VALUES (?,?,?,?,?,?,?,?,?,0,1,'scheduled',NULL,?,NULL,NULL,?,?)",
+            " VALUES (?,?,?,?,?,?,?,?,?,?,0,1,'scheduled',NULL,?,NULL,NULL,?,?)",
             (
-                job["id"], job["session_id"], job["user_id"], job["name"], job["prompt"],
+                job["id"], job["session_id"], job.get("source_session_id"), job["user_id"], job["name"], job["prompt"],
                 job.get("mode", "agent"), json.dumps(job["schedule"]), job.get("schedule_display", ""),
                 job.get("repeat_times"), job.get("next_run_at"), ts, ts,
             ),
