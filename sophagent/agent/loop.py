@@ -3,11 +3,12 @@
 from __future__ import annotations
 
 import asyncio
+import inspect
 import logging
 from typing import Any, AsyncIterator, Awaitable, Callable, Optional
 
 from ..config import DEFAULT_COMPRESS_THRESHOLD, get_config
-from ..models import AgentDef, Message, StreamEvent, ToolCall
+from ..models import AgentDef, Message, MessageAttachment, StreamEvent, ToolCall
 from ..providers import get_provider
 from ..tools import registry
 from ..usage import cache_hit_percent
@@ -171,14 +172,18 @@ class AgentRunner:
         delay = 2.0
         for attempt in range(RETRYABLE_ATTEMPTS):
             try:
-                async for ev in self.provider.chat(
-                    model=self.agent.model,
-                    system=system,
-                    messages=self.history,
-                    tools=tool_schemas or None,
-                    temperature=self.agent.temperature,
-                    thinking=self.thinking,
-                ):
+                kwargs = {
+                    "model": self.agent.model,
+                    "system": system,
+                    "messages": self.history,
+                    "tools": tool_schemas or None,
+                    "temperature": self.agent.temperature,
+                    "thinking": self.thinking,
+                }
+                params = inspect.signature(self.provider.chat).parameters
+                if "workspace" in params or any(p.kind == inspect.Parameter.VAR_KEYWORD for p in params.values()):
+                    kwargs["workspace"] = self.ctx.workspace
+                async for ev in self.provider.chat(**kwargs):
                     yield ev
                 return
             except Exception as e:
@@ -198,10 +203,15 @@ class AgentRunner:
                 "context_limit": self.context_limit,
                 "cache_hit": cache_hit_percent(u["cache_read_tokens"], prompt_total)}
 
-    async def run(self, user_input: str | None) -> AsyncIterator[dict[str, Any]]:
+    async def run(
+        self,
+        user_input: str | None,
+        *,
+        attachments: list[MessageAttachment] | None = None,
+    ) -> AsyncIterator[dict[str, Any]]:
         """Yield UI events: text_delta / tool_call / tool_result / done / error."""
         if user_input is not None:
-            msg = Message(role="user", content=user_input)
+            msg = Message(role="user", content=user_input, attachments=attachments or [])
             self.history.append(msg)
             await self._persist(msg)
         tool_schemas = registry.get_schemas(self.agent.tools)

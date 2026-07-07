@@ -78,6 +78,20 @@ class Config:
     telegram_bot_token: str = ""
     # 额外白名单（逗号分隔的 Telegram user id）；空=仅靠配对码控制访问。
     telegram_allowed_user_ids: tuple[int, ...] = ()
+    # IM 网关（QQ Bot）：配了 app_id + client_secret 才启用。
+    qq_app_id: str = ""
+    qq_client_secret: str = ""
+    # 额外白名单（逗号分隔的 QQ openid）；空=仅靠配对码控制访问。
+    qq_allowed_user_ids: tuple[str, ...] = ()
+    # IM 网关（Feishu/Lark）：配了 app_id + app_secret 才启用。
+    feishu_app_id: str = ""
+    feishu_app_secret: str = ""
+    feishu_domain: str = "feishu"
+    feishu_connection_mode: str = "websocket"
+    feishu_verification_token: str = ""
+    feishu_encrypt_key: str = ""
+    feishu_require_mention: bool = True
+    feishu_allowed_user_ids: tuple[str, ...] = ()
     # 定时任务（cron）：默认启用，60s 一轮 tick。
     cron_enabled: bool = True
     cron_tick_interval_seconds: float = 60.0
@@ -188,6 +202,24 @@ def load_config() -> Config:
             int(u) for u in
             (os.environ.get("SOPHAGENT_TELEGRAM_ALLOWED_USER_IDS") or "").split(",") if u
         ),
+        qq_app_id=os.environ.get("SOPHAGENT_QQ_APP_ID", ""),
+        qq_client_secret=os.environ.get("SOPHAGENT_QQ_CLIENT_SECRET", ""),
+        qq_allowed_user_ids=tuple(
+            u.strip() for u in
+            (os.environ.get("SOPHAGENT_QQ_ALLOWED_USER_IDS") or "").split(",") if u.strip()
+        ),
+        feishu_app_id=os.environ.get("SOPHAGENT_FEISHU_APP_ID", ""),
+        feishu_app_secret=os.environ.get("SOPHAGENT_FEISHU_APP_SECRET", ""),
+        feishu_domain=os.environ.get("SOPHAGENT_FEISHU_DOMAIN", "feishu"),
+        feishu_connection_mode=os.environ.get("SOPHAGENT_FEISHU_CONNECTION_MODE", "websocket"),
+        feishu_verification_token=os.environ.get("SOPHAGENT_FEISHU_VERIFICATION_TOKEN", ""),
+        feishu_encrypt_key=os.environ.get("SOPHAGENT_FEISHU_ENCRYPT_KEY", ""),
+        feishu_require_mention=os.environ.get("SOPHAGENT_FEISHU_REQUIRE_MENTION", "true").lower()
+        not in {"0", "false", "no", "off"},
+        feishu_allowed_user_ids=tuple(
+            u.strip() for u in
+            (os.environ.get("SOPHAGENT_FEISHU_ALLOWED_USER_IDS") or "").split(",") if u.strip()
+        ),
         self_improve_enabled=os.environ.get("SOPHAGENT_SELF_IMPROVE", "true").lower()
         not in {"0", "false", "no", "off"},
         cron_enabled=os.environ.get("SOPHAGENT_CRON_ENABLED", "true").lower()
@@ -257,3 +289,44 @@ async def effective_telegram_token(db) -> str:
     if raw:
         return raw
     return get_config().telegram_bot_token
+
+
+async def effective_qq_config(db) -> tuple[str, str]:
+    """Runtime-effective QQ Bot credentials.
+
+    DB settings win over env defaults. Empty app_id or client_secret disables
+    the QQ IM gateway.
+    """
+    app_id = await db.get_setting("qq_app_id")
+    client_secret = await db.get_setting("qq_client_secret")
+    cfg = get_config()
+    return (app_id or cfg.qq_app_id, client_secret or cfg.qq_client_secret)
+
+
+@dataclass
+class FeishuConfig:
+    app_id: str
+    app_secret: str
+    domain: str = "feishu"
+    connection_mode: str = "websocket"
+    verification_token: str = ""
+    encrypt_key: str = ""
+
+
+async def effective_feishu_config(db) -> FeishuConfig:
+    """Runtime-effective Feishu credentials and connection settings."""
+    cfg = get_config()
+    app_id = await db.get_setting("feishu_app_id")
+    app_secret = await db.get_setting("feishu_app_secret")
+    domain = await db.get_setting("feishu_domain")
+    connection_mode = await db.get_setting("feishu_connection_mode")
+    verification_token = await db.get_setting("feishu_verification_token")
+    encrypt_key = await db.get_setting("feishu_encrypt_key")
+    return FeishuConfig(
+        app_id=(app_id or cfg.feishu_app_id or "").strip(),
+        app_secret=(app_secret or cfg.feishu_app_secret or "").strip(),
+        domain=(domain or cfg.feishu_domain or "feishu").strip() or "feishu",
+        connection_mode=(connection_mode or cfg.feishu_connection_mode or "websocket").strip() or "websocket",
+        verification_token=(verification_token or cfg.feishu_verification_token or "").strip(),
+        encrypt_key=(encrypt_key or cfg.feishu_encrypt_key or "").strip(),
+    )

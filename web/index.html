@@ -49,6 +49,10 @@ label{display:block;margin:10px 0 4px;color:var(--dim);font-size:12px}
 .msg.user .filechip{display:flex;width:fit-content;align-items:center;gap:6px;background:rgba(255,255,255,.18);border-radius:8px;padding:4px 9px;margin:0 0 6px;font-size:13px}
 .msg.user .filechip .fi{font-size:15px}
 .msg.user .utext{white-space:pre-wrap;word-break:break-word}
+.msg.user .attimg{display:block;max-width:260px;max-height:220px;border-radius:8px;margin:0 0 8px;object-fit:contain;background:rgba(0,0,0,.16)}
+.msg.user .attmedia{display:block;max-width:280px;margin:0 0 8px}
+.msg.user .emojichip{display:flex;width:fit-content;align-items:center;gap:6px;background:rgba(255,255,255,.18);border-radius:999px;padding:4px 10px;margin:0 0 8px;font-size:13px}
+.msg.user .filechip a{color:inherit;text-decoration:none}
 /* 用户气泡下方的操作行（恢复 / 重新编辑 并排，右对齐） */
 .msg-user-actions{align-self:flex-end;display:flex;gap:6px;margin-top:-6px}
 .msg-user-actions button{font-size:12px;padding:2px 8px}
@@ -216,12 +220,63 @@ td .row-actions{display:flex;gap:6px}
     <div id="groups" class="hidden"></div>
     <div id="admin" class="hidden"></div>
     <div id="im" class="hidden" style="padding:16px;overflow-y:auto">
-      <h3>Telegram 绑定</h3>
-      <p style="color:var(--dim);font-size:13px">选一个 agent 生成配对码，在 Telegram bot 发 <code>/pair &lt;码&gt;</code> 绑定。</p>
+      <h3>IM 绑定</h3>
+      <p id="im-help" style="color:var(--dim);font-size:13px"></p>
+      <label>平台</label>
+      <select id="im-platform" onchange="updateImHelp()">
+        <option value="telegram">Telegram</option>
+        <option value="qqbot">QQ Bot</option>
+        <option value="feishu">Feishu</option>
+      </select>
       <label>Agent</label>
       <select id="im-agent"></select>
       <button onclick="genPairCode()">生成配对码</button>
       <div id="im-result" style="margin-top:12px"></div>
+      <div id="im-qq-config" class="card hidden" style="margin-top:18px;max-width:720px">
+        <h4 style="margin:0 0 8px">QQ Bot 配置</h4>
+        <div class="muted">先填写 App ID / Client Secret 测试连接；成功后保存并启动 QQ 网关，再生成配对码。</div>
+        <label>App ID</label>
+        <input id="im-qq-app-id" placeholder="QQ Bot App ID">
+        <label>Client Secret</label>
+        <input id="im-qq-secret" type="password" placeholder="QQ Bot Client Secret（不会回显）">
+        <div style="display:flex;gap:8px;flex-wrap:wrap;margin-top:10px">
+          <button onclick="testQQBotConfig()">测试连接</button>
+          <button onclick="saveQQBotConfig()">保存并启动</button>
+          <button class="ghost" onclick="restartQQBot()">刷新连接</button>
+          <button class="danger" onclick="clearQQBotConfig()">清除配置</button>
+        </div>
+        <div id="im-qq-status" class="muted" style="margin-top:10px"></div>
+      </div>
+      <div id="im-feishu-config" class="card hidden" style="margin-top:18px;max-width:720px">
+        <h4 style="margin:0 0 8px">Feishu 配置</h4>
+        <div class="muted">默认使用长连接 WebSocket；Webhook 模式需配置公网回调地址 <code>/api/feishu/webhook</code>。</div>
+        <div class="muted" style="margin-top:8px">飞书开放平台还需：在<strong>权限管理</strong>开通「读取用户发给机器人的单聊消息」；在<strong>事件配置</strong>添加「接收消息」且不能出现橙色「请开通权限」；权限变更后须<strong>发布版本</strong>。</div>
+        <label>App ID</label>
+        <input id="im-feishu-app-id" placeholder="Feishu App ID">
+        <label>App Secret</label>
+        <input id="im-feishu-secret" type="password" placeholder="Feishu App Secret（不会回显）">
+        <label>Domain</label>
+        <select id="im-feishu-domain">
+          <option value="feishu">feishu（国内）</option>
+          <option value="lark">lark（国际）</option>
+        </select>
+        <label>Connection Mode</label>
+        <select id="im-feishu-mode">
+          <option value="websocket">websocket（推荐）</option>
+          <option value="webhook">webhook</option>
+        </select>
+        <label>Verification Token（Webhook 可选）</label>
+        <input id="im-feishu-verification-token" placeholder="Verification Token">
+        <label>Encrypt Key（Webhook 可选）</label>
+        <input id="im-feishu-encrypt-key" type="password" placeholder="Encrypt Key">
+        <div style="display:flex;gap:8px;flex-wrap:wrap;margin-top:10px">
+          <button onclick="testFeishuConfig()">测试连接</button>
+          <button onclick="saveFeishuConfig()">保存并启动</button>
+          <button class="ghost" onclick="restartFeishu()">刷新连接</button>
+          <button class="danger" onclick="clearFeishuConfig()">清除配置</button>
+        </div>
+        <div id="im-feishu-status" class="muted" style="margin-top:10px"></div>
+      </div>
     </div>
   </div>
 </div>
@@ -276,11 +331,147 @@ async function showImPanel() {
   const sel = $("im-agent");
   const agents = await apiJson("/api/agents");
   sel.innerHTML = agents.map(a => `<option value="${a.id}">${a.name}</option>`).join("");
+  await refreshQQBotStatus();
+  await refreshFeishuStatus();
+  updateImHelp();
+}
+function imPlatformLabel(platform) {
+  if (platform === "qqbot") return "QQ Bot";
+  if (platform === "feishu") return "Feishu";
+  return "Telegram bot";
+}
+function updateImHelp() {
+  const platform = $("im-platform")?.value || "telegram";
+  const label = imPlatformLabel(platform);
+  $("im-help").innerHTML = `选一个 agent 生成配对码，在 ${label} 里发送 <code>/pair &lt;码&gt;</code> 绑定。`;
+  $("im-result").innerHTML = "";
+  $("im-qq-config").classList.toggle("hidden", platform !== "qqbot" || !me?.is_admin);
+  $("im-feishu-config").classList.toggle("hidden", platform !== "feishu" || !me?.is_admin);
 }
 async function genPairCode() {
   const aid = $("im-agent").value;
+  const platform = $("im-platform").value;
+  const label = imPlatformLabel(platform);
   const r = await apiJson("/api/im/pair-code", {method: "POST", body: {agent_id: +aid}});
-  $("im-result").innerHTML = `配对码：<b style="font-size:18px">${r.code}</b><br>在 Telegram bot 发：<code>/pair ${r.code}</code>（${r.expires_in}s 内有效）`;
+  $("im-result").innerHTML = `配对码：<b style="font-size:18px">${r.code}</b><br>在 ${label} 发：<code>/pair ${r.code}</code>（${r.expires_in}s 内有效）`;
+}
+async function refreshQQBotStatus() {
+  if (!me?.is_admin) return;
+  try {
+    const s = await apiJson("/api/settings");
+    $("im-qq-status").textContent = `状态：${s.qq_configured ? "已配置，QQ 网关会自动启动" : "未配置"}`;
+  } catch (e) {
+    $("im-qq-status").textContent = "";
+  }
+}
+function qqBotForm() {
+  return {
+    app_id: $("im-qq-app-id").value.trim(),
+    client_secret: $("im-qq-secret").value.trim(),
+  };
+}
+async function testQQBotConfig() {
+  const body = qqBotForm();
+  if (!body.app_id || !body.client_secret) { alert("请先填写 App ID 和 Client Secret"); return; }
+  $("im-qq-status").textContent = "正在测试 QQ token/gateway...";
+  try {
+    await apiJson("/api/settings/qqbot/test", {method: "POST", body});
+    $("im-qq-status").textContent = "测试成功：QQ token 和 gateway 可用。";
+  } catch (e) {
+    $("im-qq-status").textContent = "测试失败：" + e.message;
+  }
+}
+async function saveQQBotConfig() {
+  const body = qqBotForm();
+  if (!body.app_id || !body.client_secret) { alert("请先填写 App ID 和 Client Secret"); return; }
+  try {
+    await apiJson("/api/settings/qqbot", {method: "PUT", body});
+    $("im-qq-secret").value = "";
+    $("im-qq-status").textContent = "已保存并启动 QQ 网关。";
+    await refreshQQBotStatus();
+  } catch (e) { alertErr(e); }
+}
+async function restartQQBot() {
+  try {
+    await apiJson("/api/settings/qqbot/restart", {method: "POST"});
+    $("im-qq-status").textContent = "已刷新 QQ 网关连接。";
+  } catch (e) { alertErr(e); }
+}
+async function clearQQBotConfig() {
+  if (!confirm("清除 QQ Bot 配置会停止 QQ 网关，确定？")) return;
+  try {
+    await apiJson("/api/settings/qqbot", {method: "PUT", body: {app_id: "", client_secret: ""}});
+    $("im-qq-app-id").value = "";
+    $("im-qq-secret").value = "";
+    $("im-qq-status").textContent = "已清除 QQ Bot 配置。";
+    await refreshQQBotStatus();
+  } catch (e) { alertErr(e); }
+}
+async function refreshFeishuStatus() {
+  if (!me?.is_admin) return;
+  try {
+    const s = await apiJson("/api/settings");
+    $("im-feishu-status").textContent = `状态：${s.feishu_configured ? "已配置，Feishu 网关会自动启动" : "未配置"}`;
+  } catch (e) {
+    $("im-feishu-status").textContent = "";
+  }
+}
+function feishuForm() {
+  return {
+    app_id: $("im-feishu-app-id").value.trim(),
+    app_secret: $("im-feishu-secret").value.trim(),
+    domain: $("im-feishu-domain").value,
+    connection_mode: $("im-feishu-mode").value,
+    verification_token: $("im-feishu-verification-token").value.trim(),
+    encrypt_key: $("im-feishu-encrypt-key").value.trim(),
+  };
+}
+async function testFeishuConfig() {
+  const body = feishuForm();
+  if (!body.app_id || !body.app_secret) { alert("请先填写 App ID 和 App Secret"); return; }
+  $("im-feishu-status").textContent = "正在测试 Feishu token/bot info...";
+  try {
+    const r = await apiJson("/api/settings/feishu/test", {method: "POST", body});
+    const checklist = Array.isArray(r.setup_checklist) ? r.setup_checklist.map((x, i) => `${i + 1}. ${x}`).join("\n") : "";
+    $("im-feishu-status").innerText = [
+      `测试成功：${r.bot_name || "Feishu Bot"} (${r.open_id || "bot"})`,
+      checklist ? `开放平台检查项：\n${checklist}` : "",
+    ].filter(Boolean).join("\n\n");
+  } catch (e) {
+    $("im-feishu-status").textContent = "测试失败：" + e.message;
+  }
+}
+async function saveFeishuConfig() {
+  const body = feishuForm();
+  if (!body.app_id || !body.app_secret) { alert("请先填写 App ID 和 App Secret"); return; }
+  try {
+    await apiJson("/api/settings/feishu", {method: "PUT", body});
+    $("im-feishu-secret").value = "";
+    $("im-feishu-encrypt-key").value = "";
+    $("im-feishu-status").textContent = "已保存并启动 Feishu 网关。";
+    await refreshFeishuStatus();
+  } catch (e) { alertErr(e); }
+}
+async function restartFeishu() {
+  try {
+    await apiJson("/api/settings/feishu/restart", {method: "POST"});
+    $("im-feishu-status").textContent = "已刷新 Feishu 网关连接。";
+  } catch (e) { alertErr(e); }
+}
+async function clearFeishuConfig() {
+  if (!confirm("清除 Feishu 配置会停止 Feishu 网关，确定？")) return;
+  try {
+    await apiJson("/api/settings/feishu", {method: "PUT", body: {
+      app_id: "", app_secret: "", domain: "feishu", connection_mode: "websocket",
+      verification_token: "", encrypt_key: "",
+    }});
+    $("im-feishu-app-id").value = "";
+    $("im-feishu-secret").value = "";
+    $("im-feishu-verification-token").value = "";
+    $("im-feishu-encrypt-key").value = "";
+    $("im-feishu-status").textContent = "已清除 Feishu 配置。";
+    await refreshFeishuStatus();
+  } catch (e) { alertErr(e); }
 }
 
 async function boot() {
@@ -380,7 +571,7 @@ async function openSession(sid) {
       addSummaryBubble(m.content);
     }
     else if (m.role === "user") {
-      addBubble("user", m.content, m.id, m.created_at);
+      addBubble("user", m.content, m.id, m.created_at, m.attachments || []);
       lastUserMid = m.id; lastUserText = m.content;
     }
     else if (m.role === "assistant") {
@@ -428,11 +619,11 @@ function fmtTs(ts) {
   const p = n => String(n).padStart(2, "0");
   return `${p(d.getMonth() + 1)}-${p(d.getDate())} ${p(d.getHours())}:${p(d.getMinutes())}`;
 }
-function addBubble(cls, text, mid, ts) {
+function addBubble(cls, text, mid, ts, attachments = []) {
   const d = document.createElement("div");
   d.className = "msg " + cls;
   if (cls === "assistant") { d.dataset.raw = text; d.innerHTML = mdToHtml(text); renderMathInElement(d); }
-  else if (cls === "user") renderUserContent(d, text);
+  else if (cls === "user") renderUserContent(d, text, attachments);
   else d.textContent = text;
   $("msgs").appendChild(d);
   // 气泡下方时间戳（仅 user/assistant；历史用 created_at，实时用当前时间）
@@ -473,13 +664,15 @@ function addSummaryBubble(rawContent) {
   $("msgs").appendChild(det);
 }
 // 用户气泡：把 [附加文件: path] 引用行渲染成文件小图标 + 文件名，正文照常显示
-function renderUserContent(d, text) {
+function renderUserContent(d, text, attachments = []) {
   const atts = [], rest = [];
   for (const ln of text.split("\n")) {
     const m = ln.match(/^\[附加文件: (.+)\]$/);
     if (m) atts.push(m[1]); else rest.push(ln);
   }
+  for (const att of attachments || []) renderAttachment(d, att);
   for (const path of atts) {
+    if ((attachments || []).some(a => a.path === path)) continue;
     const chip = document.createElement("div");
     chip.className = "filechip";
     chip.innerHTML = `<span class="fi">📄</span><span class="fn"></span>`;
@@ -492,6 +685,61 @@ function renderUserContent(d, text) {
     p.className = "utext"; p.textContent = body;
     d.appendChild(p);
   }
+}
+function fileReadUrl(path) {
+  return "/api/files/read?path=" + encodeURIComponent(path);
+}
+async function hydrateMedia(el, path) {
+  try {
+    const data = await apiJson(fileReadUrl(path));
+    if (data.data_url) el.src = data.data_url;
+  } catch (e) {
+    el.replaceWith(document.createTextNode("附件加载失败：" + e.message));
+  }
+}
+function renderAttachment(d, att) {
+  const path = att.path || "";
+  const name = att.name || path.split("/").pop() || "附件";
+  if (att.kind === "emoji") {
+    const chip = document.createElement("div");
+    chip.className = "emojichip";
+    chip.textContent = "表情：" + (att.raw?.text || name || "表情包");
+    d.appendChild(chip);
+    return;
+  }
+  if (!path && att.raw?.transcript) return;
+  if (!path) return;
+  if (att.kind === "image") {
+    const img = document.createElement("img");
+    img.className = "attimg";
+    img.alt = name;
+    hydrateMedia(img, path);
+    d.appendChild(img);
+    return;
+  }
+  if (att.kind === "audio") {
+    const audio = document.createElement("audio");
+    audio.className = "attmedia";
+    audio.controls = true;
+    hydrateMedia(audio, path);
+    d.appendChild(audio);
+    return;
+  }
+  if (att.kind === "video") {
+    const video = document.createElement("video");
+    video.className = "attmedia";
+    video.controls = true;
+    hydrateMedia(video, path);
+    d.appendChild(video);
+    return;
+  }
+  const chip = document.createElement("div");
+  chip.className = "filechip";
+  chip.innerHTML = `<span class="fi">📎</span><a class="fn" target="_blank" rel="noopener"></a>`;
+  const link = chip.querySelector("a");
+  link.textContent = name;
+  link.href = fileReadUrl(path);
+  d.appendChild(chip);
 }
 // ---- worklog: 整轮活动折叠组（思考 + 工具合并为一行摘要，可展开看明细）-------
 function ensureWorklog() {

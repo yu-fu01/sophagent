@@ -5,8 +5,24 @@ from sophagent.im.controller import IMController
 
 
 class FakeDB:
-    def __init__(self, token=""): self._t = token
-    async def get_setting(self, key): return self._t if key == "telegram_bot_token" else None
+    def __init__(self, token="", qq_app_id="", qq_client_secret="", feishu_app_id="", feishu_app_secret=""):
+        self._t = token
+        self._qq_app_id = qq_app_id
+        self._qq_client_secret = qq_client_secret
+        self._feishu_app_id = feishu_app_id
+        self._feishu_app_secret = feishu_app_secret
+    async def get_setting(self, key):
+        if key == "telegram_bot_token":
+            return self._t
+        if key == "qq_app_id":
+            return self._qq_app_id
+        if key == "qq_client_secret":
+            return self._qq_client_secret
+        if key == "feishu_app_id":
+            return self._feishu_app_id
+        if key == "feishu_app_secret":
+            return self._feishu_app_secret
+        return None
 
 
 @pytest.mark.asyncio
@@ -67,4 +83,30 @@ async def test_restart_swaps_on_token_change():
     await c.restart(FakeDB("BBB"))   # 换 token → 停旧起新
     await asyncio.sleep(0)
     assert calls == ["AAA", "BBB"]
+    await c.stop()
+
+
+@pytest.mark.asyncio
+async def test_restart_starts_qq_when_configured():
+    started = []
+    async def qq_factory(app_id, client_secret, driver, allowed):
+        started.append((app_id, client_secret))
+    c = IMController(driver=None, qq_factory=qq_factory)
+    await c.restart(FakeDB(qq_app_id="APPID", qq_client_secret="SECRET"))
+    await asyncio.sleep(0)
+    assert started == [("APPID", "SECRET")]
+    assert c.current_qq_config == ("APPID", "SECRET")
+    await c.stop()
+
+
+@pytest.mark.asyncio
+async def test_restart_starts_feishu_when_configured():
+    started = []
+    async def feishu_factory(config, driver, allowed, *, require_mention_in_group=True):
+        started.append((config.app_id, config.app_secret, config.connection_mode))
+    c = IMController(driver=None, feishu_factory=feishu_factory)
+    await c.restart(FakeDB(feishu_app_id="CLI", feishu_app_secret="SEC"))
+    await asyncio.sleep(0)
+    assert started == [("CLI", "SEC", "websocket")]
+    assert c.current_feishu_config.app_id == "CLI"
     await c.stop()

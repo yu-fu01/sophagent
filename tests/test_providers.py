@@ -3,7 +3,7 @@
 from types import SimpleNamespace
 
 from sophagent.config import ProviderConfig
-from sophagent.models import Message, ToolCall
+from sophagent.models import Message, MessageAttachment, ToolCall
 from sophagent.providers.anthropic_provider import messages_to_anthropic, tools_to_anthropic
 from sophagent.providers.openai_provider import OpenAIProvider, _parse_arguments, messages_to_openai
 
@@ -27,6 +27,36 @@ def test_openai_conversion():
     assert asst["tool_calls"][0]["function"]["name"] == "read_file"
     assert asst["tool_calls"][0]["id"] == "c1"
     assert out[3] == {"role": "tool", "tool_call_id": "c1", "content": "contents A"}
+
+
+def test_openai_vl_conversion_includes_image_data_url(tmp_path):
+    img = tmp_path / "im" / "qqbot" / "pic.png"
+    img.parent.mkdir(parents=True)
+    img.write_bytes(b"\x89PNG\r\n\x1a\n")
+    msg = Message(
+        role="user",
+        content="看图",
+        attachments=[
+            MessageAttachment(kind="image", path="im/qqbot/pic.png", mime="image/png"),
+        ],
+    )
+    out = messages_to_openai("", [msg], model="qwen3-vl-flash", workspace=tmp_path)
+    content = out[0]["content"]
+    assert content[0] == {"type": "text", "text": "看图"}
+    assert content[1]["type"] == "image_url"
+    assert content[1]["image_url"]["url"].startswith("data:image/png;base64,")
+
+
+def test_openai_text_model_keeps_image_as_text(tmp_path):
+    msg = Message(
+        role="user",
+        content="看图",
+        attachments=[MessageAttachment(kind="image", path="im/qqbot/pic.png")],
+    )
+    assert messages_to_openai("", [msg], model="deepseek-chat", workspace=tmp_path)[0] == {
+        "role": "user",
+        "content": "看图",
+    }
 
 
 def test_openai_argument_parsing():

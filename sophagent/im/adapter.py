@@ -13,6 +13,8 @@ from typing import Any
 
 import httpx
 
+from ..models import MessageAttachment
+
 log = logging.getLogger(__name__)
 
 BASE = "https://api.telegram.org/bot{token}/{method}"
@@ -23,6 +25,10 @@ class MessageEvent:
     text: str
     chat_id: str
     from_id: str
+    platform: str = "telegram"
+    chat_type: str = "private"
+    attachments: list[MessageAttachment] | None = None
+    raw: dict[str, Any] | None = None
 
 
 class TelegramClient:

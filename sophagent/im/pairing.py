@@ -9,7 +9,7 @@ from __future__ import annotations
 import uuid
 from typing import Optional
 
-PLATFORM = "telegram"
+DEFAULT_PLATFORM = "telegram"
 
 
 async def issue_code(db, user_id: int, agent_id: int) -> str:
@@ -20,25 +20,37 @@ async def consume_code(db, code: str) -> Optional[tuple[int, int]]:
     return await db.consume_pair_code(code)
 
 
-async def bind(db, chat_id: str, user_id: int, agent_id: int) -> str:
+async def bind(
+    db,
+    chat_id: str,
+    user_id: int,
+    agent_id: int,
+    *,
+    platform: str = DEFAULT_PLATFORM,
+) -> str:
     """为 (chat_id, user, agent) 建新 sophagent session 并写绑定。返回 session_id。
     若已有绑定则覆盖（换 agent 时新建 session）。"""
     agent = await db.get_agent(agent_id)
     group_id = agent["group_id"] if agent else None
     session_id = uuid.uuid4().hex
     await db.create_session(session_id, user_id, agent_id, group_id, title="")
-    await db.upsert_binding(PLATFORM, chat_id, user_id, agent_id, session_id)
+    await db.upsert_binding(platform, chat_id, user_id, agent_id, session_id)
     return session_id
 
 
-async def renew_session(db, chat_id: str) -> Optional[str]:
+async def renew_session(
+    db,
+    chat_id: str,
+    *,
+    platform: str = DEFAULT_PLATFORM,
+) -> Optional[str]:
     """为已绑定的 chat 新建一个 session（/new）。返回新 session_id 或 None（未绑定）。"""
-    row = await db.get_binding(PLATFORM, chat_id)
+    row = await db.get_binding(platform, chat_id)
     if row is None:
         return None
-    return await bind(db, chat_id, row["user_id"], row["agent_id"])
+    return await bind(db, chat_id, row["user_id"], row["agent_id"], platform=platform)
 
 
-async def lookup(db, chat_id: str):
+async def lookup(db, chat_id: str, *, platform: str = DEFAULT_PLATFORM):
     """返回绑定 row 或 None。"""
-    return await db.get_binding(PLATFORM, chat_id)
+    return await db.get_binding(platform, chat_id)

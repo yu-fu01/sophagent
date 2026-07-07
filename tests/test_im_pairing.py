@@ -47,3 +47,13 @@ async def test_upsert_and_get_binding(db):
 @pytest.mark.asyncio
 async def test_get_binding_missing(db):
     assert await db.get_binding("telegram", "nope") is None
+
+
+@pytest.mark.asyncio
+async def test_bindings_are_scoped_by_platform(db):
+    await db.upsert_binding("telegram", "same-chat", user_id=1, agent_id=2, session_id="tg")
+    await db.upsert_binding("qqbot", "same-chat", user_id=3, agent_id=4, session_id="qq")
+    tg = await db.get_binding("telegram", "same-chat")
+    qq = await db.get_binding("qqbot", "same-chat")
+    assert tg["session_id"] == "tg"
+    assert qq["session_id"] == "qq"

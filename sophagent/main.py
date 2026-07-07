@@ -133,11 +133,29 @@ async def lifespan(app: FastAPI):
     if not registry.names():
         log.warning("no model providers configured; set SOPHAGENT_PROVIDERS or providers.yaml")
 
-    # IM 网关（Telegram）：token 现场可配（DB settings），controller 管 polling 生命周期
+    # IM 网关：凭据现场可配（DB settings），controller 管各平台生命周期
     from .im.controller import IMController
     from .im.driver import IMDriver
-    im_driver = IMDriver(db=db, manager=app.state.manager, skill_store=app.state.skill_store)
-    app.state.im_controller = IMController(im_driver, allowed_user_ids=cfg.telegram_allowed_user_ids)
+    from .im.transport import BufferedSendTransport, TelegramTransport
+
+    def _im_transport_factory(ev, client):
+        if ev.platform in {"qqbot", "feishu"}:
+            return BufferedSendTransport(ev.chat_id, client)
+        return TelegramTransport(ev.chat_id, client)
+
+    im_driver = IMDriver(
+        db=db,
+        manager=app.state.manager,
+        skill_store=app.state.skill_store,
+        transport_factory=_im_transport_factory,
+    )
+    app.state.im_controller = IMController(
+        im_driver,
+        allowed_user_ids=cfg.telegram_allowed_user_ids,
+        qq_allowed_user_ids=cfg.qq_allowed_user_ids,
+        feishu_allowed_user_ids=cfg.feishu_allowed_user_ids,
+        feishu_require_mention=cfg.feishu_require_mention,
+    )
     await app.state.im_controller.restart(db)
 
     # 定时任务（cron）：daemon tick 循环，到期在来源 session 产出 output
