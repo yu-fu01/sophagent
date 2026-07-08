@@ -106,6 +106,8 @@ class BufferedSendTransport:
             self._text += ev.get("text", "")
         elif t == "done":
             await self._send_final()
+            # Chained turns (queued_next) reuse this transport; allow the next reply.
+            self._sent = False
         elif t == "error":
             msg = ev.get("message", "error")
             try:
@@ -117,6 +119,8 @@ class BufferedSendTransport:
 
     async def _send_final(self) -> None:
         if self._sent or not self._text:
+            if not self._sent and not self._text:
+                log.debug("buffered send skipped: empty text chat=%s", self.chat_id)
             return
         try:
             await self.client.send_message(self.chat_id, self._text)

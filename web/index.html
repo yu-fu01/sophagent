@@ -227,6 +227,8 @@ td .row-actions{display:flex;gap:6px}
         <option value="telegram">Telegram</option>
         <option value="qqbot">QQ Bot</option>
         <option value="feishu">Feishu</option>
+        <option value="weixin">Weixin（微信）</option>
+        <option value="dingtalk">DingTalk（钉钉）</option>
       </select>
       <label>Agent</label>
       <select id="im-agent"></select>
@@ -276,6 +278,93 @@ td .row-actions{display:flex;gap:6px}
           <button class="danger" onclick="clearFeishuConfig()">清除配置</button>
         </div>
         <div id="im-feishu-status" class="muted" style="margin-top:10px"></div>
+      </div>
+      <div id="im-weixin-config" class="card hidden" style="margin-top:18px;max-width:720px">
+        <h4 style="margin:0 0 8px">微信（Weixin）配置</h4>
+        <div class="muted">通过 iLink Bot API 连接个人微信。推荐扫码登录；也可手动填写 account_id + token。主场景为私聊 DM。</div>
+        <div id="im-weixin-qr-wrap" style="margin-top:12px">
+          <div id="im-weixin-qr" style="max-width:240px"></div>
+          <div id="im-weixin-qr-msg" class="muted" style="margin-top:8px"></div>
+        </div>
+        <div style="display:flex;gap:8px;flex-wrap:wrap;margin-top:10px">
+          <button onclick="startWeixinQr()">获取二维码</button>
+          <button class="ghost" onclick="stopWeixinQrPoll()">停止轮询</button>
+        </div>
+        <label style="margin-top:14px">Account ID（手动配置可选）</label>
+        <input id="im-weixin-account-id" placeholder="iLink bot account_id">
+        <label>Token（手动配置可选，不回显）</label>
+        <input id="im-weixin-token" type="password" placeholder="iLink bot token">
+        <label>Base URL</label>
+        <input id="im-weixin-base-url" placeholder="https://ilinkai.weixin.qq.com">
+        <label>DM 策略</label>
+        <select id="im-weixin-dm-policy">
+          <option value="pairing">pairing（默认，靠配对码绑定）</option>
+          <option value="allowlist">allowlist（仅白名单用户）</option>
+          <option value="disabled">disabled（禁用入站）</option>
+        </select>
+        <label>白名单用户 ID（逗号分隔，pairing 模式下为额外限制）</label>
+        <input id="im-weixin-allowed-users" placeholder="wxid_1,wxid_2">
+        <div style="display:flex;gap:8px;flex-wrap:wrap;margin-top:10px">
+          <button onclick="saveWeixinConfig()">保存并启动</button>
+          <button class="ghost" onclick="restartWeixin()">刷新连接</button>
+          <button class="danger" onclick="clearWeixinConfig()">清除配置</button>
+        </div>
+        <div id="im-weixin-status" class="muted" style="margin-top:10px"></div>
+      </div>
+      <div id="im-dingtalk-config" class="card hidden" style="margin-top:18px;max-width:720px">
+        <h4 style="margin:0 0 8px">钉钉（DingTalk）配置</h4>
+        <div class="muted">使用 Stream 模式接收消息；默认 turn 结束后一条 markdown 回复（与 QQ/Feishu 一致）。可选填 AI Card 模板 ID 启用卡片回复。</div>
+        <div id="im-dingtalk-qr-wrap" style="margin-top:12px">
+          <div id="im-dingtalk-qr" style="max-width:240px"></div>
+          <div id="im-dingtalk-qr-msg" class="muted" style="margin-top:8px"></div>
+        </div>
+        <div style="display:flex;gap:8px;flex-wrap:wrap;margin-top:10px">
+          <button onclick="startDingtalkQr()">获取二维码</button>
+          <button class="ghost" onclick="stopDingtalkQrPoll()">停止轮询</button>
+        </div>
+        <label style="margin-top:14px">Client ID / AppKey（手动配置可选）</label>
+        <input id="im-dingtalk-client-id" placeholder="DingTalk AppKey">
+        <label>Client Secret / AppSecret（手动配置可选，不回显）</label>
+        <input id="im-dingtalk-client-secret" type="password" placeholder="DingTalk AppSecret">
+        <label>AI Card Template ID（选填；不填则用 turn 结束后的 markdown 回复）</label>
+        <input id="im-dingtalk-card-template-id" placeholder="留空 = markdown 模式">
+        <label>Robot Code（可选，默认等于 Client ID）</label>
+        <input id="im-dingtalk-robot-code" placeholder="robot_code">
+        <label>DM 策略</label>
+        <select id="im-dingtalk-dm-policy">
+          <option value="pairing">pairing（默认，靠配对码绑定）</option>
+          <option value="allowlist">allowlist（仅白名单用户）</option>
+          <option value="disabled">disabled（禁用入站）</option>
+        </select>
+        <label>群聊需 @ 机器人</label>
+        <select id="im-dingtalk-require-mention">
+          <option value="true">是（默认）</option>
+          <option value="false">否</option>
+        </select>
+        <label>白名单用户 ID（逗号分隔，pairing 模式下为额外限制）</label>
+        <input id="im-dingtalk-allowed-users" placeholder="staff_id_1,staff_id_2">
+        <label>群聊白名单（conversation_id，逗号分隔；非空则只处理这些群）</label>
+        <input id="im-dingtalk-allowed-chats" placeholder="cid:xxx,cid:yyy">
+        <label>免 @ 群聊（conversation_id，逗号分隔）</label>
+        <input id="im-dingtalk-free-chats" placeholder="cid:xxx">
+        <label>唤醒词正则（每行一个，或 JSON 数组）</label>
+        <textarea id="im-dingtalk-mention-patterns" rows="3" placeholder="小助手|sophagent"></textarea>
+        <label style="margin-top:14px">静态 Webhook URL（选填；用于定时任务/告警通知）</label>
+        <input id="im-dingtalk-webhook-url" type="password" placeholder="https://oapi.dingtalk.com/robot/send?access_token=...">
+        <label>默认通知会话 ID（选填；home channel / conversation_id）</label>
+        <input id="im-dingtalk-home-channel" placeholder="cid:xxx">
+        <label>入站表情反馈（🤔Thinking → 🥳Done）</label>
+        <select id="im-dingtalk-reply-emotion">
+          <option value="true">启用（默认）</option>
+          <option value="false">禁用</option>
+        </select>
+        <div style="display:flex;gap:8px;flex-wrap:wrap;margin-top:10px">
+          <button onclick="saveDingtalkConfig()">保存并启动</button>
+          <button class="ghost" onclick="testDingtalkConfig()">测试凭证</button>
+          <button class="ghost" onclick="restartDingtalk()">刷新连接</button>
+          <button class="danger" onclick="clearDingtalkConfig()">清除配置</button>
+        </div>
+        <div id="im-dingtalk-status" class="muted" style="margin-top:10px"></div>
       </div>
     </div>
   </div>
@@ -333,11 +422,15 @@ async function showImPanel() {
   sel.innerHTML = agents.map(a => `<option value="${a.id}">${a.name}</option>`).join("");
   await refreshQQBotStatus();
   await refreshFeishuStatus();
+  await refreshWeixinStatus();
+  await refreshDingtalkStatus();
   updateImHelp();
 }
 function imPlatformLabel(platform) {
   if (platform === "qqbot") return "QQ Bot";
   if (platform === "feishu") return "Feishu";
+  if (platform === "weixin") return "微信";
+  if (platform === "dingtalk") return "钉钉";
   return "Telegram bot";
 }
 function updateImHelp() {
@@ -347,6 +440,8 @@ function updateImHelp() {
   $("im-result").innerHTML = "";
   $("im-qq-config").classList.toggle("hidden", platform !== "qqbot" || !me?.is_admin);
   $("im-feishu-config").classList.toggle("hidden", platform !== "feishu" || !me?.is_admin);
+  $("im-weixin-config").classList.toggle("hidden", platform !== "weixin" || !me?.is_admin);
+  $("im-dingtalk-config").classList.toggle("hidden", platform !== "dingtalk" || !me?.is_admin);
 }
 async function genPairCode() {
   const aid = $("im-agent").value;
@@ -471,6 +566,296 @@ async function clearFeishuConfig() {
     $("im-feishu-encrypt-key").value = "";
     $("im-feishu-status").textContent = "已清除 Feishu 配置。";
     await refreshFeishuStatus();
+  } catch (e) { alertErr(e); }
+}
+
+let weixinQrTimer = null;
+let weixinQrSessionId = "";
+
+function stopWeixinQrPoll() {
+  if (weixinQrTimer) { clearInterval(weixinQrTimer); weixinQrTimer = null; }
+}
+
+function renderWeixinQrSvg(svg) {
+  const box = $("im-weixin-qr");
+  if (!box) return;
+  if (svg) {
+    box.innerHTML = svg;
+    const svgEl = box.querySelector("svg");
+    if (svgEl) { svgEl.style.width = "100%"; svgEl.style.height = "auto"; }
+  } else {
+    box.innerHTML = "";
+  }
+}
+
+async function pollWeixinQrOnce() {
+  if (!weixinQrSessionId) return;
+  try {
+    const r = await apiJson(`/api/settings/weixin/qr/${encodeURIComponent(weixinQrSessionId)}`);
+    $("im-weixin-qr-msg").textContent = r.message || r.status || "";
+    if (r.qr_svg) renderWeixinQrSvg(r.qr_svg);
+    if (r.status === "confirmed") {
+      stopWeixinQrPoll();
+      weixinQrSessionId = "";
+      $("im-weixin-status").textContent = `已连接：${r.account_id || ""}`;
+      if (r.account_id) $("im-weixin-account-id").value = r.account_id;
+      $("im-weixin-token").value = "";
+      await refreshWeixinStatus();
+      return;
+    }
+    if (r.status === "expired" || r.status === "error") {
+      stopWeixinQrPoll();
+      weixinQrSessionId = "";
+    }
+  } catch (e) {
+    $("im-weixin-qr-msg").textContent = "轮询失败：" + e.message;
+  }
+}
+
+async function startWeixinQr() {
+  stopWeixinQrPoll();
+  $("im-weixin-qr-msg").textContent = "正在获取二维码...";
+  renderWeixinQrSvg("");
+  try {
+    const r = await apiJson("/api/settings/weixin/qr", {method: "POST"});
+    weixinQrSessionId = r.session_id || "";
+    renderWeixinQrSvg(r.qr_svg || "");
+    const link = r.qrcode_url ? `<div style="margin-top:6px"><a href="${r.qrcode_url}" target="_blank" rel="noopener">或点此打开二维码链接</a></div>` : "";
+    $("im-weixin-qr-msg").innerHTML = (r.message || "请使用微信扫描二维码") + link;
+    weixinQrTimer = setInterval(pollWeixinQrOnce, 2000);
+    await pollWeixinQrOnce();
+  } catch (e) {
+    $("im-weixin-qr-msg").textContent = "获取二维码失败：" + e.message;
+  }
+}
+
+async function refreshWeixinStatus() {
+  if (!me?.is_admin) return;
+  try {
+    const s = await apiJson("/api/settings");
+    const extra = s.weixin_account_id ? `（${s.weixin_account_id}）` : "";
+    const health = s.weixin_health || {};
+    let status = `状态：${s.weixin_configured ? "已配置，微信网关会自动启动" : "未配置"}${extra}`;
+    if (health.needs_relogin) {
+      status += `\n⚠️ ${health.message || "需要重新扫码登录"}`;
+    } else if (health.status === "lock_blocked") {
+      status += `\n⚠️ ${health.message || "token 被其他实例占用"}`;
+    }
+    $("im-weixin-status").textContent = status;
+    if (s.weixin_dm_policy) $("im-weixin-dm-policy").value = s.weixin_dm_policy;
+    if (s.weixin_allowed_user_ids != null) $("im-weixin-allowed-users").value = s.weixin_allowed_user_ids;
+    if (!($("im-weixin-base-url").value || "").trim()) {
+      $("im-weixin-base-url").value = "https://ilinkai.weixin.qq.com";
+    }
+  } catch (e) {
+    $("im-weixin-status").textContent = "";
+  }
+}
+
+function weixinForm() {
+  return {
+    account_id: $("im-weixin-account-id").value.trim(),
+    token: $("im-weixin-token").value.trim(),
+    base_url: ($("im-weixin-base-url").value.trim() || "https://ilinkai.weixin.qq.com"),
+    dm_policy: $("im-weixin-dm-policy").value,
+    allowed_user_ids: $("im-weixin-allowed-users").value.trim(),
+  };
+}
+
+async function saveWeixinConfig() {
+  const body = weixinForm();
+  if (!body.account_id && !body.token) {
+    alert("请扫码登录，或填写 Account ID + Token");
+    return;
+  }
+  try {
+    await apiJson("/api/settings/weixin", {method: "PUT", body});
+    $("im-weixin-token").value = "";
+    $("im-weixin-status").textContent = "已保存并启动微信网关。";
+    await refreshWeixinStatus();
+  } catch (e) { alertErr(e); }
+}
+
+async function restartWeixin() {
+  try {
+    await apiJson("/api/settings/weixin/restart", {method: "POST"});
+    $("im-weixin-status").textContent = "已刷新微信网关连接。";
+  } catch (e) { alertErr(e); }
+}
+
+async function clearWeixinConfig() {
+  if (!confirm("清除微信配置会停止微信网关，确定？")) return;
+  try {
+    await apiJson("/api/settings/weixin", {method: "PUT", body: {
+      account_id: "", token: "", base_url: "https://ilinkai.weixin.qq.com",
+      dm_policy: "pairing", allowed_user_ids: "",
+    }});
+    stopWeixinQrPoll();
+    $("im-weixin-account-id").value = "";
+    $("im-weixin-token").value = "";
+    $("im-weixin-allowed-users").value = "";
+    renderWeixinQrSvg("");
+    $("im-weixin-qr-msg").textContent = "";
+    $("im-weixin-status").textContent = "已清除微信配置。";
+    await refreshWeixinStatus();
+  } catch (e) { alertErr(e); }
+}
+
+let dingtalkQrTimer = null;
+let dingtalkQrSessionId = "";
+
+function stopDingtalkQrPoll() {
+  if (dingtalkQrTimer) { clearInterval(dingtalkQrTimer); dingtalkQrTimer = null; }
+}
+
+function renderDingtalkQrSvg(svg) {
+  const box = $("im-dingtalk-qr");
+  if (!box) return;
+  box.innerHTML = svg ? svg : "";
+}
+
+async function pollDingtalkQrOnce() {
+  if (!dingtalkQrSessionId) return;
+  try {
+    const r = await apiJson(`/api/settings/dingtalk/qr/${encodeURIComponent(dingtalkQrSessionId)}`);
+    $("im-dingtalk-qr-msg").textContent = r.message || r.status || "";
+    if (r.status === "confirmed") {
+      stopDingtalkQrPoll();
+      dingtalkQrSessionId = "";
+      $("im-dingtalk-status").textContent = `已连接：${r.client_id || ""}`;
+      if (r.client_id) $("im-dingtalk-client-id").value = r.client_id;
+      $("im-dingtalk-client-secret").value = "";
+      await refreshDingtalkStatus();
+    } else if (r.status === "failed" || r.status === "expired" || r.status === "error") {
+      stopDingtalkQrPoll();
+      dingtalkQrSessionId = "";
+    }
+  } catch (e) {
+    $("im-dingtalk-qr-msg").textContent = "轮询失败：" + e.message;
+  }
+}
+
+async function startDingtalkQr() {
+  stopDingtalkQrPoll();
+  $("im-dingtalk-qr-msg").textContent = "正在获取二维码...";
+  renderDingtalkQrSvg("");
+  try {
+    const r = await apiJson("/api/settings/dingtalk/qr", {method: "POST"});
+    dingtalkQrSessionId = r.session_id || "";
+    renderDingtalkQrSvg(r.qr_svg || "");
+    const link = r.verification_uri ? `<br><a href="${r.verification_uri}" target="_blank" rel="noopener">或点此打开授权链接</a>` : "";
+    $("im-dingtalk-qr-msg").innerHTML = (r.message || "请使用钉钉扫描二维码") + link;
+    dingtalkQrTimer = setInterval(pollDingtalkQrOnce, 2000);
+  } catch (e) {
+    $("im-dingtalk-qr-msg").textContent = "获取二维码失败：" + e.message;
+  }
+}
+
+async function refreshDingtalkStatus() {
+  if (!me?.is_admin) return;
+  try {
+    const s = await apiJson("/api/settings");
+    const extra = s.dingtalk_client_id ? `（${s.dingtalk_client_id}）` : "";
+    const health = s.dingtalk_health || {};
+    let status = `状态：${s.dingtalk_configured ? "已配置，钉钉网关会自动启动" : "未配置"}${extra}`;
+    if (health.needs_relogin) {
+      status += `\n⚠️ ${health.message || "需要重新扫码或更新凭证"}`;
+    } else if (health.status === "lock_blocked") {
+      status += `\n⚠️ ${health.message || "AppKey 被其他实例占用"}`;
+    }
+    $("im-dingtalk-status").textContent = status;
+    if (s.dingtalk_dm_policy) $("im-dingtalk-dm-policy").value = s.dingtalk_dm_policy;
+    if (s.dingtalk_allowed_user_ids != null) $("im-dingtalk-allowed-users").value = s.dingtalk_allowed_user_ids;
+    if (s.dingtalk_card_template_id) $("im-dingtalk-card-template-id").value = s.dingtalk_card_template_id;
+    if (s.dingtalk_allowed_chat_ids != null) $("im-dingtalk-allowed-chats").value = s.dingtalk_allowed_chat_ids;
+    if (s.dingtalk_free_response_chats != null) $("im-dingtalk-free-chats").value = s.dingtalk_free_response_chats;
+    if (s.dingtalk_mention_patterns != null) $("im-dingtalk-mention-patterns").value = s.dingtalk_mention_patterns;
+    if (s.dingtalk_require_mention != null) {
+      $("im-dingtalk-require-mention").value = s.dingtalk_require_mention ? "true" : "false";
+    }
+    if (s.dingtalk_home_channel != null) $("im-dingtalk-home-channel").value = s.dingtalk_home_channel;
+    if (s.dingtalk_reply_emotion != null) {
+      $("im-dingtalk-reply-emotion").value = s.dingtalk_reply_emotion ? "true" : "false";
+    }
+    if (s.dingtalk_webhook_configured) {
+      $("im-dingtalk-webhook-url").placeholder = "（已配置，留空不修改）";
+    }
+  } catch (e) {
+    $("im-dingtalk-status").textContent = "";
+  }
+}
+
+function dingtalkForm() {
+  return {
+    client_id: $("im-dingtalk-client-id").value.trim(),
+    client_secret: $("im-dingtalk-client-secret").value.trim(),
+    card_template_id: $("im-dingtalk-card-template-id").value.trim(),
+    robot_code: $("im-dingtalk-robot-code").value.trim(),
+    dm_policy: $("im-dingtalk-dm-policy").value,
+    require_mention: $("im-dingtalk-require-mention").value === "true",
+    allowed_user_ids: $("im-dingtalk-allowed-users").value.trim(),
+    allowed_chat_ids: $("im-dingtalk-allowed-chats").value.trim(),
+    free_response_chats: $("im-dingtalk-free-chats").value.trim(),
+    mention_patterns: $("im-dingtalk-mention-patterns").value.trim(),
+    webhook_url: $("im-dingtalk-webhook-url").value.trim(),
+    home_channel: $("im-dingtalk-home-channel").value.trim(),
+    reply_emotion: $("im-dingtalk-reply-emotion").value === "true",
+  };
+}
+
+async function testDingtalkConfig() {
+  try {
+    const r = await apiJson("/api/settings/dingtalk/test", {method: "POST"});
+    $("im-dingtalk-status").textContent = r.message || "钉钉凭证测试通过。";
+  } catch (e) { alertErr(e); }
+}
+
+async function saveDingtalkConfig() {
+  const body = dingtalkForm();
+  if (!body.client_id && !body.client_secret) {
+    alert("请扫码登录，或填写 Client ID + Client Secret");
+    return;
+  }
+  try {
+    await apiJson("/api/settings/dingtalk", {method: "PUT", body});
+    $("im-dingtalk-client-secret").value = "";
+    $("im-dingtalk-webhook-url").value = "";
+    $("im-dingtalk-status").textContent = "已保存并启动钉钉网关。";
+    await refreshDingtalkStatus();
+  } catch (e) { alertErr(e); }
+}
+
+async function restartDingtalk() {
+  try {
+    await apiJson("/api/settings/dingtalk/restart", {method: "POST"});
+    $("im-dingtalk-status").textContent = "已刷新钉钉网关连接。";
+  } catch (e) { alertErr(e); }
+}
+
+async function clearDingtalkConfig() {
+  if (!confirm("清除钉钉配置会停止钉钉网关，确定？")) return;
+  try {
+    await apiJson("/api/settings/dingtalk", {method: "PUT", body: {
+      client_id: "", client_secret: "", card_template_id: "", robot_code: "",
+      dm_policy: "pairing", require_mention: true, allowed_user_ids: "",
+      allowed_chat_ids: "", free_response_chats: "", mention_patterns: "",
+      webhook_url: "", home_channel: "", reply_emotion: true,
+    }});
+    stopDingtalkQrPoll();
+    $("im-dingtalk-client-id").value = "";
+    $("im-dingtalk-client-secret").value = "";
+    $("im-dingtalk-card-template-id").value = "";
+    $("im-dingtalk-robot-code").value = "";
+    $("im-dingtalk-allowed-users").value = "";
+    $("im-dingtalk-allowed-chats").value = "";
+    $("im-dingtalk-free-chats").value = "";
+    $("im-dingtalk-mention-patterns").value = "";
+    $("im-dingtalk-webhook-url").value = "";
+    $("im-dingtalk-home-channel").value = "";
+    renderDingtalkQrSvg("");
+    $("im-dingtalk-qr-msg").textContent = "";
+    $("im-dingtalk-status").textContent = "已清除钉钉配置。";
+    await refreshDingtalkStatus();
   } catch (e) { alertErr(e); }
 }
 

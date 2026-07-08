@@ -139,8 +139,15 @@ async def lifespan(app: FastAPI):
     from .im.transport import BufferedSendTransport, TelegramTransport
 
     def _im_transport_factory(ev, client):
+        if ev.platform == "weixin":
+            from .im.platforms.weixin import WeixinBufferedTransport
+            return WeixinBufferedTransport(ev.chat_id, client)
         if ev.platform in {"qqbot", "feishu"}:
             return BufferedSendTransport(ev.chat_id, client)
+        if ev.platform == "dingtalk":
+            from .im.platforms.dingtalk.transport import DingTalkBufferedTransport
+            on_complete = getattr(client, "fire_turn_complete", None)
+            return DingTalkBufferedTransport(ev.chat_id, client, on_turn_complete=on_complete)
         return TelegramTransport(ev.chat_id, client)
 
     im_driver = IMDriver(
@@ -154,6 +161,11 @@ async def lifespan(app: FastAPI):
         allowed_user_ids=cfg.telegram_allowed_user_ids,
         qq_allowed_user_ids=cfg.qq_allowed_user_ids,
         feishu_allowed_user_ids=cfg.feishu_allowed_user_ids,
+        weixin_allowed_user_ids=cfg.weixin_allowed_user_ids,
+        weixin_dm_policy=cfg.weixin_dm_policy,
+        dingtalk_allowed_user_ids=cfg.dingtalk_allowed_user_ids,
+        dingtalk_dm_policy=cfg.dingtalk_dm_policy,
+        dingtalk_require_mention=cfg.dingtalk_require_mention,
         feishu_require_mention=cfg.feishu_require_mention,
     )
     await app.state.im_controller.restart(db)

@@ -23,6 +23,46 @@ docker compose up -d --build
 
 首次启动自动创建 admin 账号（密码取 `ADMIN_PASSWORD`；未设置则生成随机密码打印在日志里：`docker compose logs sophagent`）。
 
+### 个人微信（Weixin / iLink Bot API）
+
+sophagent 支持通过腾讯 **iLink Bot API** 接入个人微信（长轮询，无需公网 Webhook）。Admin → IM 页签可扫码登录或手动填写 `account_id` + `token`；私聊场景下用户发送 `/pair <码>` 完成绑定。
+
+| 环境变量 | 说明 |
+|---|---|
+| `SOPHAGENT_WEIXIN_ACCOUNT_ID` | 账号 ID（可与 `data/weixin/accounts/` 下凭证文件配合） |
+| `SOPHAGENT_WEIXIN_TOKEN` | iLink 会话 token |
+| `SOPHAGENT_WEIXIN_BASE_URL` | 默认 `https://ilinkai.weixin.qq.com` |
+| `SOPHAGENT_WEIXIN_DM_POLICY` | `pairing`（默认）/ `allowlist` / `disabled` |
+| `SOPHAGENT_WEIXIN_ALLOWED_USER_IDS` | 白名单用户 ID（逗号分隔） |
+| `SOPHAGENT_WEIXIN_CDN_BASE_URL` | 媒体 CDN 基址 |
+| `SOPHAGENT_WEIXIN_SPLIT_MULTILINE` | 多行回复智能分片（`true`/`false`） |
+
+**运维注意**：同一 token 仅允许一个实例轮询（文件锁互斥）；会话过期后 Admin 页面会提示重新扫码；出站媒体路径限制在 `workspaces/`、`weixin/`、`data/` 下，CDN 下载域名有白名单防 SSRF。
+
+### 钉钉（DingTalk / Stream + Markdown）
+
+sophagent 通过钉钉 **Stream 长连接** 接收消息；默认在 **turn 结束后发送一条 markdown**（与 QQ/Feishu 一致）。可选填 `card_template_id` 启用 AI Card 回复。
+
+| 环境变量 | 说明 |
+|---|---|
+| `SOPHAGENT_DINGTALK_CLIENT_ID` | AppKey |
+| `SOPHAGENT_DINGTALK_CLIENT_SECRET` | AppSecret |
+| `SOPHAGENT_DINGTALK_CARD_TEMPLATE_ID` | 选填：AI Card 模板 ID；不填则用 markdown 一次性回复 |
+| `SOPHAGENT_DINGTALK_ROBOT_CODE` | 可选，默认等于 Client ID |
+| `SOPHAGENT_DINGTALK_DM_POLICY` | `pairing`（默认）/ `allowlist` / `disabled` |
+| `SOPHAGENT_DINGTALK_ALLOWED_USER_IDS` | 白名单 staff_id（逗号分隔） |
+| `SOPHAGENT_DINGTALK_REQUIRE_MENTION` | 群聊是否需 @ 机器人（默认 true） |
+| `SOPHAGENT_DINGTALK_ALLOWED_CHAT_IDS` | 群聊白名单（conversation_id，逗号分隔） |
+| `SOPHAGENT_DINGTALK_FREE_RESPONSE_CHATS` | 免 @ 群聊列表 |
+| `SOPHAGENT_DINGTALK_MENTION_PATTERNS` | 唤醒词正则（每行一个或 JSON 数组） |
+| `SOPHAGENT_DINGTALK_WEBHOOK_URL` | 选填：静态机器人 Webhook，用于定时任务/告警通知 |
+| `SOPHAGENT_DINGTALK_HOME_CHANNEL` | 选填：默认通知会话 ID（conversation_id） |
+| `SOPHAGENT_DINGTALK_REPLY_EMOTION` | 入站表情反馈（默认 `true`）：🤔Thinking → 🥳Done |
+
+钉钉开放平台需：启用机器人、消息接收选 **Stream 模式**；若使用 AI Card 需额外配置卡片模板并发布应用。
+
+**运维注意**：同一 AppKey 仅允许一个实例建立 Stream 连接（文件锁互斥）；凭证失效后 Admin 页面会提示重新扫码；入站媒体下载与 sessionWebhook 均有域名白名单防 SSRF。配置静态 Webhook 后，定时任务触发/完成会向该群推送通知。
+
 ### 上手流程
 
 1. 登录 → Agents 页签 → 在自己拥有的组里创建 agent（选 provider、填模型名、勾选工具）

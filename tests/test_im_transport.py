@@ -103,3 +103,15 @@ async def test_buffered_transport_sends_once_on_done():
     assert client.sends == []
     await t.on_event({"type": "done"})
     assert client.sends == [("qq:c2c", "hello")]
+
+
+@pytest.mark.asyncio
+async def test_buffered_transport_chained_turns_send_separately():
+    client = FakeClient()
+    t = BufferedSendTransport("qq:c2c", client)
+    await t.on_event({"type": "text_delta", "text": "first"})
+    await t.on_event({"type": "done"})
+    await t.on_event({"type": "queued_next", "content": "second"})
+    await t.on_event({"type": "text_delta", "text": "second"})
+    await t.on_event({"type": "done"})
+    assert [s[1] for s in client.sends] == ["first", "second"]

@@ -131,6 +131,11 @@ class IMDriver:
         attachments = await self._persist_attachments(ev.attachments or [], user_id, platform=ev.platform)
         attachments = await self._maybe_transcribe_audio(attachments, user_id, session_id)
         refs = [f"[附加文件: {a.path}]" for a in attachments if a.path and a.kind != "emoji"]
+        image_refs = [a for a in attachments if a.kind == "image" and a.path]
+        if image_refs:
+            refs.append(
+                "[提示: 用户发送了图片，当前模型不支持原生识图，请用 read_file 读取上方图片路径查看内容]"
+            )
         transcript_notes = []
         emoji_notes = []
         audio_notes = []
