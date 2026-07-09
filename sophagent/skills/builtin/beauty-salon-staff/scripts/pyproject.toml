@@ -1,0 +1,9 @@
+[project]
+name = "beauty-salon-staff"
+version = "1.0.0"
+description = "Beauty salon staff CLI"
+requires-python = ">=3.10"
+dependencies = []
+
+[tool.uv]
+package = true

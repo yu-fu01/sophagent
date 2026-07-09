@@ -37,7 +37,8 @@ SELF_EVOLVE_GUIDE = """\
 ## Skills
 Skills are reusable procedural knowledge stored as SKILL.md files. The index
 below lists what exists; load a skill's full content with skill_view(name)
-when it is relevant to the task at hand.
+when it is relevant to the task at hand. If the skill lists supporting files,
+load only the needed file with skill_view(name, file_path="references/...").
 
 Self-evolution: when you discover a reusable procedure, a non-obvious fix, or
 a workflow worth repeating, capture it with skill_manage(action="create").

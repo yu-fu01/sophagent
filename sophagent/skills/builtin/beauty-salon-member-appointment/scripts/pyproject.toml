@@ -1,0 +1,9 @@
+[project]
+name = "beauty-salon-member-appointment"
+version = "1.0.0"
+description = "Beauty salon member and appointment CLI"
+requires-python = ">=3.10"
+dependencies = []
+
+[tool.uv]
+package = true

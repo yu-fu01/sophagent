@@ -134,7 +134,9 @@ class AgentRunner:
 
         skill_index = None
         if self.ctx.skill_store is not None:
+            from ..skills.store import filter_index_for_agent
             skill_index = self.ctx.skill_store.index(self.agent.skills)
+            skill_index = filter_index_for_agent(skill_index, self.agent)
         memories = self.ctx.services.get("memories")
         return build_system_prompt(self.agent, skill_index, memories, self.ctx.workspace)
 

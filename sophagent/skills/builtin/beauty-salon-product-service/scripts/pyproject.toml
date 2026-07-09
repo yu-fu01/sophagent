@@ -1,0 +1,9 @@
+[project]
+name = "beauty-salon-product-service"
+version = "1.0.0"
+description = "Beauty salon services and products CLI"
+requires-python = ">=3.10"
+dependencies = []
+
+[tool.uv]
+package = true

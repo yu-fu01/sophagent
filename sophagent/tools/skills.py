@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import json
 
-from ..skills.store import SkillError
+from ..skills.store import SkillError, filter_index_for_agent
 from .registry import ToolContext, tool
 
 
@@ -16,7 +16,7 @@ from .registry import ToolContext, tool
 async def skills_list(ctx: ToolContext) -> str:
     if ctx.skill_store is None:
         return "Error: skill store unavailable"
-    index = ctx.skill_store.index(ctx.agent.skills)
+    index = filter_index_for_agent(ctx.skill_store.index(ctx.agent.skills), ctx.agent)
     if not index:
         return "No skills exist yet."
     return "\n".join(f"- {s['name']}: {s['description']}" +
@@ -26,18 +26,24 @@ async def skills_list(ctx: ToolContext) -> str:
 
 @tool(
     "skill_view",
-    "Load the full content of a skill (SKILL.md).",
+    "Load the full content of a skill (SKILL.md), or a supporting file under references/, scripts/, templates/ or assets/.",
     {
         "type": "object",
-        "properties": {"name": {"type": "string"}},
+        "properties": {
+            "name": {"type": "string"},
+            "file_path": {
+                "type": "string",
+                "description": "Optional supporting file path inside the skill dir, e.g. references/playbook.md",
+            },
+        },
         "required": ["name"],
     },
 )
-async def skill_view(ctx: ToolContext, name: str) -> str:
+async def skill_view(ctx: ToolContext, name: str, file_path: str = "") -> str:
     if ctx.skill_store is None:
         return "Error: skill store unavailable"
     try:
-        return ctx.skill_store.view(name)
+        return ctx.skill_store.view(name, file_path)
     except SkillError as e:
         return f"Error: {e}"
 
