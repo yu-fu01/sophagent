@@ -303,20 +303,33 @@ class CronScheduler:
             return
         await self.db.append_messages(source_session_id, messages)
         await self.db.touch_session(source_session_id)
-        await self._emit_source_mirror_event(job, source_session_id)
+        assistant = next((m for m in messages if m.role == "assistant"), None)
+        if assistant is not None:
+            await self._emit_source_mirror_live(job, source_session_id, assistant)
 
-    async def _emit_source_mirror_event(self, job: dict, source_session_id: str) -> None:
+    async def _emit_source_mirror_live(
+        self, job: dict, source_session_id: str, assistant: Message
+    ) -> None:
+        """把镜像的 assistant 回复作为流式事件推给在线的 source session 客户端。
+
+        匹配 _fire_text 的 live-emit 模式:text_delta(→ wire message.delta)在前端
+        TURN_START_EVENTS 里,会懒建 turn 并渲染气泡;后续 done/finish_turn/settled
+        收尾让 UI 退出 streaming。发空的 cron.mirror 通知前端不认,用户必须刷新才
+        能看到回复——这是本函数取代的旧行为。
+        """
         state = self.registry.get(source_session_id)
         if state is None:
-            return
+            return  # 用户未在线;下次 resume 从 DB 读
         try:
-            await state.on_event({
-                "type": "cron.mirror",
-                "job_id": job.get("id"),
-                "cron_session_id": job.get("session_id"),
-            })
+            reasoning = (getattr(assistant, "reasoning", "") or "").strip()
+            if reasoning:
+                await state.on_event({"type": "reasoning_delta", "text": reasoning})
+            await state.on_event({"type": "text_delta", "text": assistant.content})
+            await state.on_event({"type": "done"})
+            await state.finish_turn()
+            await state.on_event({"type": "settled"})
         except Exception:
-            log.debug("cron mirror event dropped source_session=%s", source_session_id)
+            log.exception("cron mirror live-emit failed source=%s", source_session_id)
 
     async def _mark(self, job: dict, *, success: bool, error: str | None, now: datetime,
                     next_run_iso: str | None = None, completed: bool = False,
