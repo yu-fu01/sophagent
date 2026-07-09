@@ -28,6 +28,18 @@ def print_json(obj: Any) -> None:
     print(json.dumps(obj, ensure_ascii=False, indent=2))
 
 
+def service_display_id_map(conn) -> dict[int, int]:
+    rows = conn.execute(
+        "SELECT id FROM catalog_services WHERE status='active' ORDER BY id"
+    ).fetchall()
+    return {int(row["id"]): idx for idx, row in enumerate(rows, start=1)}
+
+
+def with_service_display_id(row: dict[str, Any], display_ids: dict[int, int]) -> dict[str, Any]:
+    sid = int(row["id"])
+    return {"display_id": display_ids.get(sid), **row}
+
+
 def cmd_service_add(conn, args: argparse.Namespace) -> int:
     materials = {}
     if args.materials:
@@ -50,14 +62,20 @@ def cmd_service_add(conn, args: argparse.Namespace) -> int:
 
 def cmd_service_query(conn, args: argparse.Namespace) -> int:
     cur = conn.cursor()
+    display_ids = service_display_id_map(conn)
     if args.name:
         row = cur.execute(
             "SELECT * FROM catalog_services WHERE name=? AND status='active'",
             (args.name,),
         ).fetchone()
-        rows = [dict(row)] if row else []
+        rows = [with_service_display_id(dict(row), display_ids)] if row else []
     else:
-        rows = [dict(r) for r in cur.execute("SELECT * FROM catalog_services WHERE status='active' ORDER BY name")]
+        rows = [
+            with_service_display_id(dict(r), display_ids)
+            for r in cur.execute(
+                "SELECT * FROM catalog_services WHERE status='active' ORDER BY id"
+            )
+        ]
     for r in rows:
         sid = r["id"]
         mats = cur.execute(

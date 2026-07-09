@@ -27,7 +27,7 @@ python -m product_service_cli <子命令> ...
 | 子命令 | 说明 |
 |--------|------|
 | `service-add` | `--name` `--price` `--duration` 可选 `--materials` JSON |
-| `service-query` | 可选 `--name` |
+| `service-query` | 可选 `--name`；输出中的 `display_id` 是给用户看的连续编号，回答“编号”时使用它；`id` 是数据库内部主键，不用于展示编号 |
 | `service-update` | `--name` `--set` JSON（`price` / `duration_min` / `name`） |
 | `service-delete` | `--name` 需 `--yes`；在单库内直接检查次卡引用 |
 | `product-add` | `--name` `--cost` `--price` 可选 `--unit` `--threshold` |
