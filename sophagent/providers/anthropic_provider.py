@@ -12,6 +12,7 @@ All format differences are contained here:
 from __future__ import annotations
 
 import json
+from pathlib import Path
 from typing import Any, AsyncIterator
 
 from anthropic import AsyncAnthropic
@@ -73,7 +74,9 @@ class AnthropicProvider:
         temperature: float | None = None,
         max_tokens: int | None = None,
         thinking: str | None = None,
+        workspace: Path | None = None,
     ) -> AsyncIterator[StreamEvent]:
+        del workspace
         kwargs: dict[str, Any] = {
             "model": model,
             "messages": messages_to_anthropic(messages),
