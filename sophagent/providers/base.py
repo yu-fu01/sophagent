@@ -7,6 +7,7 @@ of the system never sees provider differences.
 
 from __future__ import annotations
 
+from pathlib import Path
 from typing import AsyncIterator, Protocol
 
 from ..models import Message, StreamEvent
@@ -23,6 +24,7 @@ class Provider(Protocol):
         temperature: float | None = None,
         max_tokens: int | None = None,
         thinking: str | None = None,
+        workspace: Path | None = None,
     ) -> AsyncIterator[StreamEvent]:
         """Yield text_delta events followed by exactly one turn_done event.
 

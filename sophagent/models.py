@@ -29,6 +29,43 @@ class ToolCall:
 
 
 @dataclass
+class MessageAttachment:
+    kind: str
+    path: str
+    name: str = ""
+    mime: str = ""
+    size: int | None = None
+    platform: str = ""
+    raw: dict[str, Any] | None = None
+
+    def to_dict(self) -> dict[str, Any]:
+        d: dict[str, Any] = {"kind": self.kind, "path": self.path}
+        if self.name:
+            d["name"] = self.name
+        if self.mime:
+            d["mime"] = self.mime
+        if self.size is not None:
+            d["size"] = self.size
+        if self.platform:
+            d["platform"] = self.platform
+        if self.raw:
+            d["raw"] = self.raw
+        return d
+
+    @classmethod
+    def from_dict(cls, d: dict[str, Any]) -> "MessageAttachment":
+        return cls(
+            kind=str(d.get("kind") or "file"),
+            path=str(d.get("path") or ""),
+            name=str(d.get("name") or ""),
+            mime=str(d.get("mime") or ""),
+            size=d.get("size") if isinstance(d.get("size"), int) else None,
+            platform=str(d.get("platform") or ""),
+            raw=d.get("raw") if isinstance(d.get("raw"), dict) else None,
+        )
+
+
+@dataclass
 class Message:
     role: str  # system | user | assistant | tool
     content: str = ""
@@ -42,6 +79,7 @@ class Message:
     # build their request dicts manually and never read it, so it stays
     # DB/API-only and never reaches the upstream model.
     compressed: bool = False
+    attachments: list[MessageAttachment] = field(default_factory=list)
 
     def to_dict(self) -> dict[str, Any]:
         d: dict[str, Any] = {"role": self.role, "content": self.content}
@@ -53,6 +91,8 @@ class Message:
             d["reasoning"] = self.reasoning
         if self.compressed:
             d["_compressed"] = True
+        if self.attachments:
+            d["attachments"] = [a.to_dict() for a in self.attachments]
         return d
 
     def to_json(self) -> str:
@@ -67,6 +107,11 @@ class Message:
             tool_call_id=d.get("tool_call_id"),
             reasoning=d.get("reasoning"),
             compressed=bool(d.get("_compressed", False)),
+            attachments=[
+                MessageAttachment.from_dict(a)
+                for a in d.get("attachments", [])
+                if isinstance(a, dict)
+            ],
         )
 
     @classmethod

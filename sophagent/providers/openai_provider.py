@@ -2,8 +2,11 @@
 
 from __future__ import annotations
 
+import base64
 import json
 import logging
+import mimetypes
+from pathlib import Path
 from typing import Any, AsyncIterator
 
 log = logging.getLogger(__name__)
@@ -14,8 +17,71 @@ from ..config import ProviderConfig
 from ..models import AssistantTurn, Message, StreamEvent, ToolCall
 
 
-def messages_to_openai(system: str, messages: list[Message]) -> list[dict[str, Any]]:
+IMAGE_ATTACHMENT_MAX_BYTES = 8 * 1024 * 1024
+
+
+def _supports_image_input(model: str) -> bool:
+    name = (model or "").lower()
+    return (
+        "vl" in name
+        or "vision" in name
+        or "gpt-4o" in name
+        or "gemini" in name
+        or "qwen-omni" in name
+    )
+
+
+def _safe_attachment_path(workspace: Path, rel_path: str) -> Path | None:
+    if not rel_path:
+        return None
+    try:
+        root = workspace.resolve()
+        path = (root / rel_path).resolve()
+    except (OSError, RuntimeError, ValueError):
+        return None
+    if not path.is_relative_to(root) or not path.is_file():
+        return None
+    return path
+
+
+def _image_data_url(path: Path, mime: str = "") -> str | None:
+    try:
+        if path.stat().st_size > IMAGE_ATTACHMENT_MAX_BYTES:
+            return None
+        data = path.read_bytes()
+    except OSError:
+        return None
+    media_type = mime or mimetypes.guess_type(path.name)[0] or "image/jpeg"
+    encoded = base64.b64encode(data).decode("ascii")
+    return f"data:{media_type};base64,{encoded}"
+
+
+def _user_content_with_images(m: Message, workspace: Path | None) -> str | list[dict[str, Any]]:
+    if not workspace or not m.attachments:
+        return m.content
+    parts: list[dict[str, Any]] = [{"type": "text", "text": m.content or ""}]
+    for att in m.attachments:
+        if att.kind != "image":
+            continue
+        path = _safe_attachment_path(workspace, att.path)
+        if path is None:
+            continue
+        data_url = _image_data_url(path, att.mime)
+        if data_url is None:
+            continue
+        parts.append({"type": "image_url", "image_url": {"url": data_url}})
+    return parts if len(parts) > 1 else m.content
+
+
+def messages_to_openai(
+    system: str,
+    messages: list[Message],
+    *,
+    model: str = "",
+    workspace: Path | None = None,
+) -> list[dict[str, Any]]:
     out: list[dict[str, Any]] = []
+    include_images = _supports_image_input(model)
     if system:
         out.append({"role": "system", "content": system})
     for m in messages:
@@ -35,6 +101,8 @@ def messages_to_openai(system: str, messages: list[Message]) -> list[dict[str, A
             out.append(d)
         elif m.role == "tool":
             out.append({"role": "tool", "tool_call_id": m.tool_call_id, "content": m.content})
+        elif m.role == "user" and include_images:
+            out.append({"role": "user", "content": _user_content_with_images(m, workspace)})
         else:
             out.append({"role": m.role, "content": m.content})
     return out
@@ -65,10 +133,11 @@ class OpenAIProvider:
         temperature: float | None = None,
         max_tokens: int | None = None,
         thinking: str | None = None,
+        workspace: Path | None = None,
     ) -> AsyncIterator[StreamEvent]:
         kwargs: dict[str, Any] = {
             "model": model,
-            "messages": messages_to_openai(system, messages),
+            "messages": messages_to_openai(system, messages, model=model, workspace=workspace),
             "stream": True,
         }
         if tools:

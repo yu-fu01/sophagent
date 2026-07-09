@@ -78,6 +78,42 @@ class Config:
     telegram_bot_token: str = ""
     # 额外白名单（逗号分隔的 Telegram user id）；空=仅靠配对码控制访问。
     telegram_allowed_user_ids: tuple[int, ...] = ()
+    # IM 网关（QQ Bot）：配了 app_id + client_secret 才启用。
+    qq_app_id: str = ""
+    qq_client_secret: str = ""
+    # 额外白名单（逗号分隔的 QQ openid）；空=仅靠配对码控制访问。
+    qq_allowed_user_ids: tuple[str, ...] = ()
+    # IM 网关（Feishu/Lark）：配了 app_id + app_secret 才启用。
+    feishu_app_id: str = ""
+    feishu_app_secret: str = ""
+    feishu_domain: str = "feishu"
+    feishu_connection_mode: str = "websocket"
+    feishu_verification_token: str = ""
+    feishu_encrypt_key: str = ""
+    feishu_require_mention: bool = True
+    feishu_allowed_user_ids: tuple[str, ...] = ()
+    # IM 网关（Weixin 个人微信）：配了 account_id + token 才启用。
+    weixin_account_id: str = ""
+    weixin_token: str = ""
+    weixin_base_url: str = "https://ilinkai.weixin.qq.com"
+    weixin_allowed_user_ids: tuple[str, ...] = ()
+    weixin_dm_policy: str = "pairing"
+    weixin_cdn_base_url: str = "https://novac2c.cdn.weixin.qq.com/c2c"
+    weixin_split_multiline: bool = False
+    # IM 网关（钉钉 DingTalk）：Stream 入站 + AI Card 流式出站。
+    dingtalk_client_id: str = ""
+    dingtalk_client_secret: str = ""
+    dingtalk_card_template_id: str = ""
+    dingtalk_robot_code: str = ""
+    dingtalk_allowed_user_ids: tuple[str, ...] = ()
+    dingtalk_dm_policy: str = "pairing"
+    dingtalk_require_mention: bool = True
+    dingtalk_allowed_chat_ids: tuple[str, ...] = ()
+    dingtalk_free_response_chats: tuple[str, ...] = ()
+    dingtalk_mention_patterns: str = ""
+    dingtalk_webhook_url: str = ""
+    dingtalk_home_channel: str = ""
+    dingtalk_reply_emotion: bool = True
     # 定时任务（cron）：默认启用，60s 一轮 tick。
     cron_enabled: bool = True
     cron_tick_interval_seconds: float = 60.0
@@ -188,6 +224,58 @@ def load_config() -> Config:
             int(u) for u in
             (os.environ.get("SOPHAGENT_TELEGRAM_ALLOWED_USER_IDS") or "").split(",") if u
         ),
+        qq_app_id=os.environ.get("SOPHAGENT_QQ_APP_ID", ""),
+        qq_client_secret=os.environ.get("SOPHAGENT_QQ_CLIENT_SECRET", ""),
+        qq_allowed_user_ids=tuple(
+            u.strip() for u in
+            (os.environ.get("SOPHAGENT_QQ_ALLOWED_USER_IDS") or "").split(",") if u.strip()
+        ),
+        feishu_app_id=os.environ.get("SOPHAGENT_FEISHU_APP_ID", ""),
+        feishu_app_secret=os.environ.get("SOPHAGENT_FEISHU_APP_SECRET", ""),
+        feishu_domain=os.environ.get("SOPHAGENT_FEISHU_DOMAIN", "feishu"),
+        feishu_connection_mode=os.environ.get("SOPHAGENT_FEISHU_CONNECTION_MODE", "websocket"),
+        feishu_verification_token=os.environ.get("SOPHAGENT_FEISHU_VERIFICATION_TOKEN", ""),
+        feishu_encrypt_key=os.environ.get("SOPHAGENT_FEISHU_ENCRYPT_KEY", ""),
+        feishu_require_mention=os.environ.get("SOPHAGENT_FEISHU_REQUIRE_MENTION", "true").lower()
+        not in {"0", "false", "no", "off"},
+        feishu_allowed_user_ids=tuple(
+            u.strip() for u in
+            (os.environ.get("SOPHAGENT_FEISHU_ALLOWED_USER_IDS") or "").split(",") if u.strip()
+        ),
+        weixin_account_id=os.environ.get("SOPHAGENT_WEIXIN_ACCOUNT_ID", ""),
+        weixin_token=os.environ.get("SOPHAGENT_WEIXIN_TOKEN", ""),
+        weixin_base_url=os.environ.get("SOPHAGENT_WEIXIN_BASE_URL", "https://ilinkai.weixin.qq.com"),
+        weixin_allowed_user_ids=tuple(
+            u.strip() for u in
+            (os.environ.get("SOPHAGENT_WEIXIN_ALLOWED_USER_IDS") or "").split(",") if u.strip()
+        ),
+        weixin_dm_policy=os.environ.get("SOPHAGENT_WEIXIN_DM_POLICY", "pairing").strip().lower() or "pairing",
+        weixin_cdn_base_url=os.environ.get("SOPHAGENT_WEIXIN_CDN_BASE_URL", "https://novac2c.cdn.weixin.qq.com/c2c"),
+        weixin_split_multiline=os.environ.get("SOPHAGENT_WEIXIN_SPLIT_MULTILINE", "").lower() in {"1", "true", "yes", "on"},
+        dingtalk_client_id=os.environ.get("SOPHAGENT_DINGTALK_CLIENT_ID", ""),
+        dingtalk_client_secret=os.environ.get("SOPHAGENT_DINGTALK_CLIENT_SECRET", ""),
+        dingtalk_card_template_id=os.environ.get("SOPHAGENT_DINGTALK_CARD_TEMPLATE_ID", ""),
+        dingtalk_robot_code=os.environ.get("SOPHAGENT_DINGTALK_ROBOT_CODE", ""),
+        dingtalk_allowed_user_ids=tuple(
+            u.strip() for u in
+            (os.environ.get("SOPHAGENT_DINGTALK_ALLOWED_USER_IDS") or "").split(",") if u.strip()
+        ),
+        dingtalk_dm_policy=os.environ.get("SOPHAGENT_DINGTALK_DM_POLICY", "pairing").strip().lower() or "pairing",
+        dingtalk_require_mention=os.environ.get("SOPHAGENT_DINGTALK_REQUIRE_MENTION", "true").lower()
+        not in {"0", "false", "no", "off"},
+        dingtalk_allowed_chat_ids=tuple(
+            c.strip() for c in
+            (os.environ.get("SOPHAGENT_DINGTALK_ALLOWED_CHAT_IDS") or "").split(",") if c.strip()
+        ),
+        dingtalk_free_response_chats=tuple(
+            c.strip() for c in
+            (os.environ.get("SOPHAGENT_DINGTALK_FREE_RESPONSE_CHATS") or "").split(",") if c.strip()
+        ),
+        dingtalk_mention_patterns=os.environ.get("SOPHAGENT_DINGTALK_MENTION_PATTERNS", ""),
+        dingtalk_webhook_url=os.environ.get("SOPHAGENT_DINGTALK_WEBHOOK_URL", ""),
+        dingtalk_home_channel=os.environ.get("SOPHAGENT_DINGTALK_HOME_CHANNEL", ""),
+        dingtalk_reply_emotion=os.environ.get("SOPHAGENT_DINGTALK_REPLY_EMOTION", "true").lower()
+        not in {"0", "false", "no", "off"},
         self_improve_enabled=os.environ.get("SOPHAGENT_SELF_IMPROVE", "true").lower()
         not in {"0", "false", "no", "off"},
         cron_enabled=os.environ.get("SOPHAGENT_CRON_ENABLED", "true").lower()
@@ -257,3 +345,225 @@ async def effective_telegram_token(db) -> str:
     if raw:
         return raw
     return get_config().telegram_bot_token
+
+
+async def effective_qq_config(db) -> tuple[str, str]:
+    """Runtime-effective QQ Bot credentials.
+
+    DB settings win over env defaults. Empty app_id or client_secret disables
+    the QQ IM gateway.
+    """
+    app_id = await db.get_setting("qq_app_id")
+    client_secret = await db.get_setting("qq_client_secret")
+    cfg = get_config()
+    return (app_id or cfg.qq_app_id, client_secret or cfg.qq_client_secret)
+
+
+@dataclass
+class FeishuConfig:
+    app_id: str
+    app_secret: str
+    domain: str = "feishu"
+    connection_mode: str = "websocket"
+    verification_token: str = ""
+    encrypt_key: str = ""
+
+
+async def effective_feishu_config(db) -> FeishuConfig:
+    """Runtime-effective Feishu credentials and connection settings."""
+    cfg = get_config()
+    app_id = await db.get_setting("feishu_app_id")
+    app_secret = await db.get_setting("feishu_app_secret")
+    domain = await db.get_setting("feishu_domain")
+    connection_mode = await db.get_setting("feishu_connection_mode")
+    verification_token = await db.get_setting("feishu_verification_token")
+    encrypt_key = await db.get_setting("feishu_encrypt_key")
+    return FeishuConfig(
+        app_id=(app_id or cfg.feishu_app_id or "").strip(),
+        app_secret=(app_secret or cfg.feishu_app_secret or "").strip(),
+        domain=(domain or cfg.feishu_domain or "feishu").strip() or "feishu",
+        connection_mode=(connection_mode or cfg.feishu_connection_mode or "websocket").strip() or "websocket",
+        verification_token=(verification_token or cfg.feishu_verification_token or "").strip(),
+        encrypt_key=(encrypt_key or cfg.feishu_encrypt_key or "").strip(),
+    )
+
+
+async def effective_weixin_config(db):
+    """Runtime-effective Weixin credentials. DB settings win over env defaults."""
+    from .im.platforms.weixin import WeixinConfig, resolve_config
+
+    cfg = get_config()
+    account_id = await db.get_setting("weixin_account_id")
+    token = await db.get_setting("weixin_token")
+    base_url = await db.get_setting("weixin_base_url")
+    resolved_account_id = (account_id or cfg.weixin_account_id or "").strip()
+    resolved_token = (token or cfg.weixin_token or "").strip()
+    resolved_base_url = (
+        (base_url or cfg.weixin_base_url or "https://ilinkai.weixin.qq.com").strip().rstrip("/")
+        or "https://ilinkai.weixin.qq.com"
+    )
+    cdn_base_url = (
+        (await db.get_setting("weixin_cdn_base_url") or cfg.weixin_cdn_base_url or "https://novac2c.cdn.weixin.qq.com/c2c")
+        .strip().rstrip("/")
+    )
+    split_raw = await db.get_setting("weixin_split_multiline")
+    split_multiline = (
+        str(split_raw).lower() in {"1", "true", "yes", "on"}
+        if split_raw is not None
+        else cfg.weixin_split_multiline
+    )
+    if resolved_account_id and resolved_token:
+        return WeixinConfig(
+            account_id=resolved_account_id,
+            token=resolved_token,
+            base_url=resolved_base_url,
+            cdn_base_url=cdn_base_url,
+            split_multiline=split_multiline,
+        )
+    return resolve_config(
+        account_id=resolved_account_id,
+        token=resolved_token,
+        base_url=resolved_base_url,
+        data_dir=cfg.data_dir,
+        cdn_base_url=cdn_base_url,
+        split_multiline=split_multiline,
+    )
+
+
+async def effective_weixin_allowed_user_ids(db) -> tuple[str, ...]:
+    raw = await db.get_setting("weixin_allowed_user_ids")
+    cfg = get_config()
+    text = (raw if raw is not None else ",".join(cfg.weixin_allowed_user_ids)).strip()
+    return tuple(u.strip() for u in text.split(",") if u.strip())
+
+
+async def effective_weixin_dm_policy(db) -> str:
+    raw = await db.get_setting("weixin_dm_policy")
+    cfg = get_config()
+    policy = (raw or cfg.weixin_dm_policy or "pairing").strip().lower()
+    if policy not in {"pairing", "allowlist", "disabled"}:
+        return "pairing"
+    return policy
+
+
+def mask_weixin_account_id(account_id: str) -> str:
+    aid = (account_id or "").strip()
+    if len(aid) <= 8:
+        return aid or ""
+    return f"{aid[:4]}...{aid[-4:]}"
+
+
+def mask_dingtalk_client_id(client_id: str) -> str:
+    cid = (client_id or "").strip()
+    if len(cid) <= 8:
+        return cid or ""
+    return f"{cid[:4]}...{cid[-4:]}"
+
+
+async def effective_dingtalk_config(db):
+    from .im.platforms.dingtalk import DingTalkConfig
+
+    cfg = get_config()
+    client_id = await db.get_setting("dingtalk_client_id")
+    client_secret = await db.get_setting("dingtalk_client_secret")
+    card_template_id = await db.get_setting("dingtalk_card_template_id")
+    robot_code = await db.get_setting("dingtalk_robot_code")
+    dm_policy = await effective_dingtalk_dm_policy(db)
+    require_mention = await effective_dingtalk_require_mention(db)
+    allowed_chat_ids = await effective_dingtalk_allowed_chat_ids(db)
+    free_response_chats = await effective_dingtalk_free_response_chats(db)
+    mention_patterns = await effective_dingtalk_mention_patterns(db)
+    resolved_client_id = (client_id or cfg.dingtalk_client_id or "").strip()
+    resolved_client_secret = (client_secret or cfg.dingtalk_client_secret or "").strip()
+    resolved_card_template_id = (card_template_id or cfg.dingtalk_card_template_id or "").strip()
+    reply_emotion_raw = await db.get_setting("dingtalk_reply_emotion")
+    if reply_emotion_raw is None:
+        reply_emotion = cfg.dingtalk_reply_emotion
+    else:
+        reply_emotion = str(reply_emotion_raw).lower() in {"1", "true", "yes", "on"}
+    if not resolved_client_id or not resolved_client_secret:
+        return None
+    return DingTalkConfig(
+        client_id=resolved_client_id,
+        client_secret=resolved_client_secret,
+        card_template_id=resolved_card_template_id,
+        robot_code=(robot_code or cfg.dingtalk_robot_code or resolved_client_id).strip(),
+        dm_policy=dm_policy,
+        require_mention=require_mention,
+        allowed_chat_ids=allowed_chat_ids,
+        free_response_chats=free_response_chats,
+        mention_patterns=mention_patterns,
+        reply_emotion=reply_emotion,
+    )
+
+
+async def effective_dingtalk_allowed_user_ids(db) -> tuple[str, ...]:
+    raw = await db.get_setting("dingtalk_allowed_user_ids")
+    cfg = get_config()
+    text = (raw if raw is not None else ",".join(cfg.dingtalk_allowed_user_ids)).strip()
+    return tuple(u.strip() for u in text.split(",") if u.strip())
+
+
+async def effective_dingtalk_dm_policy(db) -> str:
+    raw = await db.get_setting("dingtalk_dm_policy")
+    cfg = get_config()
+    policy = (raw or cfg.dingtalk_dm_policy or "pairing").strip().lower()
+    if policy not in {"pairing", "allowlist", "disabled"}:
+        return "pairing"
+    return policy
+
+
+async def effective_dingtalk_require_mention(db) -> bool:
+    raw = await db.get_setting("dingtalk_require_mention")
+    cfg = get_config()
+    if raw is not None:
+        return raw.strip().lower() not in {"0", "false", "no", "off"}
+    return cfg.dingtalk_require_mention
+
+
+async def effective_dingtalk_allowed_chat_ids(db) -> tuple[str, ...]:
+    from .im.platforms.dingtalk.gating import parse_id_list
+
+    raw = await db.get_setting("dingtalk_allowed_chat_ids")
+    cfg = get_config()
+    text = raw if raw is not None else ",".join(cfg.dingtalk_allowed_chat_ids)
+    return parse_id_list(text)
+
+
+async def effective_dingtalk_free_response_chats(db) -> tuple[str, ...]:
+    from .im.platforms.dingtalk.gating import parse_id_list
+
+    raw = await db.get_setting("dingtalk_free_response_chats")
+    cfg = get_config()
+    text = raw if raw is not None else ",".join(cfg.dingtalk_free_response_chats)
+    return parse_id_list(text)
+
+
+async def effective_dingtalk_mention_patterns(db) -> tuple[str, ...]:
+    from .im.platforms.dingtalk.gating import parse_mention_patterns
+
+    raw = await db.get_setting("dingtalk_mention_patterns")
+    cfg = get_config()
+    text = raw if raw is not None else cfg.dingtalk_mention_patterns
+    return parse_mention_patterns(text)
+
+
+async def effective_dingtalk_webhook_url(db) -> str:
+    raw = await db.get_setting("dingtalk_webhook_url")
+    cfg = get_config()
+    return (raw if raw is not None else cfg.dingtalk_webhook_url or "").strip()
+
+
+async def effective_dingtalk_home_channel(db) -> str:
+    raw = await db.get_setting("dingtalk_home_channel")
+    cfg = get_config()
+    return (raw if raw is not None else cfg.dingtalk_home_channel or "").strip()
+
+
+async def effective_dingtalk_reply_emotion(db) -> bool:
+    raw = await db.get_setting("dingtalk_reply_emotion")
+    cfg = get_config()
+    if raw is None:
+        return cfg.dingtalk_reply_emotion
+    return str(raw).lower() in {"1", "true", "yes", "on"}
+

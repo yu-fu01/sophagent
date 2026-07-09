@@ -1,7 +1,7 @@
 """TelegramTransport: 内部事件 -> edit-in-place 流式（限频）。"""
 import asyncio
 import pytest
-from sophagent.im.transport import TelegramTransport
+from sophagent.im.transport import BufferedSendTransport, TelegramTransport
 
 
 class FakeClient:
@@ -92,3 +92,26 @@ async def test_edit_failure_does_not_kill_turn():
     await t.on_event({"type": "text_delta", "text": "b"})   # edit fails -> 不抛
     await t.on_event({"type": "done", "usage": {}, "context_length": 0, "context_limit": 0})  # edit fails -> 不抛
     assert t.message_id is None  # done 清了
+
+
+@pytest.mark.asyncio
+async def test_buffered_transport_sends_once_on_done():
+    client = FakeClient()
+    t = BufferedSendTransport("qq:c2c", client)
+    await t.on_event({"type": "text_delta", "text": "hel"})
+    await t.on_event({"type": "text_delta", "text": "lo"})
+    assert client.sends == []
+    await t.on_event({"type": "done"})
+    assert client.sends == [("qq:c2c", "hello")]
+
+
+@pytest.mark.asyncio
+async def test_buffered_transport_chained_turns_send_separately():
+    client = FakeClient()
+    t = BufferedSendTransport("qq:c2c", client)
+    await t.on_event({"type": "text_delta", "text": "first"})
+    await t.on_event({"type": "done"})
+    await t.on_event({"type": "queued_next", "content": "second"})
+    await t.on_event({"type": "text_delta", "text": "second"})
+    await t.on_event({"type": "done"})
+    assert [s[1] for s in client.sends] == ["first", "second"]

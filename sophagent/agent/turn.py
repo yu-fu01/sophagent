@@ -23,6 +23,7 @@ import logging
 from typing import Any, AsyncIterator
 
 from ..models import AgentDef, Message
+from ..models import MessageAttachment
 from .manager import SessionManager
 from .runtime import build_runner
 
@@ -94,6 +95,7 @@ async def run_turns(
     manager: SessionManager,
     skill_store,
     user_id: int,
+    user_attachments: list[MessageAttachment] | None = None,
 ) -> AsyncIterator[dict[str, Any]]:
     """Yield UI events for one turn and any queued follow-up turns.
 
@@ -103,6 +105,7 @@ async def run_turns(
     of every turn.
     """
     next_input = user_input
+    first_turn = True
     async with manager.lock_for(session_id):
         while True:
             holder: dict[str, Any] = {}
@@ -110,8 +113,10 @@ async def run_turns(
                 session_id=session_id, input_text=next_input,
                 db=db, manager=manager, skill_store=skill_store,
                 user_id=user_id, holder=holder,
+                user_attachments=user_attachments if first_turn else None,
             ):
                 yield ev
+            first_turn = False
             if not holder.get("has_more"):
                 return
             next_input = holder.get("next_input")
@@ -128,6 +133,7 @@ async def _run_one_turn(
     skill_store,
     user_id: int,
     holder: dict[str, Any],
+    user_attachments: list[MessageAttachment] | None = None,
 ) -> AsyncIterator[dict[str, Any]]:
     """Run exactly one turn, yielding events. Sets ``holder["has_more"]`` and
     ``holder["next_input"]`` when a queued message follows this one."""
@@ -160,7 +166,7 @@ async def _run_one_turn(
                 session_id=session_id,
             )
             try:
-                async for ev in runner.run(input_text):
+                async for ev in runner.run(input_text, attachments=user_attachments):
                     yield ev
             except asyncio.CancelledError:
                 yield {"type": "error", "message": "stopped by user"}

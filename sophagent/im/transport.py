@@ -85,3 +85,49 @@ class TelegramTransport:
 
     async def close(self) -> None:
         await self._flush(force=True)  # 兜底落全文（_flush 自身容错）
+
+
+class BufferedSendTransport:
+    """Buffer streamed deltas and send one final message.
+
+    Used by platforms such as QQ Bot where message editing is unavailable or too
+    costly. The client only needs ``send_message(chat_id, text)``.
+    """
+
+    def __init__(self, chat_id: str, client: TelegramLikeClient) -> None:
+        self.chat_id = chat_id
+        self.client = client
+        self._text = ""
+        self._sent = False
+
+    async def on_event(self, ev: dict[str, Any]) -> None:
+        t = ev.get("type")
+        if t == "text_delta":
+            self._text += ev.get("text", "")
+        elif t == "done":
+            await self._send_final()
+            # Chained turns (queued_next) reuse this transport; allow the next reply.
+            self._sent = False
+        elif t == "error":
+            msg = ev.get("message", "error")
+            try:
+                await self.client.send_message(self.chat_id, msg)
+            except Exception:
+                log.warning("buffered send error message failed chat=%s", self.chat_id)
+            self._sent = True
+            self._text = ""
+
+    async def _send_final(self) -> None:
+        if self._sent or not self._text:
+            if not self._sent and not self._text:
+                log.debug("buffered send skipped: empty text chat=%s", self.chat_id)
+            return
+        try:
+            await self.client.send_message(self.chat_id, self._text)
+            self._sent = True
+            self._text = ""
+        except Exception:
+            log.warning("buffered send failed chat=%s; will retry on close", self.chat_id)
+
+    async def close(self) -> None:
+        await self._send_final()

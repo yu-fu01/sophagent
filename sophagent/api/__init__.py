@@ -4,6 +4,7 @@ from . import (
     agent_routes,
     auth_routes,
     commands_routes,
+    feishu_routes,
     file_routes,
     group_routes,
     im_routes,
@@ -30,4 +31,5 @@ def mount_routes(app: FastAPI) -> None:
     app.include_router(settings_routes.router, prefix="/api/settings", tags=["settings"])
     app.include_router(commands_routes.router, prefix="/api/commands", tags=["commands"])
     app.include_router(im_routes.router, prefix="/api/im", tags=["im"])
+    app.include_router(feishu_routes.router, prefix="/api/feishu", tags=["feishu"])
     app.include_router(openai_compat.router, prefix="/v1", tags=["openai-compat"])

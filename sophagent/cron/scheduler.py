@@ -151,6 +151,9 @@ class CronScheduler:
             await self._mark(job, success=True, error=None, now=now,
                              next_run_iso=next_run_iso, completed=completed_after,
                              repeat_completed=repeat_new)
+            await self._maybe_dingtalk_notify(
+                f"⏰ 定时任务「{job.get('name') or job_id}」已触发（text 模式）"
+            )
             return True
 
         # agent 模式：session 忙则跳过（不推进、不 mark），下 tick 重试
@@ -250,6 +253,15 @@ class CronScheduler:
             completed=completed,
             repeat_completed=repeat_completed,
         )
+        name = job.get("name") or job.get("id")
+        if success:
+            await self._maybe_dingtalk_notify(
+                f"⏰ 定时任务「{name}」已完成（agent 模式）"
+            )
+        elif error:
+            await self._maybe_dingtalk_notify(
+                f"⚠️ 定时任务「{name}」失败：{error[:200]}"
+            )
 
     async def _last_message_id(self, session_id: str) -> int:
         rows = await self.db.load_messages_with_ids(session_id)
@@ -343,6 +355,18 @@ class CronScheduler:
             log.exception("cron mark_run failed job=%s", job.get("id"))
 
     # ── heartbeat ──────────────────────────────────────────────────────────
+
+    async def _maybe_dingtalk_notify(self, message: str) -> None:
+        try:
+            from ..config import effective_dingtalk_webhook_url
+            from ..im.platforms.dingtalk.notify import send_static_webhook_text
+
+            url = await effective_dingtalk_webhook_url(self.db)
+            if not url:
+                return
+            await send_static_webhook_text(url, message)
+        except Exception:
+            log.debug("dingtalk cron notify failed", exc_info=True)
 
     def _write_heartbeat(self, *, success: bool) -> None:
         """每轮写 epoch；仅成功轮写 last_success。供后续 cron status 区分
