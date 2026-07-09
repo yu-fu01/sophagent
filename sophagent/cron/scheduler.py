@@ -140,6 +140,7 @@ class CronScheduler:
         if mode == "text":
             # text 模式：同步落库 + 推进 + mark；session 空闲才推在线客户端
             await self._fire_text(job, session_id, not self.manager.is_busy(session_id))
+            await self._mirror_text_to_source(job)
             await self.db.advance_cron_next_run(job_id, next_run_iso)
             repeat_new = (job.get("repeat_completed") or 0) + 1
             repeat_times = job.get("repeat_times")
@@ -147,19 +148,20 @@ class CronScheduler:
             completed_after = kind == "once" or (
                 repeat_times is not None and repeat_times > 0 and repeat_new >= repeat_times
             )
-        await self._mark(job, success=True, error=None, now=now,
+            await self._mark(job, success=True, error=None, now=now,
                              next_run_iso=next_run_iso, completed=completed_after,
                              repeat_completed=repeat_new)
-        await self._maybe_dingtalk_notify(
-            f"⏰ 定时任务「{job.get('name') or job_id}」已触发（text 模式）"
-        )
-        return True
+            await self._maybe_dingtalk_notify(
+                f"⏰ 定时任务「{job.get('name') or job_id}」已触发（text 模式）"
+            )
+            return True
 
         # agent 模式：session 忙则跳过（不推进、不 mark），下 tick 重试
         if self.manager.is_busy(session_id):
             log.info("cron skip busy session job=%s session=%s", job_id, session_id)
             return False
 
+        before_message_id = await self._last_message_id(session_id)
         state = self.registry.get_or_create(session_id, user_id)
         task = state.start_turn(
             functools.partial(
@@ -187,18 +189,19 @@ class CronScheduler:
         def _on_done(t: asyncio.Task) -> None:
             success = not t.cancelled() and t.exception() is None
             err = str(t.exception()) if (not success and t.exception() is not None) else None
-            # 调度 mark 到 loop 上（done 回调里不能直接 await）
-            asyncio.create_task(self._mark(job, success=success, error=err, now=datetime.now(),
-                                           next_run_iso=next_run_iso, completed=completed_after,
-                                           repeat_completed=repeat_new))
-            if success:
-                asyncio.create_task(self._maybe_dingtalk_notify(
-                    f"⏰ 定时任务「{job.get('name') or job_id}」已完成（agent 模式）"
-                ))
-            elif err:
-                asyncio.create_task(self._maybe_dingtalk_notify(
-                    f"⚠️ 定时任务「{job.get('name') or job_id}」失败：{err[:200]}"
-                ))
+            # 调度 mark/mirror 到 loop 上（done 回调里不能直接 await）
+            asyncio.create_task(
+                self._after_agent_done(
+                    job,
+                    success=success,
+                    error=err,
+                    now=datetime.now(),
+                    next_run_iso=next_run_iso,
+                    completed=completed_after,
+                    repeat_completed=repeat_new,
+                    after_message_id=before_message_id,
+                )
+            )
 
         task.add_done_callback(_on_done)
         log.info("cron fired job=%s session=%s mode=agent next=%s",
@@ -226,6 +229,119 @@ class CronScheduler:
                     await state.on_event({"type": "settled"})
                 except Exception:
                     log.exception("cron text live-emit failed session=%s", session_id)
+
+    async def _after_agent_done(
+        self,
+        job: dict,
+        *,
+        success: bool,
+        error: str | None,
+        now: datetime,
+        next_run_iso: str | None,
+        completed: bool,
+        repeat_completed: int,
+        after_message_id: int,
+    ) -> None:
+        if success:
+            await self._mirror_agent_output_to_source(job, after_message_id)
+        await self._mark(
+            job,
+            success=success,
+            error=error,
+            now=now,
+            next_run_iso=next_run_iso,
+            completed=completed,
+            repeat_completed=repeat_completed,
+        )
+        name = job.get("name") or job.get("id")
+        if success:
+            await self._maybe_dingtalk_notify(
+                f"⏰ 定时任务「{name}」已完成（agent 模式）"
+            )
+        elif error:
+            await self._maybe_dingtalk_notify(
+                f"⚠️ 定时任务「{name}」失败：{error[:200]}"
+            )
+
+    async def _last_message_id(self, session_id: str) -> int:
+        rows = await self.db.load_messages_with_ids(session_id)
+        return rows[-1][0] if rows else 0
+
+    def _cron_trigger_message(self, job: dict) -> Message:
+        name = job.get("name", "")
+        trigger = f"⏰ [定时任务: {name}]" if name else "⏰ [定时任务]"
+        return Message(role="user", content=trigger)
+
+    async def _mirror_text_to_source(self, job: dict) -> None:
+        prompt = job.get("prompt", "")
+        await self._append_source_mirror(
+            job,
+            [
+                self._cron_trigger_message(job),
+                Message(role="assistant", content=prompt),
+            ],
+        )
+
+    async def _mirror_agent_output_to_source(self, job: dict, after_message_id: int) -> None:
+        rows = await self.db.load_messages_with_ids(job["session_id"])
+        new_messages = [m for mid, m, _created_at in rows if mid > after_message_id]
+        assistant = next(
+            (
+                m for m in reversed(new_messages)
+                if m.role == "assistant" and (m.content.strip() or (m.reasoning or "").strip())
+            ),
+            None,
+        )
+        if assistant is None:
+            return
+        await self._append_source_mirror(
+            job,
+            [
+                self._cron_trigger_message(job),
+                Message(
+                    role="assistant",
+                    content=assistant.content,
+                    reasoning=assistant.reasoning,
+                ),
+            ],
+        )
+
+    async def _append_source_mirror(self, job: dict, messages: list[Message]) -> None:
+        source_session_id = (job.get("source_session_id") or "").strip()
+        if not source_session_id or source_session_id == job.get("session_id"):
+            return
+        source_session = await self.db.get_session(source_session_id, job["user_id"])
+        if source_session is None:
+            return
+        await self.db.append_messages(source_session_id, messages)
+        await self.db.touch_session(source_session_id)
+        assistant = next((m for m in messages if m.role == "assistant"), None)
+        if assistant is not None:
+            await self._emit_source_mirror_live(job, source_session_id, assistant)
+
+    async def _emit_source_mirror_live(
+        self, job: dict, source_session_id: str, assistant: Message
+    ) -> None:
+        """把镜像的 assistant 回复作为流式事件推给在线的 source session 客户端。
+
+        匹配 _fire_text 的 live-emit 模式:text_delta(→ wire message.delta)在前端
+        TURN_START_EVENTS 里,会懒建 turn 并渲染气泡;后续 done/finish_turn/settled
+        收尾让 UI 退出 streaming。发空的 cron.mirror 通知前端不认,用户必须刷新才
+        能看到回复——这是本函数取代的旧行为。
+        """
+        state = self.registry.get(source_session_id)
+        if state is None:
+            return  # 用户未在线;下次 resume 从 DB 读
+        try:
+            reasoning = (getattr(assistant, "reasoning", "") or "").strip()
+            if reasoning:
+                await state.on_event({"type": "reasoning_delta", "text": reasoning})
+            await state.on_event({"type": "text_delta", "text": assistant.content})
+            await state.on_event({"type": "done"})
+            await state.finish_turn()
+            await state.on_event({"type": "settled"})
+        except Exception:
+            log.exception("cron mirror live-emit failed source=%s", source_session_id)
 
     async def _mark(self, job: dict, *, success: bool, error: str | None, now: datetime,
                     next_run_iso: str | None = None, completed: bool = False,

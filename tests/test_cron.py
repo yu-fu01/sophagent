@@ -130,6 +130,30 @@ async def test_text_mode_fire_appends_message(tmp_path):
     await db.close()
 
 
+async def test_text_mode_fire_mirrors_to_source_session(tmp_path):
+    db, sid, uid = await _make_db(tmp_path)
+    source_session = await db.get_session(sid)
+    cron_gid = await db.get_or_create_cron_group(uid)
+    cron_sid = uuid.uuid4().hex
+    await db.create_session(cron_sid, uid, source_session["agent_id"], cron_gid, "吃饭提醒")
+    past = (datetime.now() - timedelta(minutes=5)).isoformat(timespec="seconds")
+    await db.create_cron_job({
+        "id": "mirror-text", "session_id": cron_sid, "source_session_id": sid,
+        "user_id": uid, "name": "吃饭", "prompt": "该吃饭啦", "mode": "text",
+        "schedule": {"kind": "interval", "minutes": 30},
+        "schedule_display": "每 30 分钟", "repeat_times": None, "next_run_at": past,
+    })
+    sched_obj = CronScheduler(db, SessionManager(32), None,
+                              SessionRegistry(grace_seconds=60.0), data_dir=tmp_path)
+    assert await sched_obj.tick() == 1
+    source_msgs = await db.load_messages(sid)
+    assert any("定时任务: 吃饭" in m.content for m in source_msgs)
+    assert any("该吃饭啦" in m.content for m in source_msgs)
+    cron_msgs = await db.load_messages(cron_sid)
+    assert any("该吃饭啦" in m.content for m in cron_msgs)
+    await db.close()
+
+
 async def test_once_job_completes_after_fire(tmp_path):
     db, sid, uid = await _make_db(tmp_path)
     past = (datetime.now() - timedelta(minutes=1)).isoformat(timespec="seconds")
@@ -174,6 +198,7 @@ async def test_cron_create_makes_dedicated_session_in_cron_group(tmp_path):
     assert len(await db.list_cron_jobs_by_session(sid)) == 0
     jobs = await db.list_cron_jobs(uid)
     assert len(jobs) == 1
+    assert jobs[0]["source_session_id"] == sid
     job_sid = jobs[0]["session_id"]
     assert job_sid != sid                       # REQ1：新 session
     sess = await db.get_session(job_sid)
@@ -389,4 +414,99 @@ async def test_agent_mode_fire_runs_turn_and_marks(tmp_path, monkeypatch):
     assert j["last_status"] == "ok"
     assert j["next_run_at"] != past           # 已推进
     assert j["repeat_completed"] == 1
+    await db.close()
+
+
+async def test_agent_mode_fire_mirrors_final_reply_to_source_session(tmp_path, monkeypatch):
+    db, sid, uid = await _make_db(tmp_path)
+    source_session = await db.get_session(sid)
+    cron_gid = await db.get_or_create_cron_group(uid)
+    cron_sid = uuid.uuid4().hex
+    await db.create_session(cron_sid, uid, source_session["agent_id"], cron_gid, "agent提醒")
+
+    async def fake_run_turns(*, session_id, user_input, db, manager, skill_store, user_id):
+        await db.append_messages(session_id, [
+            Message(role="user", content=user_input),
+            Message(role="assistant", content=f"cron-agent-reply:{user_input}"),
+        ])
+        yield {"type": "text_delta", "text": f"cron-agent-reply:{user_input}"}
+        yield {"type": "done"}
+
+    monkeypatch.setattr("sophagent.cron.scheduler.run_turns", fake_run_turns)
+
+    past = (datetime.now() - timedelta(minutes=1)).isoformat(timespec="seconds")
+    await db.create_cron_job({
+        "id": "mirror-agent", "session_id": cron_sid, "source_session_id": sid,
+        "user_id": uid, "name": "agent提醒", "prompt": "提醒吃饭", "mode": "agent",
+        "schedule": {"kind": "interval", "minutes": 60},
+        "schedule_display": "每 60 分钟", "repeat_times": None, "next_run_at": past,
+    })
+    sched_obj = CronScheduler(db, SessionManager(32), None,
+                              SessionRegistry(grace_seconds=60.0), data_dir=tmp_path)
+    await sched_obj.tick()
+    await asyncio.sleep(0.3)
+    source_msgs = await db.load_messages(sid)
+    assert any("定时任务: agent提醒" in m.content for m in source_msgs)
+    assert any("cron-agent-reply:提醒吃饭" in m.content for m in source_msgs)
+    await db.close()
+
+
+async def test_agent_mirror_pushes_live_events_to_source_session_ws(tmp_path, monkeypatch):
+    """cron agent 模式完成后,若用户正开着 source session 页面,应直接收到
+    可渲染的流式事件(message.delta + turn.settled),无需刷新页面。
+
+    回归:此前 _emit_source_mirror_event 只发了一个空的 cron.mirror 通知,
+    前端不在 TURN_START_EVENTS 里认它、且事件无内容,直接忽略,导致用户
+    必须刷新才能看到回复。
+    """
+    db, sid, uid = await _make_db(tmp_path)
+    source_session = await db.get_session(sid)
+    cron_gid = await db.get_or_create_cron_group(uid)
+    cron_sid = uuid.uuid4().hex
+    await db.create_session(cron_sid, uid, source_session["agent_id"], cron_gid, "agent提醒")
+
+    async def fake_run_turns(*, session_id, user_input, db, manager, skill_store, user_id):
+        await db.append_messages(session_id, [
+            Message(role="user", content=user_input),
+            Message(role="assistant", content=f"cron-agent-reply:{user_input}"),
+        ])
+        yield {"type": "text_delta", "text": f"cron-agent-reply:{user_input}"}
+        yield {"type": "done"}
+
+    monkeypatch.setattr("sophagent.cron.scheduler.run_turns", fake_run_turns)
+
+    past = (datetime.now() - timedelta(minutes=1)).isoformat(timespec="seconds")
+    await db.create_cron_job({
+        "id": "mirror-live", "session_id": cron_sid, "source_session_id": sid,
+        "user_id": uid, "name": "agent提醒", "prompt": "提醒吃饭", "mode": "agent",
+        "schedule": {"kind": "interval", "minutes": 60},
+        "schedule_display": "每 60 分钟", "repeat_times": None, "next_run_at": past,
+    })
+
+    registry = SessionRegistry(grace_seconds=60.0)
+    captured: list[dict] = []
+
+    class RecordingTransport:
+        async def emit(self, frame):
+            captured.append(frame)
+            return True
+
+        def close(self):
+            pass
+
+    # 模拟用户开着 source session 页面:resume 绑定 transport
+    state = registry.get_or_create(sid, uid)
+    state.resume(RecordingTransport())
+
+    sched_obj = CronScheduler(db, SessionManager(32), None, registry, data_dir=tmp_path)
+    await sched_obj.tick()
+    await asyncio.sleep(0.3)
+
+    wire_types = [f["params"]["type"] for f in captured]
+    assert "message.delta" in wire_types, f"未推 message.delta,收到: {wire_types}"
+    delta = next(f for f in captured if f["params"]["type"] == "message.delta")
+    assert "cron-agent-reply:提醒吃饭" in delta["params"]["payload"]["text"]
+    assert "turn.settled" in wire_types, f"未推 turn.settled 收尾,收到: {wire_types}"
+    # 旧的空 cron.mirror 不应再出现(前端不认)
+    assert "cron.mirror" not in wire_types
     await db.close()
