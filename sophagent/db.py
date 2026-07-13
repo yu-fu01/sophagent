@@ -866,6 +866,13 @@ class Database:
             (platform, chat_id),
         )
 
+    async def list_bindings_for_agent(self, agent_id: int) -> list[aiosqlite.Row]:
+        return await self._all(
+            "SELECT platform, chat_id, session_id, created_at"
+            " FROM im_bindings WHERE agent_id=? ORDER BY platform, created_at",
+            (agent_id,),
+        )
+
     # -- cron jobs ----------------------------------------------------------
     # schedule 以 JSON 文本存；next_run_at / last_run_at 存本地 naive ISO。
     # 单连接串行写，无需额外锁（与 hermes 的 flock 等价由 aiosqlite 提供）。

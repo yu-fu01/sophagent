@@ -57,3 +57,28 @@ async def test_bindings_are_scoped_by_platform(db):
     qq = await db.get_binding("qqbot", "same-chat")
     assert tg["session_id"] == "tg"
     assert qq["session_id"] == "qq"
+
+
+@pytest.mark.asyncio
+async def test_list_bindings_for_agent(db):
+    await db.upsert_binding("feishu", "p2p:u1", user_id=1, agent_id=5, session_id="s-feishu")
+    await db.upsert_binding("dingtalk", "cid1", user_id=1, agent_id=5, session_id="s-dt")
+    await db.upsert_binding("qqbot", "chat1", user_id=1, agent_id=6, session_id="s-qq")
+    rows = await db.list_bindings_for_agent(5)
+    assert len(rows) == 2
+    platforms = {r["platform"] for r in rows}
+    assert platforms == {"dingtalk", "feishu"}
+
+
+@pytest.mark.asyncio
+async def test_binding_summary_for_agent(db):
+    from sophagent.im.bindings import binding_summary_for_agent
+
+    await db.upsert_binding("feishu", "p2p:u1", user_id=1, agent_id=7, session_id="s1")
+    summary = await binding_summary_for_agent(db, 7)
+    assert summary["agent_id"] == 7
+    assert summary["platforms"]["feishu"]["bound"] is True
+    assert summary["platforms"]["feishu"]["count"] == 1
+    assert summary["platforms"]["dingtalk"]["bound"] is False
+    assert summary["platforms"]["weixin"]["bound"] is False
+    assert summary["platforms"]["qqbot"]["bound"] is False
