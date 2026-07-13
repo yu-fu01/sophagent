@@ -9,6 +9,24 @@ def test_issue_pair_code(client, bob, agent_id):
     assert len(code) == 8
 
 
+def test_binding_summary(client, bob, agent_id):
+    r = client.get(f"/api/im/bindings/summary?agent_id={agent_id}", headers=bob)
+    assert r.status_code == 200
+    body = r.json()
+    assert body["agent_id"] == agent_id
+    platforms = body["platforms"]
+    for name in ("dingtalk", "feishu", "weixin", "qqbot"):
+        assert name in platforms
+        assert "bound" in platforms[name]
+        assert "count" in platforms[name]
+        assert "sessions" in platforms[name]
+
+
+def test_binding_summary_unknown_agent(client, bob):
+    r = client.get("/api/im/bindings/summary?agent_id=99999", headers=bob)
+    assert r.status_code == 404
+
+
 def test_issue_pair_code_unknown_agent(client, bob):
     r = client.post("/api/im/pair-code", json={"agent_id": 99999}, headers=bob)
     assert r.status_code == 404

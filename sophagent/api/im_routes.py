@@ -2,11 +2,12 @@
 
 from __future__ import annotations
 
-from fastapi import APIRouter, Depends, HTTPException, Request
+from fastapi import APIRouter, Depends, HTTPException, Query, Request
 from pydantic import BaseModel
 
 from ..auth import require_user
 from ..im import pairing
+from ..im.bindings import binding_summary_for_agent
 from ..perms import can_access_group
 
 router = APIRouter()
@@ -14,6 +15,21 @@ router = APIRouter()
 
 class PairCodeRequest(BaseModel):
     agent_id: int
+
+
+@router.get("/bindings/summary")
+async def get_binding_summary(
+    request: Request,
+    agent_id: int = Query(..., ge=1),
+    user=Depends(require_user),
+):
+    db = request.app.state.db
+    agent = await db.get_agent(agent_id)
+    if agent is None:
+        raise HTTPException(404, "agent not found")
+    if not await can_access_group(db, agent["group_id"], user["id"]):
+        raise HTTPException(403, "cannot access this agent")
+    return await binding_summary_for_agent(db, agent_id)
 
 
 @router.post("/pair-code")
